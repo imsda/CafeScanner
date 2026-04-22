@@ -114,7 +114,7 @@ type ScanResultState =
   | null;
 
 function ScanResultCard({ result }: { result: ScanResultState }) {
-  if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a barcode or use USB scanner/manual entry.</p></div>;
+  if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a person ID barcode or use USB scanner/manual ID entry.</p></div>;
   if (!result.ok) return <div className="scan-result fail"><h3>Scan Failed</h3><p>{result.error}</p></div>;
 
   const remaining = result.mealType === 'BREAKFAST' ? result.person.breakfastRemaining : result.mealType === 'LUNCH' ? result.person.lunchRemaining : result.person.dinnerRemaining;
@@ -146,7 +146,7 @@ function ScanPage() {
 
     setIsSubmitting(true);
     try {
-      const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ scannedValue: trimmed }) });
+      const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed }) });
       setResult({ ok: true, person: response.person, mealType: response.mealType });
       setManual('');
       usbInputRef.current?.focus();
@@ -168,7 +168,7 @@ function ScanPage() {
         <h2>Scan Station</h2>
         <div className="button-row">
           <button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button>
-          <button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual Entry</button>
+          <button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button>
         </div>
 
         {mode === 'camera' ? (
@@ -176,18 +176,18 @@ function ScanPage() {
         ) : (
           <form className="stack" onSubmit={onManualSubmit}>
             <label>
-              Barcode input
+              Person ID input
               <input
                 ref={usbInputRef}
                 className="scan-input"
-                placeholder="Scan with USB scanner or type barcode and press Enter"
+                placeholder="Scan with USB scanner or type person ID and press Enter"
                 value={manual}
                 onChange={(e) => setManual(e.target.value)}
-                aria-label="Barcode input"
+                aria-label="Person ID input"
                 onBlur={() => setTimeout(() => usbInputRef.current?.focus(), 0)}
               />
             </label>
-            <button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit Barcode'}</button>
+            <button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button>
           </form>
         )}
       </section>
@@ -213,7 +213,7 @@ function PeoplePage() {
       </form>
 
       <table>
-        <thead><tr><th>Name</th><th>ID</th><th>Code</th><th>Breakfast</th><th>Lunch</th><th>Dinner</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Person ID</th><th>Code</th><th>Breakfast</th><th>Lunch</th><th>Dinner</th><th>Actions</th></tr></thead>
         <tbody>
           {people.map((p) => (
             <tr key={p.id}>
@@ -233,7 +233,7 @@ function PeoplePage() {
 }
 
 function ImportPage() { const [file, setFile] = useState<File>(); const [preview, setPreview] = useState<any>(); const [result, setResult] = useState<any>(); async function previewFile() { if (!file) return; const form = new FormData(); form.append('file', file); const res = await fetch(`${API_BASE}/import/preview`, { method: 'POST', credentials: 'include', body: form }); setPreview(await res.json()); } async function commit() { if (!file) return; const form = new FormData(); form.append('file', file); form.append('generateMissingCodes', 'true'); const res = await fetch(`${API_BASE}/import/commit`, { method: 'POST', credentials: 'include', body: form }); setResult(await res.json()); } return <div className="card"><h2>CSV Import</h2><a href={`${API_BASE}/import/template`} target="_blank" rel="noreferrer">Download Template</a><input type="file" accept=".csv" onChange={(e)=>setFile(e.target.files?.[0])}/><div className="button-row"><button className="secondary" onClick={previewFile} disabled={!file}>Preview</button><button className="primary" onClick={commit} disabled={!file}>Commit Partial Import</button></div>{preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}{result && <pre>{JSON.stringify(result, null, 2)}</pre>}</div>; }
-function BadgesPage() { const [people, setPeople] = useState<any[]>([]); useEffect(() => { void api<any[]>('/people?showInactive=true').then(setPeople); }, []); return <div className="card"><h2>Printable Badges</h2><button className="secondary" onClick={() => window.print()}>Print Sheet</button><div className="badge-grid">{people.map((p)=><div className="badge" key={p.id}><QRCodeSVG value={p.codeValue} size={90}/><p>{p.firstName} {p.lastName}</p><small>{p.personId}</small></div>)}</div></div>; }
+function BadgesPage() { const [people, setPeople] = useState<any[]>([]); useEffect(() => { void api<any[]>('/people?showInactive=true').then(setPeople); }, []); return <div className="card"><h2>Printable Badges</h2><button className="secondary" onClick={() => window.print()}>Print Sheet</button><div className="badge-grid">{people.map((p)=><div className="badge" key={p.id}><QRCodeSVG value={p.personId} size={90}/><p>{p.firstName} {p.lastName}</p><small>{p.personId}</small></div>)}</div></div>; }
 function TransactionsPage() { const [rows, setRows] = useState<any[]>([]); useEffect(() => { void api<any[]>('/transactions').then(setRows); }, []); return <div className="card"><h2>Transactions</h2><a href={`${API_BASE}/transactions/export.csv`} target="_blank" rel="noreferrer">Export CSV</a><table><thead><tr><th>Time</th><th>Value</th><th>Meal</th><th>Result</th><th>Reason</th><th>Person</th><th>Station</th></tr></thead><tbody>{rows.map((r)=><tr key={r.id}><td>{new Date(r.timestamp).toLocaleString()}</td><td>{r.scannedValue}</td><td>{r.mealType}</td><td>{r.result}</td><td>{r.failureReason||'-'}</td><td>{r.person?`${r.person.firstName} ${r.person.lastName}`:'-'}</td><td>{r.stationName||'-'}</td></tr>)}</tbody></table></div>; }
 
 function ReportsPage() {
