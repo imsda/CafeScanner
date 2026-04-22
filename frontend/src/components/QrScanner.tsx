@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { BrowserMultiFormatReader, NotFoundException } from '@zxing/browser';
+import { BrowserMultiFormatReader } from '@zxing/browser';
 
 /**
  * Scanner wrapper abstraction.
@@ -15,12 +15,11 @@ export default function QrScanner({ onResult, onError }: { onResult: (text: stri
     codeReader.decodeFromVideoDevice(undefined, videoRef.current!, (result, error, controls) => {
       stopFn = () => controls.stop();
       if (result) onResult(result.getText());
-      if (error && !(error instanceof NotFoundException)) onError('Camera scan error. Check camera permissions.');
+      if (error && error.name !== 'NotFoundException') onError('Camera scan error. Check camera permissions.');
     }).catch(() => onError('Unable to access camera.'));
 
     return () => {
       if (stopFn) stopFn();
-      codeReader.reset();
     };
   }, [onResult, onError]);
 
