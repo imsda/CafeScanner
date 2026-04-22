@@ -26,15 +26,34 @@ function Dashboard() {
   return <div className="grid">{Object.entries(data).map(([k, v]) => <div className="tile" key={k}><h3>{k}</h3><p>{String(v)}</p></div>)}</div>;
 }
 
+type ScanSuccess = {
+  ok: true;
+  person: {
+    firstName: string;
+    lastName: string;
+    breakfastRemaining: number;
+    lunchRemaining: number;
+    dinnerRemaining: number;
+  };
+  mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER';
+};
+
+type ScanFailure = {
+  ok: false;
+  error: string;
+};
+
+type ScanResult = ScanSuccess | ScanFailure | null;
+
 function ScanPage() {
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<ScanResult>(null);
   const [manual, setManual] = useState('');
   const [settings, setSettings] = useState<any>(null);
   useState(() => { api('/settings').then(setSettings); });
 
   async function submit(code: string) {
     try {
-      const res = await api('/scan', { method: 'POST', body: JSON.stringify({ scannedValue: code }) });
+      const res = await api<Omit<ScanSuccess, 'ok'>>('/scan', { method: 'POST', body: JSON.stringify({ scannedValue: code }) });
       setResult({ ok: true, ...res });
       if (settings?.enableSounds) new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEA').play().catch(() => {});
     } catch (e: any) {
