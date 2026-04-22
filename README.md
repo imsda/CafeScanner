@@ -2,58 +2,7 @@
 
 CafeScanner is a self-hostable school cafeteria meal tracking system with QR-based check-in.
 
-## Features
-
-- Admin login with session auth
-- People management (create/update/list)
-- CSV import with preview + partial commit + validation errors
-- Auto-generate code values when missing
-- QR badge printing (sheet view + browser print)
-- Scan station with camera QR scanner + manual fallback entry
-- Meal deduction rules for breakfast/lunch/dinner windows
-- Clear success/failure scan states for cafeteria workers
-- Cooldown/debounce protection against duplicate rapid scans
-- Full transaction audit trail + CSV export
-- Settings for school info, meal windows, cooldown, station, sounds, overrides
-- Dashboard + basic reports
-- SQLite + Prisma for easy local/self-host deployments
-
-## Tech Stack
-
-- Frontend: React + Vite + TypeScript
-- Backend: Node.js + Express + TypeScript
-- Database: SQLite
-- ORM: Prisma
-
-## Project Structure
-
-- `frontend/` React app
-- `backend/` Express API + Prisma schema + seed
-- `scripts/` helper scripts for setup/dev/build/start
-- `compose.yaml` optional Docker Compose
-
-## Environment Variables
-
-`./scripts/setup.sh` now bootstraps env files automatically on a fresh clone:
-
-- If `.env` is missing and `.env.example` exists, it creates `.env`.
-- If `backend/.env` is missing and `backend/.env.example` exists, it creates `backend/.env`.
-- Existing `.env` files are never overwritten.
-
-After bootstrapping, setup validates that required keys from each `*.env.example` have non-empty values in the matching `.env`. If anything is missing, setup stops and tells you which file to edit.
-
-Default examples:
-
-```env
-DATABASE_URL="file:./prisma/dev.db"
-SESSION_SECRET="change-me-super-secret"
-DEFAULT_ADMIN_USERNAME="admin"
-DEFAULT_ADMIN_PASSWORD="ChangeMeNow123!"
-PORT=4000
-CLIENT_ORIGIN="http://localhost:5173"
-```
-
-## Quick Start (Fresh Machine)
+## Quick Start (Fresh Clone)
 
 ```bash
 git clone <your-repo-url>
@@ -61,122 +10,87 @@ cd CafeScanner
 ./scripts/setup.sh
 ```
 
-On a fresh clone, `./scripts/setup.sh` is the **only required setup command**. It is idempotent and safe to re-run, and it will:
-- bootstrap `.env` and `backend/.env` from their `*.example` files without overwriting existing files
-- validate required env keys and fail clearly when placeholder values are still present
-- install npm dependencies for the root project and all workspaces
-- run Prisma migrations
-- seed the database
-- run the full backend + frontend build
+`./scripts/setup.sh` is the only required setup command. It will:
+- bootstrap env files without overwriting existing ones
+- validate required env keys and placeholder values
+- install root + workspace dependencies
+- run Prisma migrations and seed
+- run full backend + frontend build verification
 
-After setup succeeds, start development servers with:
+If setup fails, it exits with a clear error that identifies what is missing.
+
+## Environment Files
+
+CafeScanner uses these env files:
+
+- `backend/.env` (required, auto-created from `backend/.env.example`)
+- `frontend/.env` (auto-created from `frontend/.env.example`)
+
+### Required backend env values
+
+See `backend/.env.example`:
+
+- `DATABASE_URL` (Prisma SQLite path)
+- `SESSION_SECRET` (must be changed from placeholder)
+- `DEFAULT_ADMIN_USERNAME`
+- `DEFAULT_ADMIN_PASSWORD`
+- `PORT` (backend port, default `4000`)
+- `BACKEND_HOST` (default `0.0.0.0`)
+- `CLIENT_ORIGIN` (comma-separated allowlist used in production)
+
+### Frontend env values
+
+See `frontend/.env.example`:
+
+- `VITE_API_BASE` (optional override for API URL)
+  - default file value: `http://localhost:4000/api`
+  - if unset, frontend falls back to `http://<current-hostname>:4000/api`
+
+## Default Admin Credentials
+
+The seed script creates/updates one admin user:
+
+- Username: `DEFAULT_ADMIN_USERNAME` (default: `admin`)
+- Password: `DEFAULT_ADMIN_PASSWORD` (default: `ChangeMeNow123!`)
+
+Change these in `backend/.env` before running setup if needed.
+
+## Development Mode
+
+Start both apps:
 
 ```bash
 ./scripts/dev.sh
 ```
 
-This runs:
-- backend on `http://localhost:4000`
-- frontend on `http://localhost:5173`
+Defaults:
+- Backend: `http://0.0.0.0:4000`
+- Frontend: `http://0.0.0.0:5173`
 
-## Build + Production Run
+### Access from another machine on the LAN
+
+1. Find the IP of the machine running CafeScanner (example: `192.168.1.50`).
+2. On another machine, open `http://192.168.1.50:5173`.
+3. Frontend API calls will target `http://192.168.1.50:4000/api` by default.
+
+Notes:
+- In development (`NODE_ENV=development`), backend CORS allows LAN origins for easier testing.
+- In production, backend enforces `CLIENT_ORIGIN` allowlist.
+
+## Production Run
+
+Build and start:
 
 ```bash
 ./scripts/build.sh
 ./scripts/start.sh
 ```
 
-## Database Setup
-
-Prisma schema is in `backend/prisma/schema.prisma`.
-
-Run manually if needed:
+Or directly:
 
 ```bash
-npm run db:migrate
-npm run db:seed
+npm run build
+npm run start
 ```
 
-## Default Admin Account
-
-Seed creates one admin account from env vars:
-
-- username: `DEFAULT_ADMIN_USERNAME` (default `admin`)
-- password: `DEFAULT_ADMIN_PASSWORD` (default `ChangeMeNow123!`)
-
-Change credentials by editing `.env` before running `npm run db:seed`.
-
-## CSV Import Format
-
-Supported columns:
-
-- `firstName`
-- `lastName`
-- `personId`
-- `codeValue`
-- `breakfastRemaining`
-- `lunchRemaining`
-- `dinnerRemaining`
-- `active`
-- `grade`
-- `group`
-- `campus`
-- `notes`
-
-You can download template at `/api/import/template` (authenticated).
-
-Import flow:
-1. Upload CSV in Import page
-2. Run Preview (shows row-level errors)
-3. Commit partial import (valid rows import, invalid rows reported)
-
-## Meal Logic (Implemented)
-
-Default windows:
-- Breakfast `05:00–10:00`
-- Lunch `11:00–14:00`
-- Dinner `17:00–19:00`
-
-On scan:
-1. detect active meal period
-2. lookup person by `codeValue`
-3. reject unknown code
-4. reject inactive person
-5. reject outside meal windows
-6. reject no remaining meals for detected meal
-7. deduct exactly 1 meal in DB transaction
-8. write scan log
-
-Balances are clamped to never go below zero.
-
-## Transactions / Audit Trail
-
-Logged fields include:
-- timestamp
-- scanned value
-- matched person (if any)
-- detected meal
-- result
-- failure reason
-- station name
-- admin user id (if logged in)
-
-Use Transactions page filters endpoint and export CSV at `/api/transactions/export.csv`.
-
-## Docker (Optional)
-
-```bash
-docker compose up --build
-```
-
-App ports:
-- `4000` backend
-- `5173` frontend preview/dev port exposure
-
-> Docker is optional; local scripts remain the easiest default path.
-
-## Notes for Schools
-
-- Scanner page is designed for fast, high-contrast tablet use.
-- Manual entry fallback is provided if camera permissions fail.
-- Scanner implementation is abstracted in `frontend/src/components/QrScanner.tsx` so 1D barcode support can be added later without rewriting app pages.
+For production hardening, set `NODE_ENV=production` and set a strict `CLIENT_ORIGIN` value in `backend/.env`.

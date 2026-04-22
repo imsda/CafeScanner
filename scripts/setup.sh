@@ -47,16 +47,25 @@ env_get_value() {
   ' "$env_file"
 }
 
-env_key_has_value() {
+set_generated_value_if_placeholder() {
   local env_file="$1"
   local key="$2"
+  local placeholder="$3"
+  local generated="$4"
 
-  local value
-  if ! value="$(env_get_value "$env_file" "$key")"; then
-    return 1
+  local current
+  if ! current="$(env_get_value "$env_file" "$key" 2>/dev/null)"; then
+    return
   fi
 
-  [[ -n "$value" ]]
+  if [[ "$current" != "$placeholder" ]]; then
+    return
+  fi
+
+  local escaped
+  escaped=$(printf '%s' "$generated" | sed -e 's/[\\&/]/\\&/g')
+  sed -i "s|^${key}=.*|${key}=\"${escaped}\"|" "$env_file"
+  echo "[setup] Generated a secure default for ${key} in ${env_file}"
 }
 
 is_placeholder_value() {
@@ -142,12 +151,14 @@ validate_required_env_vars() {
 }
 
 echo "[setup] Bootstrapping environment files"
-bootstrap_env_file ".env" ".env.example"
 bootstrap_env_file "backend/.env" "backend/.env.example"
+bootstrap_env_file "frontend/.env" "frontend/.env.example"
+
+set_generated_value_if_placeholder "backend/.env" "SESSION_SECRET" "change-me-super-secret" "$(openssl rand -hex 32)"
 
 echo "[setup] Validating environment values"
-validate_required_env_vars ".env" ".env.example"
 validate_required_env_vars "backend/.env" "backend/.env.example"
+validate_required_env_vars "frontend/.env" "frontend/.env.example"
 
 echo "[setup] Installing npm dependencies (root + workspaces)"
 npm install --workspaces --include-workspace-root
