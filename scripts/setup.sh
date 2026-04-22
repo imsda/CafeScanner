@@ -5,13 +5,17 @@ bootstrap_env_file() {
   local env_file="$1"
   local example_file="$2"
 
-  if [[ ! -f "$env_file" && -f "$example_file" ]]; then
+  if [[ -f "$env_file" ]]; then
+    return
+  fi
+
+  if [[ -f "$example_file" ]]; then
     cp "$example_file" "$env_file"
     echo "[setup] Auto-created $env_file from $example_file"
   fi
 }
 
-env_key_has_value() {
+env_get_value() {
   local env_file="$1"
   local key="$2"
 
@@ -27,16 +31,45 @@ env_key_has_value() {
       rawValue=substr($0, index($0, "=") + 1)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", rawValue)
 
-      if ((rawValue ~ /^".*"$/) || (rawValue ~ /^'.*'$/)) {
+      if ((rawValue ~ /^".*"$/) || (rawValue ~ /^'"'"'.*'"'"'$/)) {
         rawValue=substr(rawValue, 2, length(rawValue) - 2)
       }
 
-      if (length(rawValue) > 0) {
-        found=1
+      print rawValue
+      found=1
+      exit
+    }
+    END {
+      if (!found) {
+        exit 1
       }
     }
-    END { exit(found ? 0 : 1) }
   ' "$env_file"
+}
+
+env_key_has_value() {
+  local env_file="$1"
+  local key="$2"
+
+  local value
+  if ! value="$(env_get_value "$env_file" "$key")"; then
+    return 1
+  fi
+
+  [[ -n "$value" ]]
+}
+
+is_placeholder_value() {
+  local value="$1"
+
+  shopt -s nocasematch
+  if [[ "$value" =~ ^(change-me|changeme|replace-me|replace_this|your[_-].*|example|placeholder|todo|setme)([-_].*)?$ ]]; then
+    shopt -u nocasematch
+    return 0
+  fi
+  shopt -u nocasematch
+
+  [[ "$value" == *"<"*">"* ]]
 }
 
 validate_required_env_vars() {
@@ -54,13 +87,29 @@ validate_required_env_vars() {
   fi
 
   local missing_keys=()
+  local placeholder_keys=()
   local key
 
   while IFS= read -r key; do
     [[ -z "$key" ]] && continue
 
-    if ! env_key_has_value "$env_file" "$key"; then
+    local env_value
+    local example_value
+
+    if ! env_value="$(env_get_value "$env_file" "$key" 2>/dev/null)"; then
       missing_keys+=("$key")
+      continue
+    fi
+
+    if [[ -z "$env_value" ]]; then
+      missing_keys+=("$key")
+      continue
+    fi
+
+    if example_value="$(env_get_value "$example_file" "$key" 2>/dev/null)"; then
+      if [[ "$env_value" == "$example_value" ]] && is_placeholder_value "$example_value"; then
+        placeholder_keys+=("$key")
+      fi
     fi
   done < <(awk -F= '
     /^[[:space:]]*#/ || $0 !~ /=/ { next }
@@ -81,15 +130,35 @@ validate_required_env_vars() {
     echo "[setup] Please edit $env_file and set the missing values."
     exit 1
   fi
+
+  if (( ${#placeholder_keys[@]} > 0 )); then
+    echo "[setup] ERROR: Placeholder values are still present in $env_file:"
+    for placeholder_key in "${placeholder_keys[@]}"; do
+      echo "  - $placeholder_key"
+    done
+    echo "[setup] Please replace placeholder values before continuing."
+    exit 1
+  fi
 }
 
+echo "[setup] Bootstrapping environment files"
 bootstrap_env_file ".env" ".env.example"
 bootstrap_env_file "backend/.env" "backend/.env.example"
 
+echo "[setup] Validating environment values"
 validate_required_env_vars ".env" ".env.example"
 validate_required_env_vars "backend/.env" "backend/.env.example"
 
-npm install
+echo "[setup] Installing npm dependencies (root + workspaces)"
+npm install --workspaces --include-workspace-root
+
+echo "[setup] Running database migrations"
 npm run db:migrate
+
+echo "[setup] Seeding database"
 npm run db:seed
+
+echo "[setup] Running full build"
 npm run build
+
+echo "[setup] Setup complete"

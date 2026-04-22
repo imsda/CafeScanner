@@ -53,14 +53,27 @@ PORT=4000
 CLIENT_ORIGIN="http://localhost:5173"
 ```
 
-## Quick Start (Local)
+## Quick Start (Fresh Machine)
 
 ```bash
+git clone <your-repo-url>
+cd CafeScanner
 ./scripts/setup.sh
-./scripts/dev.sh
 ```
 
-`./scripts/setup.sh` is idempotent and safe to run multiple times. It bootstraps env files, installs dependencies, runs Prisma migrate + seed, and builds both apps.
+On a fresh clone, `./scripts/setup.sh` is the **only required setup command**. It is idempotent and safe to re-run, and it will:
+- bootstrap `.env` and `backend/.env` from their `*.example` files without overwriting existing files
+- validate required env keys and fail clearly when placeholder values are still present
+- install npm dependencies for the root project and all workspaces
+- run Prisma migrations
+- seed the database
+- run the full backend + frontend build
+
+After setup succeeds, start development servers with:
+
+```bash
+./scripts/dev.sh
+```
 
 This runs:
 - backend on `http://localhost:4000`
