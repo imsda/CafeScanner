@@ -99,9 +99,9 @@ export default function QrScanner({ onResult, onError, cooldownMs = 2500 }: Prop
       </div>
       <video ref={videoRef} className="scanner-video" muted autoPlay playsInline />
       <p className="scanner-status">
-        {status === 'idle' && 'Click Start Scanner to request camera permission and begin barcode scanning.'}
+        {status === 'idle' && 'Click Start Scanner to request camera permission and begin person ID barcode scanning.'}
         {status === 'starting' && 'Starting camera…'}
-        {status === 'ready' && 'Camera ready. Aim at a barcode.'}
+        {status === 'ready' && 'Camera ready. Aim at a person ID barcode.'}
         {status === 'denied' && 'Camera permission denied. Switch to USB Scanner / Manual Entry mode.'}
         {status === 'no-camera' && 'No camera available on this device.'}
         {status === 'error' && 'Scanner initialization failed. Use USB Scanner / Manual Entry mode.'}
