@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { api, API_BASE } from './api/client';
@@ -40,7 +40,7 @@ function Login() {
             Password
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
           </label>
-          <button type="submit">Sign in</button>
+          <button className="primary" type="submit">Sign in</button>
           {error && <p className="error">{error}</p>}
         </form>
       </div>
@@ -49,26 +49,34 @@ function Login() {
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
-  const { logout } = useAuth();
-  const links = [
-    ['dashboard', 'Dashboard'],
-    ['scan', 'Scan Station'],
-    ['people', 'People'],
-    ['import', 'Import'],
-    ['badges', 'Badges'],
-    ['transactions', 'Transactions'],
-    ['reports', 'Reports'],
-    ['settings', 'Settings']
-  ] as const;
+  const { logout, user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
+
+  const links = isAdmin
+    ? [
+        ['dashboard', 'Dashboard'],
+        ['scan', 'Scan Station'],
+        ['people', 'People'],
+        ['import', 'Import'],
+        ['badges', 'Badges'],
+        ['transactions', 'Transactions'],
+        ['reports', 'Reports'],
+        ['settings', 'Settings']
+      ]
+    : [['scan', 'Scan Station']];
 
   return (
     <div>
       <header className="topbar">
-        <div className="brand-wrap">
-          <h2>Cafeteria Scanner</h2>
-          <a href="https://tools.imsda.org" target="_blank" rel="noreferrer" className="tools-link">
+        <div className="topbar-inner">
+          <a href="https://tools.imsda.org" className="back-link" rel="noreferrer">
             ← Back to Tools
           </a>
+          <h2>Cafeteria Scanner</h2>
+          <div className="right-actions">
+            <span className="user-pill">{user?.username} · {user?.role}</span>
+            <button type="button" className="secondary" onClick={() => logout()}>Logout</button>
+          </div>
         </div>
         <nav>
           {links.map(([path, label]) => (
@@ -76,9 +84,6 @@ function Layout({ children }: { children: React.ReactNode }) {
               {label}
             </NavLink>
           ))}
-          <button type="button" className="secondary" onClick={() => logout()}>
-            Logout
-          </button>
         </nav>
       </header>
       <main className="page">{children}</main>
@@ -86,28 +91,21 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+function AdminOnly({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role !== 'ADMIN') {
+    return <Navigate to="/scan" replace />;
+  }
+  return <>{children}</>;
+}
+
 function Dashboard() {
   const [data, setData] = useState<Record<string, number> | null>(null);
-
   useEffect(() => {
     void api<Record<string, number>>('/dashboard/summary').then(setData);
   }, []);
-
   if (!data) return <p>Loading dashboard…</p>;
-
-  return (
-    <div className="card">
-      <h2>Today at a glance</h2>
-      <div className="stats-grid">
-        {Object.entries(data).map(([key, value]) => (
-          <div className="stat-card" key={key}>
-            <p className="muted">{key}</p>
-            <p className="value">{value}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return <div className="card"><h2>Today at a glance</h2><div className="stats-grid">{Object.entries(data).map(([key, value]) => <div className="stat-card" key={key}><p className="muted">{key}</p><p className="value">{value}</p></div>)}</div></div>;
 }
 
 type ScanResultState =
@@ -116,20 +114,10 @@ type ScanResultState =
   | null;
 
 function ScanResultCard({ result }: { result: ScanResultState }) {
-  if (!result) {
-    return <div className="scan-result info"><h3>Ready</h3><p>Scan a QR code or enter a code manually.</p></div>;
-  }
+  if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a barcode or use USB scanner/manual entry.</p></div>;
+  if (!result.ok) return <div className="scan-result fail"><h3>Scan Failed</h3><p>{result.error}</p></div>;
 
-  if (!result.ok) {
-    return <div className="scan-result fail"><h3>Scan Failed</h3><p>{result.error}</p></div>;
-  }
-
-  const remaining =
-    result.mealType === 'BREAKFAST'
-      ? result.person.breakfastRemaining
-      : result.mealType === 'LUNCH'
-        ? result.person.lunchRemaining
-        : result.person.dinnerRemaining;
+  const remaining = result.mealType === 'BREAKFAST' ? result.person.breakfastRemaining : result.mealType === 'LUNCH' ? result.person.lunchRemaining : result.person.dinnerRemaining;
 
   return (
     <div className="scan-result success">
@@ -145,6 +133,12 @@ function ScanPage() {
   const [result, setResult] = useState<ScanResultState>(null);
   const [manual, setManual] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mode, setMode] = useState<'camera' | 'usb'>('camera');
+  const usbInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (mode === 'usb') usbInputRef.current?.focus();
+  }, [mode]);
 
   const submitScan = async (code: string) => {
     const trimmed = code.trim();
@@ -152,16 +146,12 @@ function ScanPage() {
 
     setIsSubmitting(true);
     try {
-      const response = await api<ScanResponse>('/scan', {
-        method: 'POST',
-        body: JSON.stringify({ scannedValue: trimmed })
-      });
+      const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ scannedValue: trimmed }) });
       setResult({ ok: true, person: response.person, mealType: response.mealType });
       setManual('');
+      usbInputRef.current?.focus();
     } catch (error) {
-      const fallback = 'Unable to process this scan right now.';
-      const message = error instanceof Error ? error.message : fallback;
-      setResult({ ok: false, error: message || fallback });
+      setResult({ ok: false, error: error instanceof Error ? error.message : 'Unable to process this scan right now.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -174,18 +164,32 @@ function ScanPage() {
 
   return (
     <div className="scan-layout">
-      <section className="card">
+      <section className="card stack">
         <h2>Scan Station</h2>
-        <QrScanner onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} />
-        <form className="manual-row" onSubmit={onManualSubmit}>
-          <input
-            placeholder="Enter code manually"
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            aria-label="Manual code entry"
-          />
-          <button type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit'}</button>
-        </form>
+        <div className="button-row">
+          <button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button>
+          <button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual Entry</button>
+        </div>
+
+        {mode === 'camera' ? (
+          <QrScanner onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} />
+        ) : (
+          <form className="stack" onSubmit={onManualSubmit}>
+            <label>
+              Barcode input
+              <input
+                ref={usbInputRef}
+                className="scan-input"
+                placeholder="Scan with USB scanner or type barcode and press Enter"
+                value={manual}
+                onChange={(e) => setManual(e.target.value)}
+                aria-label="Barcode input"
+                onBlur={() => setTimeout(() => usbInputRef.current?.focus(), 0)}
+              />
+            </label>
+            <button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit Barcode'}</button>
+          </form>
+        )}
       </section>
 
       <ScanResultCard result={result} />
@@ -193,45 +197,44 @@ function ScanPage() {
   );
 }
 
-function PeoplePage() { /* unchanged behavior */
+function PeoplePage() {
   const [people, setPeople] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({ firstName: '', lastName: '', personId: '', breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0, active: true });
+  const [form, setForm] = useState<any>({ firstName: '', lastName: '', personId: '', codeValue: '', breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0, active: true });
+
   const load = () => api<any[]>('/people?showInactive=true').then(setPeople);
   useEffect(() => { void load(); }, []);
-  return <div className="card"><h2>People</h2><form className="grid-form" onSubmit={(e)=>{e.preventDefault();void api('/people',{method:'POST',body:JSON.stringify(form)}).then(load);}}>{['firstName','lastName','personId','codeValue','grade','group','campus'].map((k)=><input key={k} placeholder={k} value={form[k]||''} onChange={(e)=>setForm({...form,[k]:e.target.value})}/>)}<button>Add</button></form><table><thead><tr><th>Name</th><th>ID</th><th>Code</th><th>B/L/D</th><th>Active</th></tr></thead><tbody>{people.map((p)=><tr key={p.id}><td>{p.firstName} {p.lastName}</td><td>{p.personId}</td><td>{p.codeValue}</td><td>{p.breakfastRemaining}/{p.lunchRemaining}/{p.dinnerRemaining}</td><td>{String(p.active)}</td></tr>)}</tbody></table></div>;
+
+  return (
+    <div className="card stack">
+      <h2>People</h2>
+      <form className="grid-form" onSubmit={(e) => { e.preventDefault(); void api('/people', { method: 'POST', body: JSON.stringify(form) }).then(load); }}>
+        {['firstName', 'lastName', 'personId', 'codeValue', 'grade', 'group', 'campus'].map((k) => <input key={k} placeholder={k} value={form[k] || ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />)}
+        <button className="primary">Add</button>
+      </form>
+
+      <table>
+        <thead><tr><th>Name</th><th>ID</th><th>Code</th><th>Breakfast</th><th>Lunch</th><th>Dinner</th><th>Actions</th></tr></thead>
+        <tbody>
+          {people.map((p) => (
+            <tr key={p.id}>
+              <td>{p.firstName} {p.lastName}</td>
+              <td>{p.personId}</td>
+              <td>{p.codeValue}</td>
+              <td><input type="number" min={0} value={p.breakfastRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastRemaining: Number(e.target.value) } : row))} /></td>
+              <td><input type="number" min={0} value={p.lunchRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchRemaining: Number(e.target.value) } : row))} /></td>
+              <td><input type="number" min={0} value={p.dinnerRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerRemaining: Number(e.target.value) } : row))} /></td>
+              <td><button className="small" type="button" onClick={() => void api(`/people/${p.id}`, { method: 'PUT', body: JSON.stringify({ breakfastRemaining: p.breakfastRemaining, lunchRemaining: p.lunchRemaining, dinnerRemaining: p.dinnerRemaining }) }).then(load)}>Save Meals</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
-function ImportPage() {
-  const [file, setFile] = useState<File>();
-  const [preview, setPreview] = useState<any>();
-  const [result, setResult] = useState<any>();
-
-  async function previewFile() {
-    if (!file) return;
-    const form = new FormData(); form.append('file', file);
-    const res = await fetch(`${API_BASE}/import/preview`, { method: 'POST', credentials: 'include', body: form });
-    setPreview(await res.json());
-  }
-  async function commit() {
-    if (!file) return;
-    const form = new FormData(); form.append('file', file); form.append('generateMissingCodes', 'true');
-    const res = await fetch(`${API_BASE}/import/commit`, { method: 'POST', credentials: 'include', body: form });
-    setResult(await res.json());
-  }
-  return <div className="card"><h2>CSV Import</h2><a href={`${API_BASE}/import/template`} target="_blank" rel="noreferrer">Download Template</a><input type="file" accept=".csv" onChange={(e)=>setFile(e.target.files?.[0])}/><div className="button-row"><button onClick={previewFile} disabled={!file}>Preview</button><button onClick={commit} disabled={!file}>Commit Partial Import</button></div>{preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}{result && <pre>{JSON.stringify(result, null, 2)}</pre>}</div>;
-}
-
-function BadgesPage() {
-  const [people, setPeople] = useState<any[]>([]);
-  useEffect(() => { void api<any[]>('/people?showInactive=true').then(setPeople); }, []);
-  return <div className="card"><h2>Printable QR Badges</h2><button onClick={() => window.print()}>Print Sheet</button><div className="badge-grid">{people.map((p)=><div className="badge" key={p.id}><QRCodeSVG value={p.codeValue} size={90}/><p>{p.firstName} {p.lastName}</p><small>{p.personId}</small></div>)}</div></div>;
-}
-
-function TransactionsPage() {
-  const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => { void api<any[]>('/transactions').then(setRows); }, []);
-  return <div className="card"><h2>Transactions</h2><a href={`${API_BASE}/transactions/export.csv`} target="_blank" rel="noreferrer">Export CSV</a><table><thead><tr><th>Time</th><th>Value</th><th>Meal</th><th>Result</th><th>Reason</th><th>Person</th><th>Station</th></tr></thead><tbody>{rows.map((r)=><tr key={r.id}><td>{new Date(r.timestamp).toLocaleString()}</td><td>{r.scannedValue}</td><td>{r.mealType}</td><td>{r.result}</td><td>{r.failureReason||'-'}</td><td>{r.person?`${r.person.firstName} ${r.person.lastName}`:'-'}</td><td>{r.stationName||'-'}</td></tr>)}</tbody></table></div>;
-}
+function ImportPage() { const [file, setFile] = useState<File>(); const [preview, setPreview] = useState<any>(); const [result, setResult] = useState<any>(); async function previewFile() { if (!file) return; const form = new FormData(); form.append('file', file); const res = await fetch(`${API_BASE}/import/preview`, { method: 'POST', credentials: 'include', body: form }); setPreview(await res.json()); } async function commit() { if (!file) return; const form = new FormData(); form.append('file', file); form.append('generateMissingCodes', 'true'); const res = await fetch(`${API_BASE}/import/commit`, { method: 'POST', credentials: 'include', body: form }); setResult(await res.json()); } return <div className="card"><h2>CSV Import</h2><a href={`${API_BASE}/import/template`} target="_blank" rel="noreferrer">Download Template</a><input type="file" accept=".csv" onChange={(e)=>setFile(e.target.files?.[0])}/><div className="button-row"><button className="secondary" onClick={previewFile} disabled={!file}>Preview</button><button className="primary" onClick={commit} disabled={!file}>Commit Partial Import</button></div>{preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}{result && <pre>{JSON.stringify(result, null, 2)}</pre>}</div>; }
+function BadgesPage() { const [people, setPeople] = useState<any[]>([]); useEffect(() => { void api<any[]>('/people?showInactive=true').then(setPeople); }, []); return <div className="card"><h2>Printable Badges</h2><button className="secondary" onClick={() => window.print()}>Print Sheet</button><div className="badge-grid">{people.map((p)=><div className="badge" key={p.id}><QRCodeSVG value={p.codeValue} size={90}/><p>{p.firstName} {p.lastName}</p><small>{p.personId}</small></div>)}</div></div>; }
+function TransactionsPage() { const [rows, setRows] = useState<any[]>([]); useEffect(() => { void api<any[]>('/transactions').then(setRows); }, []); return <div className="card"><h2>Transactions</h2><a href={`${API_BASE}/transactions/export.csv`} target="_blank" rel="noreferrer">Export CSV</a><table><thead><tr><th>Time</th><th>Value</th><th>Meal</th><th>Result</th><th>Reason</th><th>Person</th><th>Station</th></tr></thead><tbody>{rows.map((r)=><tr key={r.id}><td>{new Date(r.timestamp).toLocaleString()}</td><td>{r.scannedValue}</td><td>{r.mealType}</td><td>{r.result}</td><td>{r.failureReason||'-'}</td><td>{r.person?`${r.person.firstName} ${r.person.lastName}`:'-'}</td><td>{r.stationName||'-'}</td></tr>)}</tbody></table></div>; }
 
 function ReportsPage() {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -251,84 +254,12 @@ function ReportsPage() {
     }
   }
 
-  useEffect(() => {
-    void loadReport();
-  }, []);
+  useEffect(() => { void loadReport(); }, []);
 
-  return (
-    <div className="card stack">
-      <h2>Reports</h2>
-      <div className="filters-row">
-        <label>From <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label>
-        <label>To <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label>
-        <button type="button" onClick={() => void loadReport()}>Apply Filter</button>
-        <a className="button-link" href={`${API_BASE}/reports/export.csv?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`} target="_blank" rel="noreferrer">Export Transactions CSV</a>
-      </div>
-
-      {error && <p className="error">{error}</p>}
-
-      {report && (
-        <>
-          <div className="stats-grid">
-            <div className="stat-card"><p className="muted">Scans</p><p className="value">{report.stats.scans}</p></div>
-            <div className="stat-card"><p className="muted">Breakfasts</p><p className="value">{report.stats.breakfastsServed}</p></div>
-            <div className="stat-card"><p className="muted">Lunches</p><p className="value">{report.stats.lunchesServed}</p></div>
-            <div className="stat-card"><p className="muted">Dinners</p><p className="value">{report.stats.dinnersServed}</p></div>
-            <div className="stat-card"><p className="muted">Failed scans</p><p className="value">{report.stats.failedScans}</p></div>
-          </div>
-
-          <h3>Remaining Meal Balances (Active People)</h3>
-          <div className="stats-grid">
-            <div className="stat-card"><p className="muted">Breakfast remaining</p><p className="value">{report.remainingBalanceSummary.breakfastRemaining}</p></div>
-            <div className="stat-card"><p className="muted">Lunch remaining</p><p className="value">{report.remainingBalanceSummary.lunchRemaining}</p></div>
-            <div className="stat-card"><p className="muted">Dinner remaining</p><p className="value">{report.remainingBalanceSummary.dinnerRemaining}</p></div>
-          </div>
-
-          <h3>Per-person Meal Usage</h3>
-          <table>
-            <thead><tr><th>Person</th><th>ID</th><th>Breakfasts</th><th>Lunches</th><th>Dinners</th><th>Total</th></tr></thead>
-            <tbody>
-              {report.perPersonUsage.map((row) => (
-                <tr key={row.personId}>
-                  <td>{row.firstName} {row.lastName}</td>
-                  <td>{row.personId}</td>
-                  <td>{row.breakfasts}</td>
-                  <td>{row.lunches}</td>
-                  <td>{row.dinners}</td>
-                  <td>{row.total}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <h3>Transactions</h3>
-          <table>
-            <thead><tr><th>Time</th><th>Code</th><th>Meal</th><th>Result</th><th>Reason</th><th>Person</th></tr></thead>
-            <tbody>
-              {report.transactions.map((tx) => (
-                <tr key={tx.id}>
-                  <td>{new Date(tx.timestamp).toLocaleString()}</td>
-                  <td>{tx.scannedValue}</td>
-                  <td>{tx.mealType}</td>
-                  <td>{tx.result}</td>
-                  <td>{tx.failureReason ?? '-'}</td>
-                  <td>{tx.person ? `${tx.person.firstName} ${tx.person.lastName}` : '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-    </div>
-  );
+  return <div className="card stack"><h2>Reports</h2><div className="filters-row"><label>From <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label><label>To <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label><button className="primary" type="button" onClick={() => void loadReport()}>Apply Filter</button><a className="button-link" href={`${API_BASE}/reports/export.csv?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`} target="_blank" rel="noreferrer">Export Transactions CSV</a></div>{error && <p className="error">{error}</p>}{report && <div className="stats-grid"><div className="stat-card"><p className="muted">Scans</p><p className="value">{report.stats.scans}</p></div></div>}</div>;
 }
 
-function SettingsPage() {
-  const [settings, setSettings] = useState<any>();
-  useEffect(() => { void api('/settings').then(setSettings); }, []);
-  if (!settings) return <p>Loading...</p>;
-  return <div className="card"><h2>Settings</h2><div className="grid-form">{Object.keys(settings).filter((k)=>k!=='id'&&k!=='updatedAt').map((k)=><label key={k}>{k}<input value={String(settings[k])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k]==='boolean'?e.target.value==='true':typeof settings[k]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><button onClick={()=>api('/settings',{method:'PUT',body:JSON.stringify(settings)})}>Save</button></div>;
-}
+function SettingsPage() { const [settings, setSettings] = useState<any>(); useEffect(() => { void api('/settings').then(setSettings); }, []); if (!settings) return <p>Loading...</p>; return <div className="card"><h2>Settings</h2><div className="grid-form">{Object.keys(settings).filter((k)=>k!=='id'&&k!=='updatedAt').map((k)=><label key={k}>{k}<input value={String(settings[k])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k]==='boolean'?e.target.value==='true':typeof settings[k]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><button className="primary" onClick={()=>api('/settings',{method:'PUT',body:JSON.stringify(settings)})}>Save</button></div>; }
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -338,15 +269,15 @@ export default function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" />} />
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/" element={<Navigate to={user.role === 'ADMIN' ? '/dashboard' : '/scan'} />} />
         <Route path="/scan" element={<ScanPage />} />
-        <Route path="/people" element={<PeoplePage />} />
-        <Route path="/import" element={<ImportPage />} />
-        <Route path="/badges" element={<BadgesPage />} />
-        <Route path="/transactions" element={<TransactionsPage />} />
-        <Route path="/reports" element={<ReportsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} />
+        <Route path="/people" element={<AdminOnly><PeoplePage /></AdminOnly>} />
+        <Route path="/import" element={<AdminOnly><ImportPage /></AdminOnly>} />
+        <Route path="/badges" element={<AdminOnly><BadgesPage /></AdminOnly>} />
+        <Route path="/transactions" element={<AdminOnly><TransactionsPage /></AdminOnly>} />
+        <Route path="/reports" element={<AdminOnly><ReportsPage /></AdminOnly>} />
+        <Route path="/settings" element={<AdminOnly><SettingsPage /></AdminOnly>} />
       </Routes>
     </Layout>
   );

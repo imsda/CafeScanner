@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../api/client';
 
-type User = { id: number; username: string };
+export type UserRole = 'ADMIN' | 'SCANNER';
+type User = { id: number; username: string; role: UserRole };
 
 const AuthContext = createContext<{
   user: User | null;

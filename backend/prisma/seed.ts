@@ -7,14 +7,24 @@ dotenv.config();
 const prisma = new PrismaClient();
 
 async function main() {
-  const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
-  const rawPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'ChangeMeNow123!';
-  const passwordHash = await bcrypt.hash(rawPassword, 10);
+  const adminUsername = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
+  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'ChangeMeNow123!';
+  const adminPasswordHash = await bcrypt.hash(adminPassword, 10);
 
   await prisma.adminUser.upsert({
-    where: { username },
-    create: { username, passwordHash },
-    update: { passwordHash }
+    where: { username: adminUsername },
+    create: { username: adminUsername, passwordHash: adminPasswordHash, role: 'ADMIN' },
+    update: { passwordHash: adminPasswordHash, role: 'ADMIN' }
+  });
+
+  const scannerUsername = process.env.DEFAULT_SCANNER_USERNAME || 'scanner';
+  const scannerPassword = process.env.DEFAULT_SCANNER_PASSWORD || 'ScanMeals123!';
+  const scannerPasswordHash = await bcrypt.hash(scannerPassword, 10);
+
+  await prisma.adminUser.upsert({
+    where: { username: scannerUsername },
+    create: { username: scannerUsername, passwordHash: scannerPasswordHash, role: 'SCANNER' },
+    update: { passwordHash: scannerPasswordHash, role: 'SCANNER' }
   });
 
   await prisma.setting.upsert({
@@ -23,7 +33,8 @@ async function main() {
     update: {}
   });
 
-  console.log(`Seeded admin user: ${username}`);
+  console.log(`Seeded admin user: ${adminUsername}`);
+  console.log(`Seeded scanner user: ${scannerUsername}`);
 }
 
 main().finally(async () => prisma.$disconnect());
