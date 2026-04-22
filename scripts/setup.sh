@@ -15,6 +15,65 @@ bootstrap_env_file() {
   fi
 }
 
+env_has_key() {
+  local env_file="$1"
+  local key="$2"
+
+  awk -F= -v key="$key" '
+    /^[[:space:]]*#/ || $0 !~ /=/ { next }
+    {
+      rawKey=$1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", rawKey)
+      if (rawKey == key) {
+        found=1
+        exit
+      }
+    }
+    END {
+      if (found) {
+        exit 0
+      }
+      exit 1
+    }
+  ' "$env_file"
+}
+
+merge_missing_env_keys() {
+  local env_file="$1"
+  local example_file="$2"
+
+  if [[ ! -f "$env_file" || ! -f "$example_file" ]]; then
+    return
+  fi
+
+  local line
+  local key
+  local added=0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" != *"="* ]] && continue
+
+    key="${line%%=*}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+
+    [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && continue
+
+    if env_has_key "$env_file" "$key"; then
+      continue
+    fi
+
+    if (( added == 0 )) && [[ -s "$env_file" ]]; then
+      printf '\n' >> "$env_file"
+    fi
+
+    printf '%s\n' "$line" >> "$env_file"
+    echo "[setup] Added missing env variable: ${key}"
+    added=1
+  done < "$example_file"
+}
+
 env_get_value() {
   local env_file="$1"
   local key="$2"
@@ -72,7 +131,7 @@ is_placeholder_value() {
   local value="$1"
 
   shopt -s nocasematch
-  if [[ "$value" =~ ^(change-me|changeme|replace-me|replace_this|your[_-].*|example|placeholder|todo|setme)([-_].*)?$ ]]; then
+  if [[ "$value" =~ ^(change[-_]?me.*|replace[-_]?me.*|replace_this.*|your[_-].*|example.*|placeholder.*|todo.*|setme.*)$ ]]; then
     shopt -u nocasematch
     return 0
   fi
@@ -153,6 +212,8 @@ validate_required_env_vars() {
 echo "[setup] Bootstrapping environment files"
 bootstrap_env_file "backend/.env" "backend/.env.example"
 bootstrap_env_file "frontend/.env" "frontend/.env.example"
+merge_missing_env_keys "backend/.env" "backend/.env.example"
+merge_missing_env_keys "frontend/.env" "frontend/.env.example"
 
 set_generated_value_if_placeholder "backend/.env" "SESSION_SECRET" "change-me-super-secret" "$(openssl rand -hex 32)"
 
