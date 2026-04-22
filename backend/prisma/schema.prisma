@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  MANUAL
+  NONE
+}
+
+enum ScanResult {
+  SUCCESS
+  FAILURE
+}
+
+model AdminUser {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  transactions ScanTransaction[]
+}
+
+model Person {
+  id                 Int      @id @default(autoincrement())
+  firstName          String
+  lastName           String
+  personId           String   @unique
+  codeValue          String   @unique
+  breakfastRemaining Int      @default(0)
+  lunchRemaining     Int      @default(0)
+  dinnerRemaining    Int      @default(0)
+  active             Boolean  @default(true)
+  grade              String?
+  group              String?
+  campus             String?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  transactions       ScanTransaction[]
+}
+
+model Setting {
+  id                       Int      @id @default(1)
+  schoolName               String   @default("My School Cafeteria")
+  timezone                 String   @default("Etc/UTC")
+  breakfastStart           String   @default("05:00")
+  breakfastEnd             String   @default("10:00")
+  lunchStart               String   @default("11:00")
+  lunchEnd                 String   @default("14:00")
+  dinnerStart              String   @default("17:00")
+  dinnerEnd                String   @default("19:00")
+  scannerCooldownSeconds   Int      @default(4)
+  stationName              String   @default("Main Station")
+  enableSounds             Boolean  @default(true)
+  allowManualMealOverride  Boolean  @default(false)
+  hideInactiveByDefault    Boolean  @default(true)
+  updatedAt                DateTime @updatedAt
+}
+
+model ScanTransaction {
+  id            Int        @id @default(autoincrement())
+  timestamp     DateTime   @default(now())
+  scannedValue  String
+  mealType      MealType   @default(NONE)
+  result        ScanResult
+  failureReason String?
+  stationName   String?
+  personId      Int?
+  adminUserId   Int?
+  person        Person?    @relation(fields: [personId], references: [id])
+  adminUser     AdminUser? @relation(fields: [adminUserId], references: [id])
+}
+
+model ImportHistory {
+  id             Int      @id @default(autoincrement())
+  filename       String
+  totalRows      Int
+  successRows    Int
+  failedRows     Int
+  createdAt      DateTime @default(now())
+  errorSummary   String?
+}

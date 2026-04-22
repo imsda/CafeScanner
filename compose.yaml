@@ -1,0 +1,9 @@
+services:
+  cafescanner:
+    build: .
+    ports:
+      - "4000:4000"
+      - "5173:5173"
+    volumes:
+      - ./backend/prisma:/app/backend/prisma
+      - ./.env:/app/.env
