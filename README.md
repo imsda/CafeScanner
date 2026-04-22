@@ -19,13 +19,14 @@ Seeded from `backend/.env` (or defaults below):
   - Password: `DEFAULT_ADMIN_PASSWORD` (default `ChangeMeNow123!`)
 - **Scanner-only**
   - Username: `DEFAULT_SCANNER_USERNAME` (default `scanner`)
-  - Password: `DEFAULT_SCANNER_PASSWORD` (default `ScanMeals123!`)
+  - Password: `DEFAULT_SCANNER_PASSWORD` (default `ChangeMeScanner123!`)
 
 Scanner-only accounts can sign in and use the scan station, but cannot access admin pages.
 
 ## Environment Files
 
 - `backend/.env` (auto-created from `backend/.env.example`)
+  - Running `./scripts/setup.sh` also auto-merges newly added required keys from `backend/.env.example` into an existing `backend/.env` file without overwriting existing values.
 - `frontend/.env` (auto-created from `frontend/.env.example`)
 
 ### Required backend env values
