@@ -43,8 +43,9 @@ See `backend/.env.example`:
 See `frontend/.env.example`:
 
 - `VITE_API_BASE` (optional override for API URL)
-  - default file value: `http://localhost:4000/api`
-  - if unset, frontend falls back to `http://<current-hostname>:4000/api`
+  - if set, this value is always used
+  - if unset and running in Vite dev server (`:5173`), frontend falls back to `http://<current-hostname>:4000/api`
+  - if unset outside Vite dev mode, frontend uses same-origin `/api` for reverse-proxy deployments
 
 ## Default Admin Credentials
 
