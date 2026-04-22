@@ -10,7 +10,7 @@ import transactionRoutes from './routes/transactions.js';
 import importRoutes from './routes/import.js';
 import dashboardRoutes from './routes/dashboard.js';
 import reportRoutes from './routes/reports.js';
-import { requireAuth } from './middleware/auth.js';
+import { requireAdmin, requireAuth } from './middleware/auth.js';
 
 dotenv.config();
 
@@ -60,13 +60,13 @@ app.use(
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRoutes);
 
-app.use('/api/people', requireAuth, peopleRoutes);
-app.use('/api/settings', requireAuth, settingsRoutes);
 app.use('/api/scan', requireAuth, scanRoutes);
-app.use('/api/transactions', requireAuth, transactionRoutes);
-app.use('/api/import', requireAuth, importRoutes);
-app.use('/api/dashboard', requireAuth, dashboardRoutes);
-app.use('/api/reports', requireAuth, reportRoutes);
+app.use('/api/people', requireAuth, requireAdmin, peopleRoutes);
+app.use('/api/settings', requireAuth, requireAdmin, settingsRoutes);
+app.use('/api/transactions', requireAuth, requireAdmin, transactionRoutes);
+app.use('/api/import', requireAuth, requireAdmin, importRoutes);
+app.use('/api/dashboard', requireAuth, requireAdmin, dashboardRoutes);
+app.use('/api/reports', requireAuth, requireAdmin, reportRoutes);
 
 app.listen(port, host, () => {
   console.log(`Backend listening on http://${host}:${port}`);

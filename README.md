@@ -1,6 +1,6 @@
 # CafeScanner
 
-CafeScanner is a self-hostable school cafeteria meal tracking system with QR-based check-in.
+CafeScanner is a self-hostable school cafeteria meal tracking system with **barcode-first** check-in for camera scanners and USB handheld scanners.
 
 ## Quick Start (Fresh Clone)
 
@@ -10,55 +10,53 @@ cd CafeScanner
 ./scripts/setup.sh
 ```
 
-`./scripts/setup.sh` is the only required setup command. It will:
-- bootstrap env files without overwriting existing ones
-- validate required env keys and placeholder values
-- install root + workspace dependencies
-- run Prisma migrations and seed
-- run full backend + frontend build verification
+## Default Login Credentials
 
-If setup fails, it exits with a clear error that identifies what is missing.
+Seeded from `backend/.env` (or defaults below):
+
+- **Admin**
+  - Username: `DEFAULT_ADMIN_USERNAME` (default `admin`)
+  - Password: `DEFAULT_ADMIN_PASSWORD` (default `ChangeMeNow123!`)
+- **Scanner-only**
+  - Username: `DEFAULT_SCANNER_USERNAME` (default `scanner`)
+  - Password: `DEFAULT_SCANNER_PASSWORD` (default `ScanMeals123!`)
+
+Scanner-only accounts can sign in and use the scan station, but cannot access admin pages.
 
 ## Environment Files
 
-CafeScanner uses these env files:
-
-- `backend/.env` (required, auto-created from `backend/.env.example`)
+- `backend/.env` (auto-created from `backend/.env.example`)
 - `frontend/.env` (auto-created from `frontend/.env.example`)
 
 ### Required backend env values
 
-See `backend/.env.example`:
-
-- `DATABASE_URL` (Prisma SQLite path)
-- `SESSION_SECRET` (must be changed from placeholder)
+- `DATABASE_URL`
+- `SESSION_SECRET`
 - `DEFAULT_ADMIN_USERNAME`
 - `DEFAULT_ADMIN_PASSWORD`
-- `PORT` (backend port, default `4000`)
+- `DEFAULT_SCANNER_USERNAME`
+- `DEFAULT_SCANNER_PASSWORD`
+- `PORT` (default `4000`)
 - `BACKEND_HOST` (default `0.0.0.0`)
-- `CLIENT_ORIGIN` (comma-separated allowlist used in production)
+- `CLIENT_ORIGIN`
 
 ### Frontend env values
 
-See `frontend/.env.example`:
+- `VITE_API_BASE` (optional)
 
-- `VITE_API_BASE` (optional override for API URL)
-  - if set, this value is always used
-  - if unset and running in Vite dev server (`:5173`), frontend falls back to `http://<current-hostname>:4000/api`
-  - if unset outside Vite dev mode, frontend uses same-origin `/api` for reverse-proxy deployments
+## Barcode Scanning Notes
 
-## Default Admin Credentials
+- Camera mode supports common 1D barcode formats (Code 128, Code 39, Code 93, Codabar, EAN-8/13, ITF, UPC-A/E) and QR fallback.
+- Scan station now uses barcode wording in the UI and result states.
+- Camera mode uses a **Start Scanner** action to trigger browser camera permission reliably.
 
-The seed script creates/updates one admin user:
+## USB Scanner / Manual Entry Notes
 
-- Username: `DEFAULT_ADMIN_USERNAME` (default: `admin`)
-- Password: `DEFAULT_ADMIN_PASSWORD` (default: `ChangeMeNow123!`)
-
-Change these in `backend/.env` before running setup if needed.
+- Use **USB Scanner / Manual Entry** mode on the scan station.
+- Keep focus on the barcode input; most USB scanners act like keyboard typing + Enter.
+- Camera, USB scanner, and manual submit all post to the same `/api/scan` deduction route.
 
 ## Development Mode
-
-Start both apps:
 
 ```bash
 ./scripts/dev.sh
@@ -68,30 +66,9 @@ Defaults:
 - Backend: `http://0.0.0.0:4000`
 - Frontend: `http://0.0.0.0:5173`
 
-### Access from another machine on the LAN
-
-1. Find the IP of the machine running CafeScanner (example: `192.168.1.50`).
-2. On another machine, open `http://192.168.1.50:5173`.
-3. Frontend API calls will target `http://192.168.1.50:4000/api` by default.
-
-Notes:
-- In development (`NODE_ENV=development`), backend CORS allows LAN origins for easier testing.
-- In production, backend enforces `CLIENT_ORIGIN` allowlist.
-
 ## Production Run
-
-Build and start:
 
 ```bash
 ./scripts/build.sh
 ./scripts/start.sh
 ```
-
-Or directly:
-
-```bash
-npm run build
-npm run start
-```
-
-For production hardening, set `NODE_ENV=production` and set a strict `CLIENT_ORIGIN` value in `backend/.env`.
