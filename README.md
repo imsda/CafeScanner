@@ -34,7 +34,15 @@ CafeScanner is a self-hostable school cafeteria meal tracking system with QR-bas
 
 ## Environment Variables
 
-Copy `.env.example` to `.env`.
+`./scripts/setup.sh` now bootstraps env files automatically on a fresh clone:
+
+- If `.env` is missing and `.env.example` exists, it creates `.env`.
+- If `backend/.env` is missing and `backend/.env.example` exists, it creates `backend/.env`.
+- Existing `.env` files are never overwritten.
+
+After bootstrapping, setup validates that required keys from each `*.env.example` have non-empty values in the matching `.env`. If anything is missing, setup stops and tells you which file to edit.
+
+Default examples:
 
 ```env
 DATABASE_URL="file:./prisma/dev.db"
@@ -51,6 +59,8 @@ CLIENT_ORIGIN="http://localhost:5173"
 ./scripts/setup.sh
 ./scripts/dev.sh
 ```
+
+`./scripts/setup.sh` is idempotent and safe to run multiple times. It bootstraps env files, installs dependencies, runs Prisma migrate + seed, and builds both apps.
 
 This runs:
 - backend on `http://localhost:4000`
