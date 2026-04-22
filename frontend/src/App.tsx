@@ -171,6 +171,8 @@ function ScanPage() {
           <button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button>
         </div>
 
+        <p className="muted">Camera mode works best on HTTPS (or localhost). If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>
+
         {mode === 'camera' ? (
           <QrScanner onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} />
         ) : (
