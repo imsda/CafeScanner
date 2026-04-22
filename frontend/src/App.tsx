@@ -2,6 +2,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { useState } from 'react';
 import { api, API_BASE } from './api/client';
+import type { MealType, ScanPerson, ScanResponse } from './api/types';
 import QrScanner from './components/QrScanner';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -28,14 +29,8 @@ function Dashboard() {
 
 type ScanSuccess = {
   ok: true;
-  person: {
-    firstName: string;
-    lastName: string;
-    breakfastRemaining: number;
-    lunchRemaining: number;
-    dinnerRemaining: number;
-  };
-  mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER';
+  person: ScanPerson;
+  mealType: MealType;
 };
 
 type ScanFailure = {
@@ -53,11 +48,12 @@ function ScanPage() {
 
   async function submit(code: string) {
     try {
-      const res = await api<Omit<ScanSuccess, 'ok'>>('/scan', { method: 'POST', body: JSON.stringify({ scannedValue: code }) });
-      setResult({ ok: true, ...res });
+      const res = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ scannedValue: code }) });
+      setResult({ ok: true, person: res.person, mealType: res.mealType });
       if (settings?.enableSounds) new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEA').play().catch(() => {});
-    } catch (e: any) {
-      setResult({ ok: false, error: e.message });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Scan failed';
+      setResult({ ok: false, error: message });
     }
   }
 

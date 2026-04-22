@@ -1,25 +1,44 @@
 import { useEffect, useRef } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
+import { BarcodeFormat, DecodeHintType } from '@zxing/library';
+
+const SUPPORTED_FORMATS: BarcodeFormat[] = [BarcodeFormat.QR_CODE];
 
 /**
  * Scanner wrapper abstraction.
- * Barcode support can be added by changing decode hints/reader in this component only.
+ * Add 1D support later by extending SUPPORTED_FORMATS.
  */
 export default function QrScanner({ onResult, onError }: { onResult: (text: string) => void; onError: (msg: string) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const codeReader = new BrowserMultiFormatReader();
-    let stopFn: (() => void) | null = null;
+    const hints = new Map([[DecodeHintType.POSSIBLE_FORMATS, SUPPORTED_FORMATS]]);
+    const codeReader = new BrowserMultiFormatReader(hints);
 
-    codeReader.decodeFromVideoDevice(undefined, videoRef.current!, (result, error, controls) => {
-      stopFn = () => controls.stop();
-      if (result) onResult(result.getText());
-      if (error && error.name !== 'NotFoundException') onError('Camera scan error. Check camera permissions.');
-    }).catch(() => onError('Unable to access camera.'));
+    let stopScanner: (() => void) | undefined;
+
+    if (!videoRef.current) {
+      onError('Camera element is unavailable.');
+      return;
+    }
+
+    codeReader
+      .decodeFromVideoDevice(undefined, videoRef.current, (result, error, controls) => {
+        stopScanner = () => controls.stop();
+
+        if (result) {
+          onResult(result.getText());
+          return;
+        }
+
+        if (error && error.name !== 'NotFoundException') {
+          onError('Camera scan error. Check camera permissions.');
+        }
+      })
+      .catch(() => onError('Unable to access camera.'));
 
     return () => {
-      if (stopFn) stopFn();
+      stopScanner?.();
     };
   }, [onResult, onError]);
 

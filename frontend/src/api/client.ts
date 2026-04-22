@@ -1,4 +1,15 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000/api';
+const explicitApiBase = import.meta.env.VITE_API_BASE;
+const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:4000/api`;
+const API_BASE = explicitApiBase || defaultApiBase;
+
+function getErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) {
+    return null;
+  }
+
+  const maybeError = payload.error;
+  return typeof maybeError === 'string' && maybeError.length > 0 ? maybeError : null;
+}
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -6,11 +17,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     ...init
   });
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(err.error || 'Request failed');
+    const errPayload = await res.json().catch(() => null);
+    throw new Error(getErrorMessage(errPayload) || 'Request failed');
   }
-  return res.json();
+
+  return res.json() as Promise<T>;
 }
 
 export { API_BASE };
