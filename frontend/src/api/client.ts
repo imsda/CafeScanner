@@ -1,11 +1,8 @@
 const explicitApiBase = import.meta.env.VITE_API_BASE as string | undefined;
-const sameOriginApiBase = `${window.location.origin}/api`;
-const fallbackApiBase = `${window.location.protocol}//${window.location.hostname}:4000/api`;
+
 const API_BASE = (explicitApiBase && explicitApiBase.trim().length > 0
   ? explicitApiBase.trim()
-  : window.location.port === '5173'
-    ? fallbackApiBase
-    : sameOriginApiBase
+  : '/api'
 ).replace(/\/$/, '');
 
 function getErrorMessage(payload: unknown): string | null {

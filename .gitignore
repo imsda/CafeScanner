@@ -6,4 +6,5 @@ backend/prisma/dev.db
 backend/prisma/dev.db-journal
 backend/dist
 frontend/dist
+certs/*.key
 .DS_Store
