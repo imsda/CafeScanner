@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { nanoid } from 'nanoid';
 
 const router = Router();
+const DELETE_CONFIRMATION_PHRASE = 'DELETE USER';
 
 const personSchema = z.object({
   firstName: z.string().min(1),
@@ -79,6 +80,35 @@ router.post('/bulk-set', async (req, res) => {
   if (campus) where.campus = campus;
   const result = await prisma.person.updateMany({ where, data: { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner } });
   res.json(result);
+});
+
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid person id' });
+  }
+
+  const confirmationPhrase = typeof req.body?.confirmationPhrase === 'string' ? req.body.confirmationPhrase : '';
+  if (confirmationPhrase !== DELETE_CONFIRMATION_PHRASE) {
+    return res.status(400).json({ error: `confirmationPhrase must match "${DELETE_CONFIRMATION_PHRASE}"` });
+  }
+
+  const person = await prisma.person.findUnique({ where: { id }, select: { id: true, personId: true, firstName: true, lastName: true } });
+  if (!person) {
+    return res.status(404).json({ error: 'Person not found' });
+  }
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    const deletedTransactions = await tx.scanTransaction.deleteMany({ where: { personId: id } });
+    await tx.person.delete({ where: { id } });
+    return deletedTransactions.count;
+  });
+
+  return res.json({
+    ok: true,
+    deletedPerson: person,
+    deletedTransactions: deleted
+  });
 });
 
 export default router;
