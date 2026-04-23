@@ -2,8 +2,9 @@ import { MealTrackingMode, MealType } from '@prisma/client';
 import { Router } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { prisma } from '../db.js';
+import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
 import { nanoid } from 'nanoid';
+import { getMealTrackingMode } from '../services/settingsService.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const router = Router();
@@ -137,8 +138,20 @@ function splitCampMeetingName(personName: string): ParsedPersonName {
 }
 
 async function getMode() {
-  const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
-  return settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
+  return getMealTrackingMode();
+}
+
+function parseErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return 'Unexpected import error';
+}
+
+function chunkArray<T>(items: T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+  return chunks;
 }
 
 function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
@@ -239,63 +252,106 @@ router.post('/commit', upload.single('file'), async (req, res) => {
     }
 
     const validRows = preview.filter((row) => row.valid);
-    let successRows = 0;
+    const invalidRows = preview.filter((row) => !row.valid);
+    const errors = invalidRows.map((row) => ({ row: row.index, error: row.errors.join('; ') }));
 
-    await prisma.$transaction(async (tx) => {
-      if (replaceExisting) {
-        await tx.mealEntitlement.deleteMany({});
-      }
+    const peopleByPersonId = new Map<string, { personId: string; personName: string; firstName: string; lastName: string }>();
+    const entitlementRows: Array<{ personId: string; personName: string; mealType: MealType; mealDate: string }> = [];
 
-      for (const row of validRows) {
-        const mealType = normalizeMealType(row.mealType);
-        const mealDate = normalizeCampMeetingDate(row.mealDate);
-        if (!mealType || !mealDate || !row.personId || !row.personName) continue;
+    for (const row of validRows) {
+      const mealType = normalizeMealType(row.mealType);
+      const mealDate = normalizeCampMeetingDate(row.mealDate);
+      if (!mealType || !mealDate || !row.personId || !row.personName) continue;
 
+      if (!peopleByPersonId.has(row.personId)) {
         const { firstName, lastName } = splitCampMeetingName(row.personName);
-        await tx.person.upsert({
-          where: { personId: row.personId },
-          update: {
-            firstName,
-            lastName,
-            active: true
-          },
-          create: {
-            firstName,
-            lastName,
-            personId: row.personId,
-            codeValue: nanoid(10),
-            active: true
-          }
+        peopleByPersonId.set(row.personId, {
+          personId: row.personId,
+          personName: row.personName,
+          firstName,
+          lastName
         });
+      }
 
-        await tx.mealEntitlement.create({
-          data: {
-            personId: row.personId,
-            personName: row.personName,
-            mealType,
-            mealDate
-          }
+      entitlementRows.push({
+        personId: row.personId,
+        personName: row.personName,
+        mealType,
+        mealDate
+      });
+    }
+
+    const peopleToUpsert = Array.from(peopleByPersonId.values());
+    const personChunks = chunkArray(peopleToUpsert, 100);
+    const entitlementChunks = chunkArray(entitlementRows, 250);
+
+    console.log(`[IMPORT] Camp Meeting import start: file=${req.file?.originalname || 'camp-meeting.csv'}, totalRows=${preview.length}, validRows=${validRows.length}, invalidRows=${invalidRows.length}, peopleUpserts=${peopleToUpsert.length}, entitlementRows=${entitlementRows.length}, replaceExisting=${replaceExisting}`);
+
+    try {
+      if (replaceExisting) {
+        await withSqliteTimeoutRetry('import.campMeeting.deleteExistingEntitlements', () => prisma.mealEntitlement.deleteMany({}));
+      }
+
+      for (let i = 0; i < personChunks.length; i++) {
+        const chunk = personChunks[i];
+        console.log(`[IMPORT] Upserting people chunk ${i + 1}/${personChunks.length} (rows=${chunk.length}).`);
+
+        await withSqliteTimeoutRetry(`import.campMeeting.peopleChunk.${i + 1}`, async () => {
+          await prisma.$transaction(
+            chunk.map((person) => prisma.person.upsert({
+              where: { personId: person.personId },
+              update: {
+                firstName: person.firstName,
+                lastName: person.lastName,
+                active: true
+              },
+              create: {
+                firstName: person.firstName,
+                lastName: person.lastName,
+                personId: person.personId,
+                codeValue: nanoid(10),
+                active: true
+              }
+            }))
+          );
         });
-        successRows += 1;
       }
-    });
 
-    const failedRows = preview.length - successRows;
-    const errors = preview
-      .filter((row) => !row.valid)
-      .map((row) => ({ row: row.index, error: row.errors.join('; ') }));
+      for (let i = 0; i < entitlementChunks.length; i++) {
+        const chunk = entitlementChunks[i];
+        console.log(`[IMPORT] Writing entitlement chunk ${i + 1}/${entitlementChunks.length} (rows=${chunk.length}).`);
 
-    await prisma.importHistory.create({
-      data: {
-        filename: req.file?.originalname || 'camp-meeting.csv',
-        totalRows: preview.length,
-        successRows,
-        failedRows,
-        errorSummary: errors.slice(0, 8).map((e) => `Row ${e.row}: ${e.error}`).join('; ') || null
+        await withSqliteTimeoutRetry(`import.campMeeting.entitlementChunk.${i + 1}`, () => prisma.mealEntitlement.createMany({ data: chunk }));
       }
-    });
 
-    return res.json({ totalRows: preview.length, successRows, failedRows, errors, mode });
+      const successRows = entitlementRows.length;
+      const failedRows = preview.length - successRows;
+
+      await prisma.importHistory.create({
+        data: {
+          filename: req.file?.originalname || 'camp-meeting.csv',
+          totalRows: preview.length,
+          successRows,
+          failedRows,
+          errorSummary: errors.slice(0, 8).map((e) => `Row ${e.row}: ${e.error}`).join('; ') || null
+        }
+      });
+
+      console.log(`[IMPORT] Camp Meeting import complete: successRows=${successRows}, failedRows=${failedRows}.`);
+      return res.json({ totalRows: preview.length, successRows, failedRows, errors, mode });
+    } catch (error) {
+      const isTimeout = isSqliteTimeoutError(error);
+      const message = isTimeout
+        ? 'Database is busy during import. Please wait a moment and try again.'
+        : parseErrorMessage(error);
+
+      console.error('[IMPORT] Camp Meeting import failed.', error);
+
+      return res.status(500).json({
+        error: message,
+        code: isTimeout ? 'SQLITE_TIMEOUT' : 'IMPORT_FAILED'
+      });
+    }
   }
 
   const generateMissingCodes = req.body.generateMissingCodes === 'true';
