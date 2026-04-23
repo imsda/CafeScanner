@@ -10,6 +10,36 @@ cd CafeScanner
 ./scripts/setup.sh
 ```
 
+## Prerequisites to install separately
+
+Install these once on the host before running `./scripts/setup.sh`:
+
+- **Git** (required)
+  - Used to clone and update this repository.
+  - Example: `sudo apt-get install -y git`
+- **sudo/root access + apt** (required on Ubuntu/Debian)
+  - `setup.sh` installs missing app-runtime packages (Node.js/npm/npx and openssl) with `apt-get` when needed.
+- **Database service for non-SQLite deployments** (required only if `DATABASE_URL` points to an external database)
+  - `setup.sh` runs Prisma migrations and seeding, but does not install/manage PostgreSQL/MySQL server daemons.
+- **Docker** (optional)
+  - Useful for containerized deployment workflows; not required for normal local setup with `scripts/setup.sh`.
+- **Nginx or another reverse proxy** (optional, production)
+  - Needed only for production TLS/domain reverse-proxy setups; intentionally not configured by `scripts/setup.sh`.
+
+## What `./scripts/setup.sh` handles automatically
+
+- Checks required app dependencies and installs missing runtime tools on Ubuntu/Debian when appropriate:
+  - Node.js (modern LTS via NodeSource), npm, npx
+  - openssl
+- Bootstraps `backend/.env` and `frontend/.env` from example files.
+- Merges newly added env keys from `*.env.example` into existing env files without overwriting existing values.
+- Generates a secure `SESSION_SECRET` automatically when the placeholder value is still present.
+- Validates required environment values and fails with clear messages when values are missing/placeholders.
+- Installs all npm workspace dependencies (root, backend, frontend).
+- Runs Prisma migration status checks and deploy-mode migrations safely.
+- Runs seed logic (`npm run db:seed`).
+- Runs the full app build (`npm run build`).
+
 ## Default Login Credentials
 
 Seeded from `backend/.env` (or defaults below):
