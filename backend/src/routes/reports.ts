@@ -12,6 +12,26 @@ function parseDate(value: unknown, fallback: Date): Date {
     return fallback;
   }
 
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnlyMatch) {
+    const [, yearRaw, monthRaw, dayRaw] = dateOnlyMatch;
+    const year = Number(yearRaw);
+    const monthIndex = Number(monthRaw) - 1;
+    const day = Number(dayRaw);
+    const parsedLocal = new Date(year, monthIndex, day);
+
+    if (
+      Number.isNaN(parsedLocal.getTime())
+      || parsedLocal.getFullYear() !== year
+      || parsedLocal.getMonth() !== monthIndex
+      || parsedLocal.getDate() !== day
+    ) {
+      return fallback;
+    }
+
+    return parsedLocal;
+  }
+
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
