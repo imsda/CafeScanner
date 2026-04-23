@@ -1,8 +1,9 @@
-import { MealType, ScanResult } from '@prisma/client';
+import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { Router } from 'express';
 import { endOfDay, startOfDay } from 'date-fns';
 import { Parser } from 'json2csv';
 import { prisma } from '../db.js';
+import { getMealTotalsByPerson } from '../services/mealTotalsReport.js';
 
 const router = Router();
 
@@ -15,9 +16,18 @@ function parseDate(value: unknown, fallback: Date): Date {
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
+function resolveDateRange(query: Record<string, unknown>): { from: Date; to: Date } {
+  const fromQuery = query.startDate ?? query.from;
+  const toQuery = query.endDate ?? query.to;
+
+  const from = startOfDay(parseDate(fromQuery, new Date(0)));
+  const to = endOfDay(parseDate(toQuery, new Date()));
+
+  return { from, to };
+}
+
 router.get('/summary', async (req, res) => {
-  const from = startOfDay(parseDate(req.query.from, new Date()));
-  const to = endOfDay(parseDate(req.query.to, new Date()));
+  const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
 
   const [transactions, people, settings] = await Promise.all([
     prisma.scanTransaction.findMany({
@@ -56,8 +66,6 @@ router.get('/summary', async (req, res) => {
   const mealCounts = { BREAKFAST: 0, LUNCH: 0, DINNER: 0 };
   let failedScans = 0;
 
-  const perPersonMap = new Map<number, { personId: string; firstName: string; lastName: string; breakfasts: number; lunches: number; dinners: number; total: number }>();
-
   for (const tx of transactions) {
     if (tx.result === ScanResult.FAILURE) {
       failedScans += 1;
@@ -67,25 +75,10 @@ router.get('/summary', async (req, res) => {
     if (tx.mealType === MealType.BREAKFAST || tx.mealType === MealType.LUNCH || tx.mealType === MealType.DINNER) {
       mealCounts[tx.mealType] += 1;
     }
-
-    if (tx.person) {
-      const existing = perPersonMap.get(tx.person.id) ?? {
-        personId: tx.person.personId,
-        firstName: tx.person.firstName,
-        lastName: tx.person.lastName,
-        breakfasts: 0,
-        lunches: 0,
-        dinners: 0,
-        total: 0
-      };
-
-      if (tx.mealType === MealType.BREAKFAST) existing.breakfasts += 1;
-      if (tx.mealType === MealType.LUNCH) existing.lunches += 1;
-      if (tx.mealType === MealType.DINNER) existing.dinners += 1;
-      existing.total += 1;
-      perPersonMap.set(tx.person.id, existing);
-    }
   }
+
+  const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.countdown;
+  const mealTotalsByPerson = await getMealTotalsByPerson({ from, to, mealTrackingMode });
 
   const remainingBalanceSummary = people.reduce(
     (acc, person) => {
@@ -108,12 +101,10 @@ router.get('/summary', async (req, res) => {
     { breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 }
   );
 
-  const mealTotalsByPerson = Array.from(perPersonMap.values()).sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
-
   res.json({
     from,
     to,
-    mealTrackingMode: settings?.mealTrackingMode ?? 'countdown',
+    mealTrackingMode,
     stats: {
       scans: transactions.length,
       breakfastsServed: mealCounts.BREAKFAST,
@@ -130,45 +121,33 @@ router.get('/summary', async (req, res) => {
 });
 
 router.get('/meal-totals.csv', async (req, res) => {
-  const from = startOfDay(parseDate(req.query.from, new Date()));
-  const to = endOfDay(parseDate(req.query.to, new Date()));
+  const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
+  const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
+  const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.countdown;
 
-  const transactions = await prisma.scanTransaction.findMany({
-    where: { timestamp: { gte: from, lte: to }, result: ScanResult.SUCCESS },
-    include: {
-      person: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          personId: true
-        }
-      }
-    }
-  });
-
-  const perPersonMap = new Map<number, { name: string; personId: string; totalMeals: number; breakfast: number; lunch: number; dinner: number }>();
-
-  for (const tx of transactions) {
-    if (!tx.person) continue;
-
-    const existing = perPersonMap.get(tx.person.id) ?? {
-      name: `${tx.person.firstName} ${tx.person.lastName}`.trim(),
-      personId: tx.person.personId,
-      totalMeals: 0,
-      breakfast: 0,
-      lunch: 0,
-      dinner: 0
-    };
-
-    if (tx.mealType === MealType.BREAKFAST) existing.breakfast += 1;
-    if (tx.mealType === MealType.LUNCH) existing.lunch += 1;
-    if (tx.mealType === MealType.DINNER) existing.dinner += 1;
-    existing.totalMeals += 1;
-    perPersonMap.set(tx.person.id, existing);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[reports/meal-totals.csv] input', {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      mode: mealTrackingMode
+    });
   }
 
-  const rows = Array.from(perPersonMap.values()).sort((a, b) => b.totalMeals - a.totalMeals || a.name.localeCompare(b.name));
+  const reportRows = await getMealTotalsByPerson({ from, to, mealTrackingMode });
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[reports/meal-totals.csv] rows', reportRows.length);
+  }
+
+  const rows = reportRows.map((row) => ({
+    name: `${row.firstName} ${row.lastName}`.trim(),
+    personId: row.personId,
+    totalMeals: row.total,
+    breakfast: row.breakfasts,
+    lunch: row.lunches,
+    dinner: row.dinners
+  }));
+
   const parser = new Parser({
     fields: ['name', 'personId', 'totalMeals', 'breakfast', 'lunch', 'dinner']
   });
@@ -180,8 +159,7 @@ router.get('/meal-totals.csv', async (req, res) => {
 });
 
 router.get('/export.csv', async (req, res) => {
-  const from = startOfDay(parseDate(req.query.from, new Date()));
-  const to = endOfDay(parseDate(req.query.to, new Date()));
+  const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
 
   const rows = await prisma.scanTransaction.findMany({
     where: { timestamp: { gte: from, lte: to } },
