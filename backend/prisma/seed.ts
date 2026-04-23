@@ -14,7 +14,7 @@ async function main() {
   await prisma.adminUser.upsert({
     where: { username: adminUsername },
     create: { username: adminUsername, passwordHash: adminPasswordHash, role: 'ADMIN' },
-    update: { passwordHash: adminPasswordHash, role: 'ADMIN' }
+    update: {}
   });
 
   const scannerUsername = process.env.DEFAULT_SCANNER_USERNAME || 'scanner';
@@ -24,7 +24,7 @@ async function main() {
   await prisma.adminUser.upsert({
     where: { username: scannerUsername },
     create: { username: scannerUsername, passwordHash: scannerPasswordHash, role: 'SCANNER' },
-    update: { passwordHash: scannerPasswordHash, role: 'SCANNER' }
+    update: {}
   });
 
   await prisma.setting.upsert({
@@ -33,8 +33,8 @@ async function main() {
     update: {}
   });
 
-  console.log(`Seeded admin user: ${adminUsername}`);
-  console.log(`Seeded scanner user: ${scannerUsername}`);
+  console.log(`Ensured default admin user exists: ${adminUsername}`);
+  console.log(`Ensured default scanner user exists: ${scannerUsername}`);
 }
 
 main().finally(async () => prisma.$disconnect());
