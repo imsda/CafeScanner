@@ -49,8 +49,8 @@ Scanner-only accounts can sign in and use the scan station, but cannot access ad
 
 - Camera mode supports common 1D barcode formats (Code 128, Code 39, Code 93, Codabar, EAN-8/13, ITF, UPC-A/E) and QR fallback.
 - Camera mode now starts only after tapping **Start Camera Scanner**, which explicitly triggers browser permission flow and prioritizes the rear camera when available.
-- Phone browser camera access requires a **secure context**: HTTPS or localhost.
-- Plain HTTP on a LAN IP (for example `http://192.168.x.x`) is often treated as insecure by mobile browsers, so camera permission prompts may not appear.
+- Mobile camera scanning requires a **secure context**: **HTTPS** or **localhost**.
+- LAN IP over plain HTTP (for example `http://192.168.x.x`) is commonly treated as insecure by mobile Safari/Chrome, so camera permission prompts may not appear.
 - If camera mode is denied/unavailable, operators can continue service using USB scanner or manual ID entry mode.
 
 ## USB Scanner / Manual Entry Notes
