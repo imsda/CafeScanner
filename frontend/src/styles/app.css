@@ -56,6 +56,18 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 .scanner-card { background: #f7fbff; border: 1px solid #d8e4f4; border-radius: 10px; padding: 0.7rem; }
 .scanner-video { width: 100%; border-radius: 8px; min-height: 280px; background: #e8eef6; }
 .scanner-status { margin: 0.6rem 0 0; font-size: 0.94rem; color: #49617d; }
+.scanner-diagnostics {
+  margin-top: 0.55rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed #bfd3ec;
+  border-radius: 8px;
+  background: #f3f8ff;
+  color: #3a5677;
+  font-size: 0.86rem;
+}
+.scanner-diagnostics p { margin: 0 0 0.3rem; }
+.scanner-diagnostics ul { margin: 0; padding-left: 1rem; }
+.scanner-diagnostics li { margin: 0.2rem 0; }
 .scan-result { border-radius: 12px; border: 1px solid #d8e4f4; padding: 1.25rem; min-height: 280px; }
 .scan-result h3 { margin-top: 0; font-size: 1.35rem; }
 .scan-result.success { background: #ecf9f1; border-color: #b9e3cb; }
