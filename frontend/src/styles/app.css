@@ -87,3 +87,30 @@ th { background: #f7fbff; }
 @media (max-width: 940px) {
   .scan-layout { grid-template-columns: 1fr; }
 }
+
+select {
+  width: 100%;
+  border: 1px solid #bdd0e8;
+  border-radius: 8px;
+  padding: 0.58rem 0.65rem;
+  font-size: 0.95rem;
+  background: #fff;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 26, 43, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.confirm-modal {
+  width: min(560px, 100%);
+  background: #fff;
+  border: 1px solid #d8e4f4;
+  border-radius: 12px;
+  padding: 1rem;
+}

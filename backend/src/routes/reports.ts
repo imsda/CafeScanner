@@ -19,7 +19,7 @@ router.get('/summary', async (req, res) => {
   const from = startOfDay(parseDate(req.query.from, new Date()));
   const to = endOfDay(parseDate(req.query.to, new Date()));
 
-  const [transactions, people] = await Promise.all([
+  const [transactions, people, settings] = await Promise.all([
     prisma.scanTransaction.findMany({
       where: { timestamp: { gte: from, lte: to } },
       include: {
@@ -43,9 +43,14 @@ router.get('/summary', async (req, res) => {
         personId: true,
         breakfastRemaining: true,
         lunchRemaining: true,
-        dinnerRemaining: true
+        dinnerRemaining: true,
+        breakfastCount: true,
+        lunchCount: true,
+        dinnerCount: true,
+        totalMealsCount: true
       }
-    })
+    }),
+    prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } })
   ]);
 
   const mealCounts = { BREAKFAST: 0, LUNCH: 0, DINNER: 0 };
@@ -92,11 +97,23 @@ router.get('/summary', async (req, res) => {
     { breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0 }
   );
 
+  const tallySummary = people.reduce(
+    (acc, person) => {
+      acc.breakfastCount += person.breakfastCount;
+      acc.lunchCount += person.lunchCount;
+      acc.dinnerCount += person.dinnerCount;
+      acc.totalMealsCount += person.totalMealsCount;
+      return acc;
+    },
+    { breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 }
+  );
+
   const perPersonUsage = Array.from(perPersonMap.values()).sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
 
   res.json({
     from,
     to,
+    mealTrackingMode: settings?.mealTrackingMode ?? 'countdown',
     stats: {
       scans: transactions.length,
       breakfastsServed: mealCounts.BREAKFAST,
@@ -106,6 +123,7 @@ router.get('/summary', async (req, res) => {
     },
     perPersonUsage,
     remainingBalanceSummary,
+    tallySummary,
     transactions
   });
 });
