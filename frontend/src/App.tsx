@@ -87,7 +87,7 @@ function Dashboard() {
   return <div className="card"><h2>Today at a glance</h2><div className="stats-grid">{Object.entries(data).map(([key, value]) => <div className="stat-card" key={key}><p className="muted">{key}</p><p className="value">{value}</p></div>)}</div></div>;
 }
 
-type ScanResultState = ({ ok: true; person: ScanPerson; mealType: MealType; mealTrackingMode: MealTrackingMode } | { ok: false; error: string }) | null;
+type ScanResultState = ({ ok: true; person: ScanPerson; mealType: MealType; mealTrackingMode: MealTrackingMode; redeemedEntitlement?: { id: number; personName?: string | null; personId: string; mealDate: string } } | { ok: false; error: string }) | null;
 
 function ScanResultCard({ result }: { result: ScanResultState }) {
   if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a person ID barcode or use USB scanner/manual ID entry.</p></div>;
@@ -95,7 +95,7 @@ function ScanResultCard({ result }: { result: ScanResultState }) {
 
   const tally = result.mealType === 'BREAKFAST' ? result.person.breakfastCount : result.mealType === 'LUNCH' ? result.person.lunchCount : result.person.dinnerCount;
 
-  return <div className="scan-result success"><h3>{result.mealTrackingMode === 'camp_meeting' ? 'Meal Redeemed' : 'Meal Recorded'}</h3><p className="scan-person">{result.person.firstName} {result.person.lastName}</p><p>Meal: <strong>{formatMealLabel(result.mealType)}</strong></p><p>Mode: <strong>{modeLabel(result.mealTrackingMode)}</strong></p>{result.mealTrackingMode === 'camp_meeting' ? <p>Meal redeemed.</p> : <><p>{formatMealLabel(result.mealType)} tally: <strong>{tally}</strong></p><p>Total meals served: <strong>{result.person.totalMealsCount}</strong></p></>}</div>;
+  return <div className="scan-result success"><h3>{result.mealTrackingMode === 'camp_meeting' ? 'Meal Redeemed' : 'Meal Recorded'}</h3><p className="scan-person">{result.person.firstName} {result.person.lastName}</p><p>Shared ID: <strong>{result.person.personId || 'N/A'}</strong></p><p>Meal: <strong>{formatMealLabel(result.mealType)}</strong></p><p>Mode: <strong>{modeLabel(result.mealTrackingMode)}</strong></p>{result.mealTrackingMode === 'camp_meeting' ? <p>{result.redeemedEntitlement?.personName ? `Meal redeemed for ${result.redeemedEntitlement.personName}` : 'Meal redeemed.'}</p> : <><p>{formatMealLabel(result.mealType)} tally: <strong>{tally}</strong></p><p>Total meals served: <strong>{result.person.totalMealsCount}</strong></p></>}</div>;
 }
 
 function ScanPage() {
@@ -147,7 +147,7 @@ function ScanPage() {
 
     try {
       const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed }) });
-      setResult({ ok: true, person: response.person, mealType: response.mealType, mealTrackingMode: response.mealTrackingMode });
+      setResult({ ok: true, person: response.person, mealType: response.mealType, mealTrackingMode: response.mealTrackingMode, redeemedEntitlement: response.redeemedEntitlement });
       setMealTrackingMode(response.mealTrackingMode);
       setManual('');
       scannerLikeInputRef.current = false;
@@ -245,6 +245,8 @@ type PersonRecord = {
   todayBreakfastAvailable?: number;
   todayLunchAvailable?: number;
   todayDinnerAvailable?: number;
+  associatedNames?: string[];
+  associatedNamesSummary?: string;
 };
 
 function PeoplePage() {
@@ -317,11 +319,13 @@ function PeoplePage() {
     const lastName = person.lastName.toLowerCase();
     const fullName = `${firstName} ${lastName}`.trim();
     const personId = person.personId.toLowerCase();
+    const associatedNames = (person.associatedNamesSummary || '').toLowerCase();
     const matchesSearch = normalizedSearch.length === 0
       || firstName.includes(normalizedSearch)
       || lastName.includes(normalizedSearch)
       || fullName.includes(normalizedSearch)
-      || personId.includes(normalizedSearch);
+      || personId.includes(normalizedSearch)
+      || associatedNames.includes(normalizedSearch);
     const gradeValue = (person.grade || '').trim();
     const matchesGrade = isCampMeeting ? true : (gradeFilter === 'ALL' || gradeValue === gradeFilter);
     return matchesSearch && matchesGrade;
@@ -331,7 +335,10 @@ function PeoplePage() {
     [people],
   );
   const noResultsColSpan = 3 + (hasAnyGrade ? 1 : 0) + (isTally ? 4 : 12) + 1;
-  const personDisplayName = (person: PersonRecord) => `${person.firstName} ${person.lastName}`.trim() || person.personId;
+  const personDisplayName = (person: PersonRecord) => {
+    if (isCampMeeting && person.associatedNamesSummary) return person.associatedNamesSummary;
+    return `${person.firstName} ${person.lastName}`.trim() || person.personId;
+  };
 
   return <div className="card stack"><h2>People</h2><p className="muted">Active mode: <strong>{isTally ? 'Tally Up' : 'Camp Meeting'}</strong>. {isTally ? 'Tally counters are editable in this mode.' : 'Camp Meeting entitlement status is shown from imported CSV data.'}</p>{message && <p>{message}</p>}{error && <p className="error">{error}</p>}<form className="grid-form" onSubmit={(e) => void addPerson(e)}>{['firstName', 'lastName', 'personId', 'codeValue', 'grade', 'group', 'campus'].map((k) => <input key={k} placeholder={k} value={String(form[k] || '')} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />)}<button className="primary">Add</button></form><div className="filters-row people-filters"><label>Search people<input type="search" placeholder="Search by first name, last name, full name, or ID" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></label>{!isCampMeeting && <label>Grade<select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}><option value="ALL">All Grades</option>{gradeOptions.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select></label>}<button type="button" className="secondary" onClick={() => { setSearchTerm(''); setGradeFilter('ALL'); }} disabled={searchTerm.trim().length === 0 && (isCampMeeting || gradeFilter === 'ALL')}>Clear</button></div><table className="people-table"><thead><tr><th>Name</th><th>Person ID</th>{hasAnyGrade && <th>Grade</th>}{isTally ? <><th>Breakfast Count</th><th>Lunch Count</th><th>Dinner Count</th><th>Total Count</th></> : <><th>B</th><th>L</th><th>D</th><th>B Av</th><th>L Av</th><th>D Av</th><th>B Rd</th><th>L Rd</th><th>D Rd</th><th>Today B</th><th>Today L</th><th>Today D</th></>}<th>Actions</th></tr></thead><tbody>{filteredPeople.length > 0 ? filteredPeople.map((p) => <tr key={p.id}><td>{personDisplayName(p)}</td><td>{p.personId}</td>{hasAnyGrade && <td>{(p.grade || '').trim() || null}</td>}{isTally ? <><td><input className="people-number-input" type="number" min={0} value={p.breakfastCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastCount: Number(e.target.value) } : row))} /></td><td><input className="people-number-input" type="number" min={0} value={p.lunchCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchCount: Number(e.target.value) } : row))} /></td><td><input className="people-number-input" type="number" min={0} value={p.dinnerCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerCount: Number(e.target.value) } : row))} /></td><td><input className="people-number-input" type="number" min={0} value={p.totalMealsCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, totalMealsCount: Number(e.target.value) } : row))} /></td></> : <><td>{p.breakfastTotal ?? 0}</td><td>{p.lunchTotal ?? 0}</td><td>{p.dinnerTotal ?? 0}</td><td>{p.breakfastAvailable ?? 0}</td><td>{p.lunchAvailable ?? 0}</td><td>{p.dinnerAvailable ?? 0}</td><td>{p.breakfastRedeemed ?? 0}</td><td>{p.lunchRedeemed ?? 0}</td><td>{p.dinnerRedeemed ?? 0}</td><td>{p.todayBreakfastAvailable ?? 0}</td><td>{p.todayLunchAvailable ?? 0}</td><td>{p.todayDinnerAvailable ?? 0}</td></>}<td><div className="people-actions">{isTally && <button className="small" type="button" onClick={() => void savePerson(p)}>Save</button>}{isTally && <button className="small secondary" type="button" onClick={() => void api(`/people/reset-tallies/${p.id}`, { method: 'POST' }).then(load)}>Reset</button>}<button className="small danger" type="button" onClick={() => { setPersonToDelete(p); setDeletePhrase(''); setError(''); setMessage(''); }}>Delete</button></div></td></tr>) : <tr><td className="muted" colSpan={noResultsColSpan}>No people match your current {isCampMeeting ? 'search' : 'search and grade filters'}.</td></tr>}</tbody></table>{personToDelete && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Confirm Person Deletion</h4><p>You are deleting <strong>{personDisplayName(personToDelete)}</strong>.</p><p>Person ID: <strong>{personToDelete.personId}</strong></p><p className="error">Warning: This permanently removes this person and their related scan transaction history. This cannot be easily undone.</p><p>Type <code>DELETE USER</code> to enable deletion.</p><input value={deletePhrase} onChange={(e) => setDeletePhrase(e.target.value)} placeholder="DELETE USER" /><div className="button-row"><button className="secondary" type="button" onClick={() => { setPersonToDelete(null); setDeletePhrase(''); }}>Cancel</button><button className="danger" type="button" disabled={!deleteEnabled} onClick={() => void deletePerson()}>{isDeleting ? 'Deleting…' : 'Delete Person'}</button></div></div></div>}</div>;
 }

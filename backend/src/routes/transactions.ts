@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
 
 router.get('/export.csv', async (req, res) => {
   const rows = await prisma.scanTransaction.findMany({ include: { person: true }, orderBy: { timestamp: 'desc' } });
-  const parser = new Parser({ fields: ['timestamp', 'scannedValue', 'mealType', 'result', 'failureReason', 'stationName', 'person.firstName', 'person.lastName', 'person.personId'] });
+  const parser = new Parser({ fields: ['timestamp', 'scannedValue', 'mealType', 'result', 'failureReason', 'stationName', 'entitlementId', 'entitlementPersonName', 'person.firstName', 'person.lastName', 'person.personId'] });
   const csv = parser.parse(rows as any[]);
   res.header('Content-Type', 'text/csv');
   res.attachment('transactions.csv');

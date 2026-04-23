@@ -17,6 +17,19 @@ function localDateKey(date: Date, timezone: string): string {
   return formatter.format(date);
 }
 
+function deriveDisplayName(personName?: string | null): { firstName: string; lastName: string } {
+  const normalized = (personName || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return { firstName: 'Camp Meeting Guest', lastName: '' };
+
+  const parts = normalized.split(' ');
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  };
+}
+
 const tallyFieldByMeal: Record<MealType, 'breakfastCount' | 'lunchCount' | 'dinnerCount' | null> = {
   BREAKFAST: 'breakfastCount',
   LUNCH: 'lunchCount',
@@ -71,17 +84,6 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
   }
 
   return prisma.$transaction(async (tx) => {
-    const person = await tx.person.findUnique({ where: { personId: personIdValue } });
-    if (!person) {
-      await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'INVALID_PERSON_ID', stationName: settings.stationName, adminUserId: options?.adminUserId } });
-      return { ok: false, error: 'Invalid person ID.', reason: 'INVALID_PERSON_ID' };
-    }
-
-    if (!person.active) {
-      await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'INACTIVE_PERSON', personId: person.id, stationName: settings.stationName, adminUserId: options?.adminUserId } });
-      return { ok: false, error: 'Person is inactive.', reason: 'INACTIVE_PERSON', person };
-    }
-
     const mode = settings.mealTrackingMode ?? MealTrackingMode.camp_meeting;
 
     if (mode === MealTrackingMode.camp_meeting) {
@@ -89,7 +91,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
       const entitlement = await tx.mealEntitlement.findFirst({
         where: {
-          personId: person.personId,
+          personId: personIdValue,
           mealType: detectedMeal,
           mealDate: todayKey,
           redeemed: false
@@ -98,20 +100,29 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       });
 
       if (!entitlement) {
+        const person = await tx.person.findUnique({ where: { personId: personIdValue } });
         await tx.scanTransaction.create({
           data: {
             scannedValue: personIdValue,
             mealType: detectedMeal,
             result: ScanResult.FAILURE,
             failureReason: 'NO_MEAL_ENTITLEMENT',
-            personId: person.id,
+            personId: person?.id,
             stationName: settings.stationName,
             adminUserId: options?.adminUserId
           }
         });
 
-        return { ok: false, error: 'No meal available for this person for this meal and day.', reason: 'NO_MEAL_ENTITLEMENT', person, mealType: detectedMeal };
+        return {
+          ok: false,
+          error: 'No unused meal entitlement remains for this ID for this meal and day.',
+          reason: 'NO_MEAL_ENTITLEMENT',
+          person,
+          mealType: detectedMeal
+        };
       }
+
+      const linkedPerson = await tx.person.findUnique({ where: { personId: personIdValue } });
 
       await tx.mealEntitlement.update({
         where: { id: entitlement.id },
@@ -126,13 +137,51 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           scannedValue: personIdValue,
           mealType: detectedMeal,
           result: ScanResult.SUCCESS,
-          personId: person.id,
+          personId: linkedPerson?.id,
+          entitlementId: entitlement.id,
+          entitlementPersonName: entitlement.personName,
           stationName: settings.stationName,
           adminUserId: options?.adminUserId
         }
       });
 
-      return { ok: true, person, mealType: detectedMeal, mealTrackingMode: mode };
+      const displayName = deriveDisplayName(entitlement.personName);
+      return {
+        ok: true,
+        person: {
+          id: linkedPerson?.id,
+          personId: personIdValue,
+          firstName: displayName.firstName,
+          lastName: displayName.lastName,
+          breakfastRemaining: linkedPerson?.breakfastRemaining ?? 0,
+          lunchRemaining: linkedPerson?.lunchRemaining ?? 0,
+          dinnerRemaining: linkedPerson?.dinnerRemaining ?? 0,
+          breakfastCount: linkedPerson?.breakfastCount ?? 0,
+          lunchCount: linkedPerson?.lunchCount ?? 0,
+          dinnerCount: linkedPerson?.dinnerCount ?? 0,
+          totalMealsCount: linkedPerson?.totalMealsCount ?? 0,
+          active: linkedPerson?.active ?? true
+        },
+        mealType: detectedMeal,
+        mealTrackingMode: mode,
+        redeemedEntitlement: {
+          id: entitlement.id,
+          personName: entitlement.personName,
+          personId: entitlement.personId,
+          mealDate: entitlement.mealDate
+        }
+      };
+    }
+
+    const person = await tx.person.findUnique({ where: { personId: personIdValue } });
+    if (!person) {
+      await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'INVALID_PERSON_ID', stationName: settings.stationName, adminUserId: options?.adminUserId } });
+      return { ok: false, error: 'Invalid person ID.', reason: 'INVALID_PERSON_ID' };
+    }
+
+    if (!person.active) {
+      await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'INACTIVE_PERSON', personId: person.id, stationName: settings.stationName, adminUserId: options?.adminUserId } });
+      return { ok: false, error: 'Person is inactive.', reason: 'INACTIVE_PERSON', person };
     }
 
     const tallyField = tallyFieldByMeal[detectedMeal];
