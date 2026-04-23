@@ -122,3 +122,49 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 ./scripts/build.sh
 ./scripts/start.sh
 ```
+
+## Meal Tracking Modes
+
+CafeScanner now supports a global **meal tracking mode** setting (`Settings → Meal tracking mode`):
+
+- **Count Down** (`countdown`)
+  - Each scan deducts from `breakfastRemaining`, `lunchRemaining`, or `dinnerRemaining`.
+  - If a meal balance is already `0`, the scan is rejected with “no meals remaining.”
+- **Tally Up** (`tally`)
+  - Each scan increments `breakfastCount`, `lunchCount`, or `dinnerCount`.
+  - `totalMealsCount` is also incremented for every successful meal scan.
+  - No “out of meals” blocking is enforced in this mode.
+
+The mode is system-wide (not per person) and is stored in `Setting.mealTrackingMode`.
+
+## Admin: Clear Database
+
+Admins can now use **Settings → System: Clear Database** to run a destructive reset.
+
+- This action is **admin-only** in both frontend visibility and backend authorization.
+- Confirmation requires typing the exact phrase: `CLEAR DATABASE`.
+- The action deletes:
+  - all `Person` records,
+  - all `ScanTransaction` history,
+  - all `ImportHistory` records.
+- The action preserves:
+  - admin/scanner login accounts (`AdminUser`),
+  - app settings (`Setting`) including meal tracking mode.
+
+## Schema / Migration Updates
+
+A new migration `0004_meal_tracking_mode_and_tallies` adds:
+
+- `Person.breakfastCount`
+- `Person.lunchCount`
+- `Person.dinnerCount`
+- `Person.totalMealsCount`
+- `Setting.mealTrackingMode` (`countdown` or `tally`)
+
+Existing setup scripts remain compatible; run setup/migrations/seed as usual:
+
+```bash
+./scripts/setup.sh
+npm run db:migrate
+npm run db:seed
+```

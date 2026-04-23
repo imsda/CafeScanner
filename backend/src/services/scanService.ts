@@ -1,10 +1,18 @@
-import { MealType, ScanResult } from '@prisma/client';
+import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { detectMealType, mealField } from '../utils/meal.js';
 
 function normalizePersonId(value: string): string {
   return value.trim();
 }
+
+const tallyFieldByMeal: Record<MealType, 'breakfastCount' | 'lunchCount' | 'dinnerCount' | null> = {
+  BREAKFAST: 'breakfastCount',
+  LUNCH: 'lunchCount',
+  DINNER: 'dinnerCount',
+  MANUAL: null,
+  NONE: null
+};
 
 export async function processScan(rawPersonId: string, options?: { manualMealOverride?: MealType; adminUserId?: number }) {
   const personIdValue = normalizePersonId(rawPersonId);
@@ -63,15 +71,45 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       return { ok: false, error: 'Person is inactive.', reason: 'INACTIVE_PERSON', person };
     }
 
-    const field = mealField(detectedMeal);
-    if (person[field] <= 0) {
-      await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'NO_MEALS_REMAINING', personId: person.id, stationName: settings.stationName, adminUserId: options?.adminUserId } });
-      return { ok: false, error: `No ${detectedMeal.toLowerCase()} meals remaining.`, reason: 'NO_MEALS_REMAINING', person, mealType: detectedMeal };
+    const mode = settings.mealTrackingMode ?? MealTrackingMode.countdown;
+
+    if (mode === MealTrackingMode.countdown) {
+      const field = mealField(detectedMeal);
+      if (person[field] <= 0) {
+        await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'NO_MEALS_REMAINING', personId: person.id, stationName: settings.stationName, adminUserId: options?.adminUserId } });
+        return { ok: false, error: `No ${detectedMeal.toLowerCase()} meals remaining.`, reason: 'NO_MEALS_REMAINING', person, mealType: detectedMeal };
+      }
+
+      const updated = await tx.person.update({
+        where: { id: person.id },
+        data: { [field]: { decrement: 1 } }
+      });
+
+      await tx.scanTransaction.create({
+        data: {
+          scannedValue: personIdValue,
+          mealType: detectedMeal,
+          result: ScanResult.SUCCESS,
+          personId: person.id,
+          stationName: settings.stationName,
+          adminUserId: options?.adminUserId
+        }
+      });
+
+      return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
     }
+
+    const tallyField = tallyFieldByMeal[detectedMeal];
+    const tallyData = tallyField
+      ? {
+          [tallyField]: { increment: 1 },
+          totalMealsCount: { increment: 1 }
+        }
+      : { totalMealsCount: { increment: 1 } };
 
     const updated = await tx.person.update({
       where: { id: person.id },
-      data: { [field]: { decrement: 1 } }
+      data: tallyData
     });
 
     await tx.scanTransaction.create({
@@ -85,6 +123,6 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
     });
 
-    return { ok: true, person: updated, mealType: detectedMeal };
+    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
   });
 }

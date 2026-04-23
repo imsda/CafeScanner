@@ -13,6 +13,10 @@ const personSchema = z.object({
   breakfastRemaining: z.number().int().nonnegative().default(0),
   lunchRemaining: z.number().int().nonnegative().default(0),
   dinnerRemaining: z.number().int().nonnegative().default(0),
+  breakfastCount: z.number().int().nonnegative().default(0),
+  lunchCount: z.number().int().nonnegative().default(0),
+  dinnerCount: z.number().int().nonnegative().default(0),
+  totalMealsCount: z.number().int().nonnegative().default(0),
   active: z.boolean().default(true),
   grade: z.string().optional().nullable(),
   group: z.string().optional().nullable(),
@@ -48,6 +52,20 @@ router.post('/adjust-balance/:id', async (req, res) => {
       breakfastRemaining: Math.max(0, person.breakfastRemaining + breakfastDelta),
       lunchRemaining: Math.max(0, person.lunchRemaining + lunchDelta),
       dinnerRemaining: Math.max(0, person.dinnerRemaining + dinnerDelta)
+    }
+  });
+  res.json(updated);
+});
+
+router.post('/reset-tallies/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const updated = await prisma.person.update({
+    where: { id },
+    data: {
+      breakfastCount: 0,
+      lunchCount: 0,
+      dinnerCount: 0,
+      totalMealsCount: 0
     }
   });
   res.json(updated);
