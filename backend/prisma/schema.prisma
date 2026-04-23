@@ -75,7 +75,7 @@ model Setting {
   lunchEnd                 String           @default("14:00")
   dinnerStart              String           @default("17:00")
   dinnerEnd                String           @default("19:00")
-  scannerCooldownSeconds   Int              @default(4)
+  scannerCooldownSeconds   Int              @default(1)
   stationName              String           @default("Main Station")
   enableSounds             Boolean          @default(true)
   allowManualMealOverride  Boolean          @default(false)

@@ -35,7 +35,7 @@ type Props = {
 
 const REAR_CAMERA_LABEL_PATTERN = /rear|back|environment|wide/i;
 
-export default function QrScanner({ onResult, onError, cooldownMs = 2500 }: Props) {
+export default function QrScanner({ onResult, onError, cooldownMs = 1000 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const activeStreamRef = useRef<MediaStream | null>(null);
