@@ -125,7 +125,7 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 
 ## Meal Tracking Modes
 
-CafeScanner now supports a global **meal tracking mode** setting (`Settings → Meal tracking mode`):
+CafeScanner uses exactly one global **meal tracking mode** at a time (`Settings → Meal tracking mode`). There is no mixed mode in normal operation.
 
 - **Count Down** (`countdown`)
   - Each scan deducts from `breakfastRemaining`, `lunchRemaining`, or `dinnerRemaining`.
@@ -135,7 +135,16 @@ CafeScanner now supports a global **meal tracking mode** setting (`Settings → 
   - `totalMealsCount` is also incremented for every successful meal scan.
   - No “out of meals” blocking is enforced in this mode.
 
-The mode is system-wide (not per person) and is stored in `Setting.mealTrackingMode`.
+`Setting.mealTrackingMode` is stored in the database and persists across rebuilds, restarts, and redeploys as long as the database is preserved.
+
+### Switching meal tracking mode
+
+Switching between modes is a destructive admin action:
+
+- confirmation modal requires typing the exact phrase `SWITCH MODE`,
+- on confirmation, the app updates `Setting.mealTrackingMode`,
+- then clears operational data (`Person`, `ScanTransaction`, and `ImportHistory`),
+- while preserving login accounts and other settings.
 
 ## Admin: Clear Database
 
@@ -149,7 +158,7 @@ Admins can now use **Settings → System: Clear Database** to run a destructive 
   - all `ImportHistory` records.
 - The action preserves:
   - admin/scanner login accounts (`AdminUser`),
-  - app settings (`Setting`) including meal tracking mode.
+  - app settings (`Setting`) including the currently selected meal tracking mode.
 
 ## Schema / Migration Updates
 

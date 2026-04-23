@@ -38,6 +38,7 @@ export interface ApiErrorResponse {
 export interface ReportsSummaryResponse {
   from: string;
   to: string;
+  mealTrackingMode: MealTrackingMode;
   stats: {
     scans: number;
     breakfastsServed: number;
@@ -58,6 +59,12 @@ export interface ReportsSummaryResponse {
     breakfastRemaining: number;
     lunchRemaining: number;
     dinnerRemaining: number;
+  };
+  tallySummary: {
+    breakfastCount: number;
+    lunchCount: number;
+    dinnerCount: number;
+    totalMealsCount: number;
   };
   transactions: Array<{
     id: number;
