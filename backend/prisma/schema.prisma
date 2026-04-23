@@ -94,8 +94,12 @@ model ScanTransaction {
   stationName   String?
   personId      Int?
   adminUserId   Int?
+  entitlementId Int?
+  entitlementPersonName String?
   person        Person?    @relation(fields: [personId], references: [id])
   adminUser     AdminUser? @relation(fields: [adminUserId], references: [id])
+
+  @@index([entitlementId])
 }
 
 

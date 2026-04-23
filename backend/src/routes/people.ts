@@ -94,10 +94,33 @@ router.get('/', async (req, res) => {
     summaryByPersonId.set(row.personId, existing);
   }
 
+  const entitlementNames = await prisma.mealEntitlement.groupBy({
+    by: ['personId', 'personName'],
+    where: {
+      personName: {
+        not: null
+      }
+    },
+    _count: { _all: true }
+  });
+
+  const namesByPersonId = new Map<string, string[]>();
+  for (const row of entitlementNames) {
+    const id = row.personId.trim();
+    const name = (row.personName || '').trim();
+    if (!id || !name) continue;
+    const existing = namesByPersonId.get(id) ?? [];
+    if (!existing.includes(name)) existing.push(name);
+    namesByPersonId.set(id, existing);
+  }
+
   const enriched = people.map((person) => {
     const summary = summaryByPersonId.get(person.personId) ?? createMealBreakdown();
+    const associatedNames = namesByPersonId.get(person.personId) ?? [`${person.firstName} ${person.lastName}`.trim()];
     return {
       ...person,
+      associatedNames,
+      associatedNamesSummary: associatedNames.join(', '),
       campMeetingEntitlements: summary.total,
       campMeetingRedeemed: summary.redeemed,
       campMeetingRemaining: Math.max(0, summary.total - summary.redeemed),

@@ -21,6 +21,12 @@ export interface ScanResponse {
   person: ScanPerson;
   mealType: MealType;
   mealTrackingMode: MealTrackingMode;
+  redeemedEntitlement?: {
+    id: number;
+    personName?: string | null;
+    personId: string;
+    mealDate: string;
+  };
 }
 
 export interface ScanFailureResponse {

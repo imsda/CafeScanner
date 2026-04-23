@@ -212,6 +212,8 @@ router.get('/export.csv', async (req, res) => {
       'result',
       'failureReason',
       'stationName',
+      'entitlementId',
+      'entitlementPersonName',
       'person.firstName',
       'person.lastName',
       'person.personId'
