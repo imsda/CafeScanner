@@ -20,6 +20,11 @@ type CampMeetingPreviewRow = {
   valid: boolean;
 };
 
+type ParsedPersonName = {
+  firstName: string;
+  lastName: string;
+};
+
 function parseBool(v: string) {
   return ['1', 'true', 'yes', 'y'].includes((v || '').toLowerCase());
 }
@@ -103,6 +108,34 @@ function normalizeCampMeetingDate(value: string): string | null {
   return `${String(fullYear)}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+function isCampMeetingHeaderRow(cols: string[]): boolean {
+  const normalized = cols.map((col) => (col || '').trim().toLowerCase());
+  const colB = normalized[1] || '';
+  const colC = normalized[2] || '';
+  const colD = normalized[3] || '';
+  const colF = normalized[5] || '';
+
+  const personIdLike = new Set(['reg_id', 'personid', 'person_id', 'id']);
+  const personNameLike = new Set(['guest_name', 'personname', 'person_name', 'name']);
+  const mealTypeLike = new Set(['meal_type', 'mealtype']);
+  const mealDateLike = new Set(['meal_date', 'mealdate', 'date']);
+
+  return personIdLike.has(colB) && personNameLike.has(colC) && mealTypeLike.has(colD) && mealDateLike.has(colF);
+}
+
+function splitCampMeetingName(personName: string): ParsedPersonName {
+  const normalized = personName.trim().replace(/\s+/g, ' ');
+  if (!normalized) return { firstName: 'Unknown', lastName: '' };
+
+  const parts = normalized.split(' ');
+  if (parts.length === 1) return { firstName: normalized, lastName: '' };
+
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  };
+}
+
 async function getMode() {
   const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
   return settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
@@ -110,8 +143,9 @@ async function getMode() {
 
 function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
   const rows = parse(text, { columns: false, skip_empty_lines: true, trim: false }) as string[][];
+  const rowsWithoutHeader = rows.length > 0 && isCampMeetingHeaderRow(rows[0]) ? rows.slice(1) : rows;
 
-  return rows.map((cols, idx) => {
+  return rowsWithoutHeader.map((cols, idx) => {
     const personId = (cols[1] || '').trim();
     const personName = (cols[2] || '').trim();
     const mealTypeRaw = (cols[3] || '').trim();
@@ -216,6 +250,23 @@ router.post('/commit', upload.single('file'), async (req, res) => {
         const mealType = normalizeMealType(row.mealType);
         const mealDate = normalizeCampMeetingDate(row.mealDate);
         if (!mealType || !mealDate || !row.personId || !row.personName) continue;
+
+        const { firstName, lastName } = splitCampMeetingName(row.personName);
+        await tx.person.upsert({
+          where: { personId: row.personId },
+          update: {
+            firstName,
+            lastName,
+            active: true
+          },
+          create: {
+            firstName,
+            lastName,
+            personId: row.personId,
+            codeValue: nanoid(10),
+            active: true
+          }
+        });
 
         await tx.mealEntitlement.create({
           data: {
