@@ -16,24 +16,31 @@ a { color: #1f5da8; }
 .user-pill { font-size: 0.8rem; color: #526a84; background: #f6f9fe; border: 1px solid #d8e4f4; padding: 0.25rem 0.5rem; border-radius: 999px; }
 
 nav { max-width: 1200px; margin: 0.6rem auto 0; display: flex; gap: 0.5rem; flex-wrap: wrap; }
-nav a, nav button, button, .button-link {
+nav a,
+button,
+.btn {
   border: 1px solid #c3d4ea;
   background: #fff;
   color: #234a75;
   border-radius: 8px;
   padding: 0.48rem 0.78rem;
-  text-decoration: none;
+  text-decoration: none !important;
   cursor: pointer;
   font-size: 0.92rem;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
 }
-button.primary, .primary { background: #1f5da8; border-color: #1f5da8; color: #fff; }
-button.secondary, .secondary { background: #fff; color: #244a74; }
-button.danger, .danger { background: #fff2f4; border-color: #efb9c2; color: #a31632; }
-button.small, .small { padding: 0.34rem 0.55rem; font-size: 0.82rem; }
+button.primary, .primary, .btn-primary { background: #1f5da8; border-color: #1f5da8; color: #fff; }
+button.secondary, .secondary, .btn-secondary { background: #fff; color: #244a74; }
+button.danger, .danger, .btn-danger { background: #fff2f4; border-color: #efb9c2; color: #a31632; }
+button.small, .small, .btn-small { padding: 0.34rem 0.55rem; font-size: 0.82rem; }
 nav a.active { background: #eaf2fc; border-color: #adc5e5; }
-button:hover, nav a:hover, .button-link:hover { background: #f4f8ff; }
-button.primary:hover, .primary:hover { background: #1a4f8f; }
+button:hover, nav a:hover, .btn:hover { background: #f4f8ff; }
+button.primary:hover, .primary:hover, .btn-primary:hover { background: #1a4f8f; }
+button:disabled, .btn.disabled, .btn[aria-disabled='true'] { opacity: 0.6; cursor: not-allowed; }
 
 .page { max-width: 1200px; margin: 1rem auto 2rem; padding: 0 1rem; }
 .card { background: #fff; border: 1px solid #d8e4f4; border-radius: 12px; padding: 1rem; box-shadow: 0 1px 2px rgba(12, 44, 88, 0.04); }
@@ -77,6 +84,7 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 
 .grid-form { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 1rem; }
 .button-row, .filters-row { display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: end; }
+.report-controls { padding: 0.85rem; border: 1px solid #d8e4f4; border-radius: 10px; background: #f8fbff; }
 .people-filters label { min-width: 220px; flex: 1 1 260px; }
 .people-filters button { align-self: end; }
 

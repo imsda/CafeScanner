@@ -46,6 +46,15 @@ export interface ReportsSummaryResponse {
     dinnersServed: number;
     failedScans: number;
   };
+  mealTotalsByPerson: Array<{
+    personId: string;
+    firstName: string;
+    lastName: string;
+    breakfasts: number;
+    lunches: number;
+    dinners: number;
+    total: number;
+  }>;
   perPersonUsage: Array<{
     personId: string;
     firstName: string;

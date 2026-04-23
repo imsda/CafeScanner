@@ -108,7 +108,7 @@ router.get('/summary', async (req, res) => {
     { breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 }
   );
 
-  const perPersonUsage = Array.from(perPersonMap.values()).sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
+  const mealTotalsByPerson = Array.from(perPersonMap.values()).sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
 
   res.json({
     from,
@@ -121,11 +121,62 @@ router.get('/summary', async (req, res) => {
       dinnersServed: mealCounts.DINNER,
       failedScans
     },
-    perPersonUsage,
+    mealTotalsByPerson,
+    perPersonUsage: mealTotalsByPerson,
     remainingBalanceSummary,
     tallySummary,
     transactions
   });
+});
+
+router.get('/meal-totals.csv', async (req, res) => {
+  const from = startOfDay(parseDate(req.query.from, new Date()));
+  const to = endOfDay(parseDate(req.query.to, new Date()));
+
+  const transactions = await prisma.scanTransaction.findMany({
+    where: { timestamp: { gte: from, lte: to }, result: ScanResult.SUCCESS },
+    include: {
+      person: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          personId: true
+        }
+      }
+    }
+  });
+
+  const perPersonMap = new Map<number, { name: string; personId: string; totalMeals: number; breakfast: number; lunch: number; dinner: number }>();
+
+  for (const tx of transactions) {
+    if (!tx.person) continue;
+
+    const existing = perPersonMap.get(tx.person.id) ?? {
+      name: `${tx.person.firstName} ${tx.person.lastName}`.trim(),
+      personId: tx.person.personId,
+      totalMeals: 0,
+      breakfast: 0,
+      lunch: 0,
+      dinner: 0
+    };
+
+    if (tx.mealType === MealType.BREAKFAST) existing.breakfast += 1;
+    if (tx.mealType === MealType.LUNCH) existing.lunch += 1;
+    if (tx.mealType === MealType.DINNER) existing.dinner += 1;
+    existing.totalMeals += 1;
+    perPersonMap.set(tx.person.id, existing);
+  }
+
+  const rows = Array.from(perPersonMap.values()).sort((a, b) => b.totalMeals - a.totalMeals || a.name.localeCompare(b.name));
+  const parser = new Parser({
+    fields: ['name', 'personId', 'totalMeals', 'breakfast', 'lunch', 'dinner']
+  });
+
+  const csv = parser.parse(rows as unknown as Record<string, unknown>[]);
+  res.header('Content-Type', 'text/csv');
+  res.attachment('meal-totals-by-person.csv');
+  res.send(csv);
 });
 
 router.get('/export.csv', async (req, res) => {
