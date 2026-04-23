@@ -16,10 +16,10 @@ Seeded from `backend/.env` (or defaults below):
 
 - **Admin**
   - Username: `DEFAULT_ADMIN_USERNAME` (default `admin`)
-  - Password: `DEFAULT_ADMIN_PASSWORD` (default `ChangeMeNow123!`)
+  - Password: `DEFAULT_ADMIN_PASSWORD` (default `AdminPass123!Dev`)
 - **Scanner-only**
   - Username: `DEFAULT_SCANNER_USERNAME` (default `scanner`)
-  - Password: `DEFAULT_SCANNER_PASSWORD` (default `ChangeMeScanner123!`)
+  - Password: `DEFAULT_SCANNER_PASSWORD` (default `ScannerPass123!Dev`)
 
 Scanner-only accounts can sign in and use the scan station, but cannot access admin pages.
 
@@ -43,21 +43,8 @@ Scanner-only accounts can sign in and use the scan station, but cannot access ad
 
 ### Frontend env values
 
-- `VITE_API_BASE` (optional)
-
-## Barcode Scanning Notes
-
-- Camera mode supports common 1D barcode formats (Code 128, Code 39, Code 93, Codabar, EAN-8/13, ITF, UPC-A/E) and QR fallback.
-- Camera mode now starts only after tapping **Start Camera Scanner**, which explicitly triggers browser permission flow and prioritizes the rear camera when available.
-- Mobile camera scanning requires a **secure context**: **HTTPS** or **localhost**.
-- LAN IP over plain HTTP (for example `http://192.168.x.x`) is commonly treated as insecure by mobile Safari/Chrome, so camera permission prompts may not appear.
-- If camera mode is denied/unavailable, operators can continue service using USB scanner or manual ID entry mode.
-
-## USB Scanner / Manual Entry Notes
-
-- Use **USB Scanner / Manual Entry** mode on the scan station.
-- Keep focus on the barcode input; most USB scanners act like keyboard typing + Enter.
-- Camera, USB scanner, and manual submit all post to the same `/api/scan` deduction route.
+- `VITE_API_BASE` (default `/api`)
+- `VITE_DEV_BACKEND_TARGET` (default `http://127.0.0.1:4000`)
 
 ## Development Mode
 
@@ -68,6 +55,66 @@ Scanner-only accounts can sign in and use the scan station, but cannot access ad
 Defaults:
 - Backend: `http://0.0.0.0:4000`
 - Frontend: `http://0.0.0.0:5173`
+- Frontend proxies `/api` requests to backend in development.
+
+### HTTPS development for mobile camera scanning
+
+Camera scanning on phones requires a secure context (`https://...` or `http://localhost`).
+
+#### 1) Generate a self-signed certificate
+
+Create a cert for your local machine/LAN use:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+  -keyout certs/dev.key \
+  -out certs/dev.crt \
+  -days 365 \
+  -subj "/CN=localhost"
+```
+
+You can also use your own certificate and key files; paths are configurable.
+
+#### 2) Start dev server over HTTPS
+
+`./scripts/dev.sh` will automatically enable HTTPS when both files exist:
+
+- `certs/dev.crt`
+- `certs/dev.key`
+
+Or you can point to custom files:
+
+```bash
+SSL_CERT_FILE=/path/to/dev.crt SSL_KEY_FILE=/path/to/dev.key ./scripts/dev.sh
+```
+
+The script prints local + LAN frontend URLs and whether HTTPS is enabled.
+
+#### 3) LAN access from phones/tablets
+
+- Dev frontend binds to `0.0.0.0` so other machines can connect.
+- Open the HTTPS LAN URL printed by `./scripts/dev.sh` (for example `https://192.168.1.25:5173`).
+- API calls remain same-origin (`/api/...`) and are proxied by Vite to backend HTTP, so the browser never calls an HTTP API directly (avoids mixed-content issues).
+
+#### 4) Self-signed cert trust notes
+
+- Mobile browsers may warn that the cert is not trusted.
+- You usually must trust/install the self-signed cert on the phone for camera access to behave reliably.
+- If trust is not established, browsers may block access before camera permission can be requested.
+
+## Barcode Scanning Notes
+
+- Camera mode supports common 1D barcode formats (Code 128, Code 39, Code 93, Codabar, EAN-8/13, ITF, UPC-A/E) and QR fallback.
+- Camera mode starts only after tapping **Start Camera Scanner**, which explicitly triggers browser permission flow and prioritizes the rear camera when available.
+- If the page is not secure, scanner UI explains that camera scanning requires HTTPS or localhost (instead of incorrectly reporting generic camera support failure).
+- If camera mode is denied/unavailable, operators can continue service using USB scanner or manual ID entry mode.
+
+## USB Scanner / Manual Entry Notes
+
+- Use **USB Scanner / Manual Entry** mode on the scan station.
+- Keep focus on the barcode input; most USB scanners act like keyboard typing + Enter.
+- Camera, USB scanner, and manual submit all post to the same `/api/scan` deduction route.
 
 ## Production Run
 
