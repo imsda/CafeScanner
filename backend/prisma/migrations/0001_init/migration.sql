@@ -38,7 +38,7 @@ CREATE TABLE "Setting" (
   "lunchEnd" TEXT NOT NULL DEFAULT '14:00',
   "dinnerStart" TEXT NOT NULL DEFAULT '17:00',
   "dinnerEnd" TEXT NOT NULL DEFAULT '19:00',
-  "scannerCooldownSeconds" INTEGER NOT NULL DEFAULT 4,
+  "scannerCooldownSeconds" INTEGER NOT NULL DEFAULT 1,
   "stationName" TEXT NOT NULL DEFAULT 'Main Station',
   "enableSounds" BOOLEAN NOT NULL DEFAULT true,
   "allowManualMealOverride" BOOLEAN NOT NULL DEFAULT false,

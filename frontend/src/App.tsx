@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { api, API_BASE } from './api/client';
@@ -73,31 +73,112 @@ function ScanPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mode, setMode] = useState<'camera' | 'usb'>('camera');
   const [mealTrackingMode, setMealTrackingMode] = useState<MealTrackingMode>('countdown');
+  const [scanCooldownSeconds, setScanCooldownSeconds] = useState(1);
   const usbInputRef = useRef<HTMLInputElement>(null);
+  const autoSubmitTimeoutRef = useRef<number | null>(null);
+  const lastInputAtRef = useRef(0);
+  const previousManualRef = useRef('');
+  const scannerLikeInputRef = useRef(false);
 
-  useEffect(() => { if (mode === 'usb') usbInputRef.current?.focus(); }, [mode]);
-  useEffect(() => { void api<{ mealTrackingMode: MealTrackingMode }>('/settings').then((s) => setMealTrackingMode(s.mealTrackingMode)); }, []);
+  const focusUsbInput = () => {
+    if (mode !== 'usb') return;
+    setTimeout(() => usbInputRef.current?.focus(), 0);
+  };
+
+  const clearAutoSubmitTimeout = () => {
+    if (autoSubmitTimeoutRef.current !== null) {
+      window.clearTimeout(autoSubmitTimeoutRef.current);
+      autoSubmitTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (mode === 'usb') {
+      usbInputRef.current?.focus();
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    void api<{ mealTrackingMode: MealTrackingMode; scannerCooldownSeconds: number }>('/settings').then((s) => {
+      setMealTrackingMode(s.mealTrackingMode);
+      setScanCooldownSeconds(Math.max(1, s.scannerCooldownSeconds || 1));
+    });
+  }, []);
+
+  useEffect(() => () => clearAutoSubmitTimeout(), []);
 
   const submitScan = async (code: string) => {
     const trimmed = code.trim();
     if (!trimmed || isSubmitting) return;
+
+    clearAutoSubmitTimeout();
     setIsSubmitting(true);
+
     try {
       const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed }) });
       setResult({ ok: true, person: response.person, mealType: response.mealType, mealTrackingMode: response.mealTrackingMode });
       setMealTrackingMode(response.mealTrackingMode);
       setManual('');
-      usbInputRef.current?.focus();
+      scannerLikeInputRef.current = false;
+      focusUsbInput();
     } catch (error) {
       setResult({ ok: false, error: error instanceof Error ? error.message : 'Unable to process this scan right now.' });
+      setManual('');
+      scannerLikeInputRef.current = false;
+      focusUsbInput();
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const onManualSubmit = async (event: FormEvent) => { event.preventDefault(); await submitScan(manual); };
+  const onManualSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    await submitScan(manual);
+  };
 
-  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => setManual(e.target.value)} aria-label="Person ID input" onBlur={() => setTimeout(() => usbInputRef.current?.focus(), 0)} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}</section><ScanResultCard result={result} /></div>;
+  useEffect(() => {
+    if (mode !== 'usb' || isSubmitting) return;
+
+    const trimmed = manual.trim();
+    if (!scannerLikeInputRef.current || !trimmed) return;
+
+    clearAutoSubmitTimeout();
+    autoSubmitTimeoutRef.current = window.setTimeout(() => {
+      void submitScan(trimmed);
+    }, 120);
+  }, [manual, mode, isSubmitting]);
+
+  const onManualInputChange = (value: string) => {
+    const now = Date.now();
+    const previousValue = previousManualRef.current;
+    const elapsedMs = now - lastInputAtRef.current;
+    const appendedQuickly = value.length > previousValue.length && elapsedMs > 0 && elapsedMs <= 35;
+
+    setManual(value);
+    previousManualRef.current = value;
+    lastInputAtRef.current = now;
+
+    if (!value.trim()) {
+      scannerLikeInputRef.current = false;
+      clearAutoSubmitTimeout();
+      return;
+    }
+
+    if (appendedQuickly || scannerLikeInputRef.current) {
+      scannerLikeInputRef.current = true;
+    }
+  };
+
+  const onManualKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return;
+
+    event.preventDefault();
+    scannerLikeInputRef.current = false;
+    clearAutoSubmitTimeout();
+    void submitScan(manual);
+  };
+
+  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong></p><p className="muted">Scan cooldown: <strong>{scanCooldownSeconds} second{scanCooldownSeconds === 1 ? '' : 's'}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner cooldownMs={scanCooldownSeconds * 1000} onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => onManualInputChange(e.target.value)} onKeyDown={onManualKeyDown} aria-label="Person ID input" onBlur={() => focusUsbInput()} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}</section><ScanResultCard result={result} /></div>;
 }
 
 type PersonRecord = {
