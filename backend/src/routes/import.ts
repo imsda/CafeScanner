@@ -56,6 +56,34 @@ function normalizeDateOnly(value: string): string | null {
   return `${year}-${month}-${day}`;
 }
 
+function normalizeCampMeetingDate(value: string): string | null {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const mmddyyMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (!mmddyyMatch) return null;
+
+  const [, monthRaw, dayRaw, yearRaw] = mmddyyMatch;
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const fullYear = 2000 + Number(yearRaw);
+
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > 31) return null;
+
+  const localDate = new Date(fullYear, month - 1, day);
+  if (
+    localDate.getFullYear() !== fullYear ||
+    localDate.getMonth() !== month - 1 ||
+    localDate.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(fullYear)}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 async function getMode() {
   const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
   return settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
@@ -68,14 +96,15 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
     const personId = (cols[1] || '').trim();
     const personName = (cols[2] || '').trim();
     const mealTypeRaw = (cols[3] || '').trim();
-    const mealDateRaw = (cols[4] || '').trim();
+    const mealDateRaw = (cols[5] || '').trim();
     const errors: string[] = [];
 
     if (!personId) errors.push('Column B (Person ID) is required');
+    if (!personName) errors.push('Column C (Name) is required');
     if (!mealTypeRaw) errors.push('Column D (Meal Type) is required');
-    if (!mealDateRaw) errors.push('Column E (Meal Day) is required');
+    if (!mealDateRaw) errors.push('Column F (Meal Date) is required');
     if (mealTypeRaw && !normalizeMealType(mealTypeRaw)) errors.push('Column D must be Breakfast, Lunch, or Dinner');
-    if (mealDateRaw && !normalizeDateOnly(mealDateRaw)) errors.push('Column E must be a valid date');
+    if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date in MM/DD/YY format');
 
     return {
       index: idx + 1,
@@ -92,7 +121,7 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
 router.get('/template', async (_req, res) => {
   const mode = await getMode();
   if (mode === MealTrackingMode.camp_meeting) {
-    const header = 'A,Person ID,Name,Meal Type,Meal Day\n';
+    const header = 'A,Person ID,Name,Meal Type,Day of week,Meal Date\n';
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="camp-meeting-template.csv"');
     return res.send(header);
@@ -164,13 +193,13 @@ router.post('/commit', upload.single('file'), async (req, res) => {
 
       for (const row of validRows) {
         const mealType = normalizeMealType(row.mealType);
-        const mealDate = normalizeDateOnly(row.mealDate);
-        if (!mealType || !mealDate || !row.personId) continue;
+        const mealDate = normalizeCampMeetingDate(row.mealDate);
+        if (!mealType || !mealDate || !row.personId || !row.personName) continue;
 
         await tx.mealEntitlement.create({
           data: {
             personId: row.personId,
-            personName: row.personName || null,
+            personName: row.personName,
             mealType,
             mealDate
           }
