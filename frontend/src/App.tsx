@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { api, API_BASE } from './api/client';
-import type { MealType, ReportsSummaryResponse, ScanPerson, ScanResponse } from './api/types';
+import type { MealTrackingMode, MealType, ReportsSummaryResponse, ScanPerson, ScanResponse } from './api/types';
 import QrScanner from './components/QrScanner';
 import { useAuth } from './context/AuthContext';
 
@@ -26,107 +26,41 @@ function Login() {
     }
   }
 
-  return (
-    <div className="login-shell">
-      <div className="login-card">
-        <h1>Cafeteria Scanner</h1>
-        <p className="muted">IMSDA Meal Scanner</p>
-        <form onSubmit={onSubmit} className="stack">
-          <label>
-            Username
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-          </label>
-          <button className="primary" type="submit">Sign in</button>
-          {error && <p className="error">{error}</p>}
-        </form>
-      </div>
-    </div>
-  );
+  return <div className="login-shell"><div className="login-card"><h1>Cafeteria Scanner</h1><p className="muted">IMSDA Meal Scanner</p><form onSubmit={onSubmit} className="stack"><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label><button className="primary" type="submit">Sign in</button>{error && <p className="error">{error}</p>}</form></div></div>;
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { logout, user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
 
-  const links = isAdmin
-    ? [
-        ['dashboard', 'Dashboard'],
-        ['scan', 'Scan Station'],
-        ['people', 'People'],
-        ['import', 'Import'],
-        ['badges', 'Badges'],
-        ['transactions', 'Transactions'],
-        ['reports', 'Reports'],
-        ['settings', 'Settings']
-      ]
-    : [['scan', 'Scan Station']];
+  const links = isAdmin ? [['dashboard', 'Dashboard'], ['scan', 'Scan Station'], ['people', 'People'], ['import', 'Import'], ['badges', 'Badges'], ['transactions', 'Transactions'], ['reports', 'Reports'], ['settings', 'Settings']] : [['scan', 'Scan Station']];
 
-  return (
-    <div>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <a href="https://tools.imsda.org" className="back-link" rel="noreferrer">
-            ← Back to Tools
-          </a>
-          <h2>Cafeteria Scanner</h2>
-          <div className="right-actions">
-            <span className="user-pill">{user?.username} · {user?.role}</span>
-            <button type="button" className="secondary" onClick={() => logout()}>Logout</button>
-          </div>
-        </div>
-        <nav>
-          {links.map(([path, label]) => (
-            <NavLink key={path} to={`/${path}`} className={({ isActive }) => (isActive ? 'active' : '')}>
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-      </header>
-      <main className="page">{children}</main>
-    </div>
-  );
+  return <div><header className="topbar"><div className="topbar-inner"><a href="https://tools.imsda.org" className="back-link" rel="noreferrer">← Back to Tools</a><h2>Cafeteria Scanner</h2><div className="right-actions"><span className="user-pill">{user?.username} · {user?.role}</span><button type="button" className="secondary" onClick={() => logout()}>Logout</button></div></div><nav>{links.map(([path, label]) => <NavLink key={path} to={`/${path}`} className={({ isActive }) => (isActive ? 'active' : '')}>{label}</NavLink>)}</nav></header><main className="page">{children}</main></div>;
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  if (user?.role !== 'ADMIN') {
-    return <Navigate to="/scan" replace />;
-  }
+  if (user?.role !== 'ADMIN') return <Navigate to="/scan" replace />;
   return <>{children}</>;
 }
 
 function Dashboard() {
   const [data, setData] = useState<Record<string, number> | null>(null);
-  useEffect(() => {
-    void api<Record<string, number>>('/dashboard/summary').then(setData);
-  }, []);
+  useEffect(() => { void api<Record<string, number>>('/dashboard/summary').then(setData); }, []);
   if (!data) return <p>Loading dashboard…</p>;
   return <div className="card"><h2>Today at a glance</h2><div className="stats-grid">{Object.entries(data).map(([key, value]) => <div className="stat-card" key={key}><p className="muted">{key}</p><p className="value">{value}</p></div>)}</div></div>;
 }
 
-type ScanResultState =
-  | { ok: true; person: ScanPerson; mealType: MealType }
-  | { ok: false; error: string }
-  | null;
+type ScanResultState = ({ ok: true; person: ScanPerson; mealType: MealType; mealTrackingMode: MealTrackingMode } | { ok: false; error: string }) | null;
 
 function ScanResultCard({ result }: { result: ScanResultState }) {
   if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a person ID barcode or use USB scanner/manual ID entry.</p></div>;
   if (!result.ok) return <div className="scan-result fail"><h3>Scan Failed</h3><p>{result.error}</p></div>;
 
   const remaining = result.mealType === 'BREAKFAST' ? result.person.breakfastRemaining : result.mealType === 'LUNCH' ? result.person.lunchRemaining : result.person.dinnerRemaining;
+  const tally = result.mealType === 'BREAKFAST' ? result.person.breakfastCount : result.mealType === 'LUNCH' ? result.person.lunchCount : result.person.dinnerCount;
 
-  return (
-    <div className="scan-result success">
-      <h3>Meal Recorded</h3>
-      <p className="scan-person">{result.person.firstName} {result.person.lastName}</p>
-      <p>Meal: <strong>{formatMealLabel(result.mealType)}</strong></p>
-      <p>Remaining balance: <strong>{remaining}</strong></p>
-    </div>
-  );
+  return <div className="scan-result success"><h3>Meal Recorded</h3><p className="scan-person">{result.person.firstName} {result.person.lastName}</p><p>Meal: <strong>{formatMealLabel(result.mealType)}</strong></p><p>Mode: <strong>{result.mealTrackingMode === 'countdown' ? 'Count Down' : 'Tally Up'}</strong></p>{result.mealTrackingMode === 'countdown' ? <p>Remaining balance: <strong>{remaining}</strong></p> : <><p>{formatMealLabel(result.mealType)} tally: <strong>{tally}</strong></p><p>Total meals served: <strong>{result.person.totalMealsCount}</strong></p></>}</div>;
 }
 
 function ScanPage() {
@@ -134,20 +68,20 @@ function ScanPage() {
   const [manual, setManual] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mode, setMode] = useState<'camera' | 'usb'>('camera');
+  const [mealTrackingMode, setMealTrackingMode] = useState<MealTrackingMode>('countdown');
   const usbInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (mode === 'usb') usbInputRef.current?.focus();
-  }, [mode]);
+  useEffect(() => { if (mode === 'usb') usbInputRef.current?.focus(); }, [mode]);
+  useEffect(() => { void api<{ mealTrackingMode: MealTrackingMode }>('/settings').then((s) => setMealTrackingMode(s.mealTrackingMode)); }, []);
 
   const submitScan = async (code: string) => {
     const trimmed = code.trim();
     if (!trimmed || isSubmitting) return;
-
     setIsSubmitting(true);
     try {
       const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed }) });
-      setResult({ ok: true, person: response.person, mealType: response.mealType });
+      setResult({ ok: true, person: response.person, mealType: response.mealType, mealTrackingMode: response.mealTrackingMode });
+      setMealTrackingMode(response.mealTrackingMode);
       setManual('');
       usbInputRef.current?.focus();
     } catch (error) {
@@ -157,81 +91,22 @@ function ScanPage() {
     }
   };
 
-  const onManualSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    await submitScan(manual);
-  };
+  const onManualSubmit = async (event: FormEvent) => { event.preventDefault(); await submitScan(manual); };
 
-  return (
-    <div className="scan-layout">
-      <section className="card stack">
-        <h2>Scan Station</h2>
-        <div className="button-row">
-          <button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button>
-          <button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button>
-        </div>
-
-        <p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>
-
-        {mode === 'camera' ? (
-          <QrScanner onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} />
-        ) : (
-          <form className="stack" onSubmit={onManualSubmit}>
-            <label>
-              Person ID input
-              <input
-                ref={usbInputRef}
-                className="scan-input"
-                placeholder="Scan with USB scanner or type person ID and press Enter"
-                value={manual}
-                onChange={(e) => setManual(e.target.value)}
-                aria-label="Person ID input"
-                onBlur={() => setTimeout(() => usbInputRef.current?.focus(), 0)}
-              />
-            </label>
-            <button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button>
-          </form>
-        )}
-      </section>
-
-      <ScanResultCard result={result} />
-    </div>
-  );
+  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{mealTrackingMode === 'countdown' ? 'Count Down' : 'Tally Up'}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => setManual(e.target.value)} aria-label="Person ID input" onBlur={() => setTimeout(() => usbInputRef.current?.focus(), 0)} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}</section><ScanResultCard result={result} /></div>;
 }
 
 function PeoplePage() {
   const [people, setPeople] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({ firstName: '', lastName: '', personId: '', codeValue: '', breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0, active: true });
+  const [settings, setSettings] = useState<{ mealTrackingMode: MealTrackingMode } | null>(null);
+  const [form, setForm] = useState<any>({ firstName: '', lastName: '', personId: '', codeValue: '', breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0, breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0, active: true });
 
   const load = () => api<any[]>('/people?showInactive=true').then(setPeople);
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); void api<{ mealTrackingMode: MealTrackingMode }>('/settings').then(setSettings); }, []);
 
-  return (
-    <div className="card stack">
-      <h2>People</h2>
-      <form className="grid-form" onSubmit={(e) => { e.preventDefault(); void api('/people', { method: 'POST', body: JSON.stringify(form) }).then(load); }}>
-        {['firstName', 'lastName', 'personId', 'codeValue', 'grade', 'group', 'campus'].map((k) => <input key={k} placeholder={k} value={form[k] || ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />)}
-        <button className="primary">Add</button>
-      </form>
+  const isTally = settings?.mealTrackingMode === 'tally';
 
-      <table>
-        <thead><tr><th>Name</th><th>Person ID</th><th>Code</th><th>Breakfast</th><th>Lunch</th><th>Dinner</th><th>Actions</th></tr></thead>
-        <tbody>
-          {people.map((p) => (
-            <tr key={p.id}>
-              <td>{p.firstName} {p.lastName}</td>
-              <td>{p.personId}</td>
-              <td>{p.codeValue}</td>
-              <td><input type="number" min={0} value={p.breakfastRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastRemaining: Number(e.target.value) } : row))} /></td>
-              <td><input type="number" min={0} value={p.lunchRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchRemaining: Number(e.target.value) } : row))} /></td>
-              <td><input type="number" min={0} value={p.dinnerRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerRemaining: Number(e.target.value) } : row))} /></td>
-              <td><button className="small" type="button" onClick={() => void api(`/people/${p.id}`, { method: 'PUT', body: JSON.stringify({ breakfastRemaining: p.breakfastRemaining, lunchRemaining: p.lunchRemaining, dinnerRemaining: p.dinnerRemaining }) }).then(load)}>Save Meals</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  return <div className="card stack"><h2>People</h2><p className="muted">Active mode: <strong>{isTally ? 'Tally Up' : 'Count Down'}</strong></p><form className="grid-form" onSubmit={(e) => { e.preventDefault(); void api('/people', { method: 'POST', body: JSON.stringify(form) }).then(load); }}>{['firstName', 'lastName', 'personId', 'codeValue', 'grade', 'group', 'campus'].map((k) => <input key={k} placeholder={k} value={form[k] || ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />)}<button className="primary">Add</button></form><table><thead><tr><th>Name</th><th>Person ID</th><th>Code</th><th>Breakfast Rem.</th><th>Lunch Rem.</th><th>Dinner Rem.</th><th>Breakfast Count</th><th>Lunch Count</th><th>Dinner Count</th><th>Total Count</th><th>Actions</th></tr></thead><tbody>{people.map((p) => <tr key={p.id}><td>{p.firstName} {p.lastName}</td><td>{p.personId}</td><td>{p.codeValue}</td><td><input type="number" min={0} value={p.breakfastRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.lunchRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.dinnerRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.breakfastCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.lunchCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.dinnerCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.totalMealsCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, totalMealsCount: Number(e.target.value) } : row))} /></td><td><div className="stack"><button className="small" type="button" onClick={() => void api(`/people/${p.id}`, { method: 'PUT', body: JSON.stringify({ breakfastRemaining: p.breakfastRemaining, lunchRemaining: p.lunchRemaining, dinnerRemaining: p.dinnerRemaining, breakfastCount: p.breakfastCount, lunchCount: p.lunchCount, dinnerCount: p.dinnerCount, totalMealsCount: p.totalMealsCount }) }).then(load)}>{isTally ? 'Save Tallies' : 'Save Meals'}</button><button className="small secondary" type="button" onClick={() => void api(`/people/reset-tallies/${p.id}`, { method: 'POST' }).then(load)}>Reset Tallies</button></div></td></tr>)}</tbody></table></div>;
 }
 
 function ImportPage() { const [file, setFile] = useState<File>(); const [preview, setPreview] = useState<any>(); const [result, setResult] = useState<any>(); async function previewFile() { if (!file) return; const form = new FormData(); form.append('file', file); const res = await fetch(`${API_BASE}/import/preview`, { method: 'POST', credentials: 'include', body: form }); setPreview(await res.json()); } async function commit() { if (!file) return; const form = new FormData(); form.append('file', file); form.append('generateMissingCodes', 'true'); const res = await fetch(`${API_BASE}/import/commit`, { method: 'POST', credentials: 'include', body: form }); setResult(await res.json()); } return <div className="card"><h2>CSV Import</h2><a href={`${API_BASE}/import/template`} target="_blank" rel="noreferrer">Download Template</a><input type="file" accept=".csv" onChange={(e)=>setFile(e.target.files?.[0])}/><div className="button-row"><button className="secondary" onClick={previewFile} disabled={!file}>Preview</button><button className="primary" onClick={commit} disabled={!file}>Commit Partial Import</button></div>{preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}{result && <pre>{JSON.stringify(result, null, 2)}</pre>}</div>; }
@@ -261,26 +136,29 @@ function ReportsPage() {
   return <div className="card stack"><h2>Reports</h2><div className="filters-row"><label>From <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label><label>To <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label><button className="primary" type="button" onClick={() => void loadReport()}>Apply Filter</button><a className="button-link" href={`${API_BASE}/reports/export.csv?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`} target="_blank" rel="noreferrer">Export Transactions CSV</a></div>{error && <p className="error">{error}</p>}{report && <div className="stats-grid"><div className="stat-card"><p className="muted">Scans</p><p className="value">{report.stats.scans}</p></div></div>}</div>;
 }
 
-function SettingsPage() { const [settings, setSettings] = useState<any>(); useEffect(() => { void api('/settings').then(setSettings); }, []); if (!settings) return <p>Loading...</p>; return <div className="card"><h2>Settings</h2><div className="grid-form">{Object.keys(settings).filter((k)=>k!=='id'&&k!=='updatedAt').map((k)=><label key={k}>{k}<input value={String(settings[k])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k]==='boolean'?e.target.value==='true':typeof settings[k]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><button className="primary" onClick={()=>api('/settings',{method:'PUT',body:JSON.stringify(settings)})}>Save</button></div>; }
+function SettingsPage() {
+  const [settings, setSettings] = useState<any>();
+  const [message, setMessage] = useState('');
+  const [clearPhrase, setClearPhrase] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const load = async () => {
+    const loaded = await api('/settings');
+    setSettings(loaded);
+  };
+
+  useEffect(() => { void load(); }, []);
+  if (!settings) return <p>Loading...</p>;
+
+  const clearEnabled = clearPhrase === 'CLEAR DATABASE';
+
+  return <div className="card stack"><h2>Settings</h2><label>Meal tracking mode<select value={settings.mealTrackingMode} onChange={(e) => setSettings({ ...settings, mealTrackingMode: e.target.value })}><option value="countdown">Count Down (subtract from available meals)</option><option value="tally">Tally Up (count each served meal)</option></select></label><p className="muted">Count Down = subtract from available balances. Tally Up = no balance blocking; each scan increments meal counters.</p><div className="grid-form">{Object.keys(settings).filter((k)=>!['id','updatedAt','mealTrackingMode'].includes(k)).map((k)=><label key={k}>{k}<input value={String(settings[k])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k]==='boolean'?e.target.value==='true':typeof settings[k]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><div className="button-row"><button className="primary" onClick={() => void api('/settings',{method:'PUT',body:JSON.stringify(settings)}).then(() => setMessage('Settings saved.'))}>Save</button></div>{message && <p>{message}</p>}<hr /><div className="stack"><h3>System: Clear Database</h3><p className="error">Warning: This permanently deletes all people, scan transactions, and import history. Admin/scanner login accounts and system settings are preserved.</p><button className="secondary" type="button" onClick={() => { setShowConfirm(true); setMessage(''); }}>Open Clear Database Confirmation</button>{showConfirm && <div className="card stack"><p>Type <code>CLEAR DATABASE</code> to enable this destructive action.</p><input value={clearPhrase} onChange={(e) => setClearPhrase(e.target.value)} placeholder="CLEAR DATABASE" /><div className="button-row"><button className="secondary" onClick={() => { setShowConfirm(false); setClearPhrase(''); }}>Cancel</button><button className="primary" disabled={!clearEnabled} onClick={() => void api('/system/clear-database', { method: 'POST' }).then(async () => { setMessage('Database cleared successfully.'); setShowConfirm(false); setClearPhrase(''); await load(); })}>Clear Database</button></div></div>}</div></div>;
+}
 
 export default function App() {
   const { user, loading } = useAuth();
   if (loading) return <p>Loading...</p>;
   if (!user) return <Login />;
 
-  return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<Navigate to={user.role === 'ADMIN' ? '/dashboard' : '/scan'} />} />
-        <Route path="/scan" element={<ScanPage />} />
-        <Route path="/dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} />
-        <Route path="/people" element={<AdminOnly><PeoplePage /></AdminOnly>} />
-        <Route path="/import" element={<AdminOnly><ImportPage /></AdminOnly>} />
-        <Route path="/badges" element={<AdminOnly><BadgesPage /></AdminOnly>} />
-        <Route path="/transactions" element={<AdminOnly><TransactionsPage /></AdminOnly>} />
-        <Route path="/reports" element={<AdminOnly><ReportsPage /></AdminOnly>} />
-        <Route path="/settings" element={<AdminOnly><SettingsPage /></AdminOnly>} />
-      </Routes>
-    </Layout>
-  );
+  return <Layout><Routes><Route path="/" element={<Navigate to={user.role === 'ADMIN' ? '/dashboard' : '/scan'} />} /><Route path="/scan" element={<ScanPage />} /><Route path="/dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} /><Route path="/people" element={<AdminOnly><PeoplePage /></AdminOnly>} /><Route path="/import" element={<AdminOnly><ImportPage /></AdminOnly>} /><Route path="/badges" element={<AdminOnly><BadgesPage /></AdminOnly>} /><Route path="/transactions" element={<AdminOnly><TransactionsPage /></AdminOnly>} /><Route path="/reports" element={<AdminOnly><ReportsPage /></AdminOnly>} /><Route path="/settings" element={<AdminOnly><SettingsPage /></AdminOnly>} /></Routes></Layout>;
 }

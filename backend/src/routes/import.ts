@@ -14,7 +14,7 @@ function parseBool(v: string) {
 }
 
 router.get('/template', (_req, res) => {
-  const header = 'firstName,lastName,personId,codeValue,breakfastRemaining,lunchRemaining,dinnerRemaining,active,grade,group,campus,notes\n';
+  const header = 'firstName,lastName,personId,codeValue,breakfastRemaining,lunchRemaining,dinnerRemaining,breakfastCount,lunchCount,dinnerCount,totalMealsCount,active,grade,group,campus,notes\n';
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="people-template.csv"');
   res.send(header);
@@ -57,6 +57,10 @@ router.post('/commit', upload.single('file'), async (req, res) => {
           breakfastRemaining: Number(row.breakfastRemaining || 0),
           lunchRemaining: Number(row.lunchRemaining || 0),
           dinnerRemaining: Number(row.dinnerRemaining || 0),
+          breakfastCount: Number(row.breakfastCount || 0),
+          lunchCount: Number(row.lunchCount || 0),
+          dinnerCount: Number(row.dinnerCount || 0),
+          totalMealsCount: Number(row.totalMealsCount || 0),
           active: row.active ? parseBool(row.active) : true,
           grade: row.grade || null,
           group: row.group || null,
@@ -71,6 +75,10 @@ router.post('/commit', upload.single('file'), async (req, res) => {
           breakfastRemaining: Number(row.breakfastRemaining || 0),
           lunchRemaining: Number(row.lunchRemaining || 0),
           dinnerRemaining: Number(row.dinnerRemaining || 0),
+          breakfastCount: Number(row.breakfastCount || 0),
+          lunchCount: Number(row.lunchCount || 0),
+          dinnerCount: Number(row.dinnerCount || 0),
+          totalMealsCount: Number(row.totalMealsCount || 0),
           active: row.active ? parseBool(row.active) : true,
           grade: row.grade || null,
           group: row.group || null,

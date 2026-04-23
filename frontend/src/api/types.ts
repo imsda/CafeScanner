@@ -1,4 +1,5 @@
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
+export type MealTrackingMode = 'countdown' | 'tally';
 
 export interface ScanPerson {
   id?: number;
@@ -8,6 +9,10 @@ export interface ScanPerson {
   breakfastRemaining: number;
   lunchRemaining: number;
   dinnerRemaining: number;
+  breakfastCount: number;
+  lunchCount: number;
+  dinnerCount: number;
+  totalMealsCount: number;
   active?: boolean;
 }
 
@@ -15,6 +20,7 @@ export interface ScanResponse {
   ok: true;
   person: ScanPerson;
   mealType: MealType;
+  mealTrackingMode: MealTrackingMode;
 }
 
 export interface ScanFailureResponse {

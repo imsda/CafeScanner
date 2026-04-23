@@ -10,6 +10,7 @@ import transactionRoutes from './routes/transactions.js';
 import importRoutes from './routes/import.js';
 import dashboardRoutes from './routes/dashboard.js';
 import reportRoutes from './routes/reports.js';
+import systemRoutes from './routes/system.js';
 import { requireAdmin, requireAuth } from './middleware/auth.js';
 
 dotenv.config();
@@ -67,6 +68,7 @@ app.use('/api/transactions', requireAuth, requireAdmin, transactionRoutes);
 app.use('/api/import', requireAuth, requireAdmin, importRoutes);
 app.use('/api/dashboard', requireAuth, requireAdmin, dashboardRoutes);
 app.use('/api/reports', requireAuth, requireAdmin, reportRoutes);
+app.use('/api/system', requireAuth, requireAdmin, systemRoutes);
 
 app.listen(port, host, () => {
   console.log(`Backend listening on http://${host}:${port}`);

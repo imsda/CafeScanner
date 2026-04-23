@@ -25,6 +25,11 @@ enum ScanResult {
   FAILURE
 }
 
+enum MealTrackingMode {
+  countdown
+  tally
+}
+
 model AdminUser {
   id           Int      @id @default(autoincrement())
   username     String   @unique
@@ -44,6 +49,10 @@ model Person {
   breakfastRemaining Int      @default(0)
   lunchRemaining     Int      @default(0)
   dinnerRemaining    Int      @default(0)
+  breakfastCount     Int      @default(0)
+  lunchCount         Int      @default(0)
+  dinnerCount        Int      @default(0)
+  totalMealsCount    Int      @default(0)
   active             Boolean  @default(true)
   grade              String?
   group              String?
@@ -57,21 +66,22 @@ model Person {
 }
 
 model Setting {
-  id                       Int      @id @default(1)
-  schoolName               String   @default("My School Cafeteria")
-  timezone                 String   @default("Etc/UTC")
-  breakfastStart           String   @default("05:00")
-  breakfastEnd             String   @default("10:00")
-  lunchStart               String   @default("11:00")
-  lunchEnd                 String   @default("14:00")
-  dinnerStart              String   @default("17:00")
-  dinnerEnd                String   @default("19:00")
-  scannerCooldownSeconds   Int      @default(4)
-  stationName              String   @default("Main Station")
-  enableSounds             Boolean  @default(true)
-  allowManualMealOverride  Boolean  @default(false)
-  hideInactiveByDefault    Boolean  @default(true)
-  updatedAt                DateTime @updatedAt
+  id                       Int              @id @default(1)
+  schoolName               String           @default("My School Cafeteria")
+  timezone                 String           @default("Etc/UTC")
+  breakfastStart           String           @default("05:00")
+  breakfastEnd             String           @default("10:00")
+  lunchStart               String           @default("11:00")
+  lunchEnd                 String           @default("14:00")
+  dinnerStart              String           @default("17:00")
+  dinnerEnd                String           @default("19:00")
+  scannerCooldownSeconds   Int              @default(4)
+  stationName              String           @default("Main Station")
+  enableSounds             Boolean          @default(true)
+  allowManualMealOverride  Boolean          @default(false)
+  hideInactiveByDefault    Boolean          @default(true)
+  mealTrackingMode         MealTrackingMode @default(countdown)
+  updatedAt                DateTime         @updatedAt
 }
 
 model ScanTransaction {
@@ -89,11 +99,11 @@ model ScanTransaction {
 }
 
 model ImportHistory {
-  id             Int      @id @default(autoincrement())
-  filename       String
-  totalRows      Int
-  successRows    Int
-  failedRows     Int
-  createdAt      DateTime @default(now())
-  errorSummary   String?
+  id           Int      @id @default(autoincrement())
+  filename     String
+  totalRows    Int
+  successRows  Int
+  failedRows   Int
+  createdAt    DateTime @default(now())
+  errorSummary String?
 }
