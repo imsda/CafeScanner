@@ -1,9 +1,20 @@
 import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
-import { detectMealType, mealField } from '../utils/meal.js';
+import { detectMealType } from '../utils/meal.js';
 
 function normalizePersonId(value: string): string {
   return value.trim();
+}
+
+function localDateKey(date: Date, timezone: string): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+
+  return formatter.format(date);
 }
 
 const tallyFieldByMeal: Record<MealType, 'breakfastCount' | 'lunchCount' | 'dinnerCount' | null> = {
@@ -71,18 +82,43 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       return { ok: false, error: 'Person is inactive.', reason: 'INACTIVE_PERSON', person };
     }
 
-    const mode = settings.mealTrackingMode ?? MealTrackingMode.countdown;
+    const mode = settings.mealTrackingMode ?? MealTrackingMode.camp_meeting;
 
-    if (mode === MealTrackingMode.countdown) {
-      const field = mealField(detectedMeal);
-      if (person[field] <= 0) {
-        await tx.scanTransaction.create({ data: { scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE, failureReason: 'NO_MEALS_REMAINING', personId: person.id, stationName: settings.stationName, adminUserId: options?.adminUserId } });
-        return { ok: false, error: `No ${detectedMeal.toLowerCase()} meals remaining.`, reason: 'NO_MEALS_REMAINING', person, mealType: detectedMeal };
+    if (mode === MealTrackingMode.camp_meeting) {
+      const todayKey = localDateKey(new Date(), settings.timezone || 'Etc/UTC');
+
+      const entitlement = await tx.mealEntitlement.findFirst({
+        where: {
+          personId: person.personId,
+          mealType: detectedMeal,
+          mealDate: todayKey,
+          redeemed: false
+        },
+        orderBy: { id: 'asc' }
+      });
+
+      if (!entitlement) {
+        await tx.scanTransaction.create({
+          data: {
+            scannedValue: personIdValue,
+            mealType: detectedMeal,
+            result: ScanResult.FAILURE,
+            failureReason: 'NO_MEAL_ENTITLEMENT',
+            personId: person.id,
+            stationName: settings.stationName,
+            adminUserId: options?.adminUserId
+          }
+        });
+
+        return { ok: false, error: 'No meal available for this person for this meal and day.', reason: 'NO_MEAL_ENTITLEMENT', person, mealType: detectedMeal };
       }
 
-      const updated = await tx.person.update({
-        where: { id: person.id },
-        data: { [field]: { decrement: 1 } }
+      await tx.mealEntitlement.update({
+        where: { id: entitlement.id },
+        data: {
+          redeemed: true,
+          redeemedAt: new Date()
+        }
       });
 
       await tx.scanTransaction.create({
@@ -96,7 +132,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         }
       });
 
-      return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
+      return { ok: true, person, mealType: detectedMeal, mealTrackingMode: mode };
     }
 
     const tallyField = tallyFieldByMeal[detectedMeal];

@@ -49,7 +49,7 @@ function resolveDateRange(query: Record<string, unknown>): { from: Date; to: Dat
 router.get('/summary', async (req, res) => {
   const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
 
-  const [transactions, people, settings] = await Promise.all([
+  const [transactions, people, settings, entitlementAgg] = await Promise.all([
     prisma.scanTransaction.findMany({
       where: { timestamp: { gte: from, lte: to } },
       include: {
@@ -80,7 +80,11 @@ router.get('/summary', async (req, res) => {
         totalMealsCount: true
       }
     }),
-    prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } })
+    prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } }),
+    prisma.mealEntitlement.aggregate({
+      _count: { _all: true },
+      where: {}
+    })
   ]);
 
   const mealCounts = { BREAKFAST: 0, LUNCH: 0, DINNER: 0 };
@@ -97,8 +101,16 @@ router.get('/summary', async (req, res) => {
     }
   }
 
-  const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.countdown;
+  const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
   const mealTotalsByPerson = await getMealTotalsByPerson({ from, to, mealTrackingMode });
+
+  const redeemedEntitlements = await prisma.mealEntitlement.count({
+    where: {
+      redeemed: true,
+      redeemedAt: { gte: from, lte: to }
+    }
+  });
+
 
   const remainingBalanceSummary = people.reduce(
     (acc, person) => {
@@ -136,6 +148,11 @@ router.get('/summary', async (req, res) => {
     perPersonUsage: mealTotalsByPerson,
     remainingBalanceSummary,
     tallySummary,
+    entitlementSummary: {
+      totalEntitlements: entitlementAgg._count._all,
+      totalRedeemed: redeemedEntitlements,
+      totalRemaining: Math.max(0, entitlementAgg._count._all - redeemedEntitlements)
+    },
     transactions
   });
 });
@@ -143,7 +160,7 @@ router.get('/summary', async (req, res) => {
 router.get('/meal-totals.csv', async (req, res) => {
   const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
   const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
-  const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.countdown;
+  const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
 
   if (process.env.NODE_ENV !== 'production') {
     console.log('[reports/meal-totals.csv] input', {

@@ -28,7 +28,31 @@ const personSchema = z.object({
 router.get('/', async (req, res) => {
   const showInactive = req.query.showInactive === 'true';
   const people = await prisma.person.findMany({ where: showInactive ? {} : { active: true }, orderBy: [{ lastName: 'asc' }] });
-  res.json(people);
+
+  const entitlementGroups = await prisma.mealEntitlement.groupBy({
+    by: ['personId', 'redeemed'],
+    _count: { _all: true }
+  });
+
+  const summaryByPersonId = new Map<string, { total: number; redeemed: number }>();
+  for (const row of entitlementGroups) {
+    const existing = summaryByPersonId.get(row.personId) ?? { total: 0, redeemed: 0 };
+    existing.total += row._count._all;
+    if (row.redeemed) existing.redeemed += row._count._all;
+    summaryByPersonId.set(row.personId, existing);
+  }
+
+  const enriched = people.map((person) => {
+    const summary = summaryByPersonId.get(person.personId) ?? { total: 0, redeemed: 0 };
+    return {
+      ...person,
+      campMeetingEntitlements: summary.total,
+      campMeetingRedeemed: summary.redeemed,
+      campMeetingRemaining: Math.max(0, summary.total - summary.redeemed)
+    };
+  });
+
+  res.json(enriched);
 });
 
 router.post('/', async (req, res) => {

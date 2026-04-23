@@ -74,6 +74,7 @@ router.put('/meal-tracking-mode', async (req, res) => {
 
     await tx.scanTransaction.deleteMany({});
     await tx.importHistory.deleteMany({});
+    await tx.mealEntitlement.deleteMany({});
     await tx.person.deleteMany({});
 
     return settings;
@@ -85,7 +86,7 @@ router.put('/meal-tracking-mode', async (req, res) => {
     ok: true,
     mealTrackingMode: updatedSettings.mealTrackingMode,
     dataCleared: true,
-    message: 'Meal tracking mode switched. People, transactions, and import history were cleared.'
+    message: 'Meal tracking mode switched. People, transactions, import history, and meal entitlements were cleared.'
   });
 });
 

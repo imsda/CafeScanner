@@ -48,6 +48,45 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
       .sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
   }
 
+  if (mealTrackingMode === MealTrackingMode.camp_meeting) {
+    const entitlements = await prisma.mealEntitlement.findMany({
+      where: {
+        redeemed: true,
+        redeemedAt: { gte: from, lte: to }
+      }
+    });
+
+    const people = await prisma.person.findMany({
+      select: { personId: true, firstName: true, lastName: true }
+    });
+    const personById = new Map(people.map((p) => [p.personId, p]));
+
+    const rowsByPersonId = new Map<string, MealTotalsRow>();
+
+    for (const entitlement of entitlements) {
+      const person = personById.get(entitlement.personId);
+      const fallbackName = (entitlement.personName || '').trim();
+      const [firstNameFromCsv, ...rest] = fallbackName.split(' ');
+      const lastNameFromCsv = rest.join(' ').trim();
+
+      const existing = rowsByPersonId.get(entitlement.personId) ?? {
+        personId: entitlement.personId,
+        firstName: person?.firstName || firstNameFromCsv || 'Unknown',
+        lastName: person?.lastName || lastNameFromCsv,
+        breakfasts: 0,
+        lunches: 0,
+        dinners: 0,
+        total: 0
+      };
+
+      mapMealCount(entitlement.mealType, existing);
+      existing.total += 1;
+      rowsByPersonId.set(entitlement.personId, existing);
+    }
+
+    return Array.from(rowsByPersonId.values()).sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
+  }
+
   const transactions = await prisma.scanTransaction.findMany({
     where: { timestamp: { gte: from, lte: to }, result: ScanResult.SUCCESS },
     include: {
