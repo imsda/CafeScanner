@@ -60,6 +60,25 @@ function normalizeCampMeetingDate(value: string): string | null {
   const raw = value.trim();
   if (!raw) return null;
 
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const [, yearRaw, monthRaw, dayRaw] = isoMatch;
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    const day = Number(dayRaw);
+
+    const localDate = new Date(year, month - 1, day);
+    if (
+      localDate.getFullYear() !== year ||
+      localDate.getMonth() !== month - 1 ||
+      localDate.getDate() !== day
+    ) {
+      return null;
+    }
+
+    return `${yearRaw}-${monthRaw}-${dayRaw}`;
+  }
+
   const mmddyyMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
   if (!mmddyyMatch) return null;
 
@@ -104,14 +123,14 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
     if (!mealTypeRaw) errors.push('Column D (Meal Type) is required');
     if (!mealDateRaw) errors.push('Column F (Meal Date) is required');
     if (mealTypeRaw && !normalizeMealType(mealTypeRaw)) errors.push('Column D must be Breakfast, Lunch, or Dinner');
-    if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date in MM/DD/YY format');
+    if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date');
 
     return {
       index: idx + 1,
       personId,
       personName,
-      mealType: mealTypeRaw,
-      mealDate: mealDateRaw,
+      mealType: normalizeMealType(mealTypeRaw) ?? mealTypeRaw,
+      mealDate: normalizeCampMeetingDate(mealDateRaw) ?? mealDateRaw,
       errors,
       valid: errors.length === 0
     };
@@ -121,7 +140,7 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
 router.get('/template', async (_req, res) => {
   const mode = await getMode();
   if (mode === MealTrackingMode.camp_meeting) {
-    const header = 'A,Person ID,Name,Meal Type,Day of week,Meal Date\n';
+    const header = 'ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date\n';
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="camp-meeting-template.csv"');
     return res.send(header);
