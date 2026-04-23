@@ -88,6 +88,18 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
     if (mode === MealTrackingMode.camp_meeting) {
       const todayKey = localDateKey(new Date(), settings.timezone || 'Etc/UTC');
+      const matchingUnusedBefore = await tx.mealEntitlement.count({
+        where: {
+          personId: personIdValue,
+          mealType: detectedMeal,
+          mealDate: todayKey,
+          redeemed: false
+        }
+      });
+
+      console.debug(
+        `[SCAN][camp_meeting] personId=${personIdValue} meal=${detectedMeal} mealDate=${todayKey} matchingUnusedBefore=${matchingUnusedBefore}`
+      );
 
       const entitlement = await tx.mealEntitlement.findFirst({
         where: {
@@ -132,6 +144,10 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         }
       });
 
+      console.debug(
+        `[SCAN][camp_meeting] redeemed entitlementId=${entitlement.id} personName=${entitlement.personName || '(none)'} personId=${entitlement.personId}`
+      );
+
       await tx.scanTransaction.create({
         data: {
           scannedValue: personIdValue,
@@ -153,6 +169,10 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           redeemed: false
         }
       });
+
+      console.debug(
+        `[SCAN][camp_meeting] personId=${personIdValue} meal=${detectedMeal} mealDate=${todayKey} remainingAfter=${remainingAvailableTodayForMeal}`
+      );
 
       const displayName = deriveDisplayName(entitlement.personName);
       return {
