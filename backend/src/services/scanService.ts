@@ -145,6 +145,15 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         }
       });
 
+      const remainingAvailableTodayForMeal = await tx.mealEntitlement.count({
+        where: {
+          personId: personIdValue,
+          mealType: detectedMeal,
+          mealDate: todayKey,
+          redeemed: false
+        }
+      });
+
       const displayName = deriveDisplayName(entitlement.personName);
       return {
         ok: true,
@@ -163,7 +172,9 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           active: linkedPerson?.active ?? true
         },
         mealType: detectedMeal,
+        scannedValue: personIdValue,
         mealTrackingMode: mode,
+        remainingAvailableTodayForMeal,
         redeemedEntitlement: {
           id: entitlement.id,
           personName: entitlement.personName,

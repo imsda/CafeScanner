@@ -87,7 +87,15 @@ function Dashboard() {
   return <div className="card"><h2>Today at a glance</h2><div className="stats-grid">{Object.entries(data).map(([key, value]) => <div className="stat-card" key={key}><p className="muted">{key}</p><p className="value">{value}</p></div>)}</div></div>;
 }
 
-type ScanResultState = ({ ok: true; person: ScanPerson; mealType: MealType; mealTrackingMode: MealTrackingMode; redeemedEntitlement?: { id: number; personName?: string | null; personId: string; mealDate: string } } | { ok: false; error: string }) | null;
+type ScanResultState = ({
+  ok: true;
+  person: ScanPerson;
+  mealType: MealType;
+  mealTrackingMode: MealTrackingMode;
+  scannedValue?: string;
+  remainingAvailableTodayForMeal?: number;
+  redeemedEntitlement?: { id: number; personName?: string | null; personId: string; mealDate: string };
+} | { ok: false; error: string }) | null;
 
 function ScanResultCard({ result }: { result: ScanResultState }) {
   if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a person ID barcode or use USB scanner/manual ID entry.</p></div>;
@@ -95,7 +103,8 @@ function ScanResultCard({ result }: { result: ScanResultState }) {
 
   const tally = result.mealType === 'BREAKFAST' ? result.person.breakfastCount : result.mealType === 'LUNCH' ? result.person.lunchCount : result.person.dinnerCount;
 
-  return <div className="scan-result success"><h3>{result.mealTrackingMode === 'camp_meeting' ? 'Meal Redeemed' : 'Meal Recorded'}</h3><p className="scan-person">{result.person.firstName} {result.person.lastName}</p><p>Shared ID: <strong>{result.person.personId || 'N/A'}</strong></p><p>Meal: <strong>{formatMealLabel(result.mealType)}</strong></p><p>Mode: <strong>{modeLabel(result.mealTrackingMode)}</strong></p>{result.mealTrackingMode === 'camp_meeting' ? <p>{result.redeemedEntitlement?.personName ? `Meal redeemed for ${result.redeemedEntitlement.personName}` : 'Meal redeemed.'}</p> : <><p>{formatMealLabel(result.mealType)} tally: <strong>{tally}</strong></p><p>Total meals served: <strong>{result.person.totalMealsCount}</strong></p></>}</div>;
+  const sharedId = result.scannedValue || result.person.personId || 'N/A';
+  return <div className="scan-result success"><h3>{result.mealTrackingMode === 'camp_meeting' ? 'Meal Redeemed' : 'Meal Recorded'}</h3><p className="scan-person">{result.person.firstName} {result.person.lastName}</p><p>Shared ID: <strong>{sharedId}</strong></p><p>Meal: <strong>{formatMealLabel(result.mealType)}</strong></p><p>Mode: <strong>{modeLabel(result.mealTrackingMode)}</strong></p>{result.mealTrackingMode === 'camp_meeting' ? <><p>{result.redeemedEntitlement?.personName ? `Meal redeemed for ${result.redeemedEntitlement.personName}` : 'Meal redeemed.'}</p><p>Remaining available today for this meal: <strong>{result.remainingAvailableTodayForMeal ?? 0}</strong></p></> : <><p>{formatMealLabel(result.mealType)} tally: <strong>{tally}</strong></p><p>Total meals served: <strong>{result.person.totalMealsCount}</strong></p></>}</div>;
 }
 
 function ScanPage() {
@@ -147,7 +156,15 @@ function ScanPage() {
 
     try {
       const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed }) });
-      setResult({ ok: true, person: response.person, mealType: response.mealType, mealTrackingMode: response.mealTrackingMode, redeemedEntitlement: response.redeemedEntitlement });
+      setResult({
+        ok: true,
+        person: response.person,
+        mealType: response.mealType,
+        mealTrackingMode: response.mealTrackingMode,
+        scannedValue: response.scannedValue,
+        remainingAvailableTodayForMeal: response.remainingAvailableTodayForMeal,
+        redeemedEntitlement: response.redeemedEntitlement
+      });
       setMealTrackingMode(response.mealTrackingMode);
       setManual('');
       scannerLikeInputRef.current = false;

@@ -20,7 +20,9 @@ export interface ScanResponse {
   ok: true;
   person: ScanPerson;
   mealType: MealType;
+  scannedValue?: string;
   mealTrackingMode: MealTrackingMode;
+  remainingAvailableTodayForMeal?: number;
   redeemedEntitlement?: {
     id: number;
     personName?: string | null;
