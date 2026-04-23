@@ -39,20 +39,14 @@ router.get('/', async (req, res) => {
     day: '2-digit'
   }).format(new Date());
 
-  const entitlementGroups = await prisma.mealEntitlement.groupBy({
-    by: ['personId', 'mealType', 'redeemed'],
+  const entitlements = await prisma.mealEntitlement.findMany({
     where: { mealType: { in: ['BREAKFAST', 'LUNCH', 'DINNER'] } },
-    _count: { _all: true }
-  });
-
-  const todayAvailableGroups = await prisma.mealEntitlement.groupBy({
-    by: ['personId', 'mealType'],
-    where: {
-      mealType: { in: ['BREAKFAST', 'LUNCH', 'DINNER'] },
-      mealDate: todayKey,
-      redeemed: false
-    },
-    _count: { _all: true }
+    select: {
+      personId: true,
+      mealType: true,
+      mealDate: true,
+      redeemed: true
+    }
   });
 
   type MealBreakdown = {
@@ -72,26 +66,24 @@ router.get('/', async (req, res) => {
   });
 
   const summaryByPersonId = new Map<string, MealBreakdown>();
-  for (const row of entitlementGroups) {
+  for (const row of entitlements) {
     const mealType = row.mealType as 'BREAKFAST' | 'LUNCH' | 'DINNER';
-    const existing = summaryByPersonId.get(row.personId) ?? createMealBreakdown();
-    const count = row._count._all;
-    existing.total += count;
-    existing[mealType].total += count;
-    if (row.redeemed) {
-      existing.redeemed += count;
-      existing[mealType].redeemed += count;
-    } else {
-      existing[mealType].available += count;
-    }
-    summaryByPersonId.set(row.personId, existing);
-  }
+    const personId = row.personId.trim();
+    if (!personId) continue;
 
-  for (const row of todayAvailableGroups) {
-    const mealType = row.mealType as 'BREAKFAST' | 'LUNCH' | 'DINNER';
-    const existing = summaryByPersonId.get(row.personId) ?? createMealBreakdown();
-    existing[mealType].todayAvailable += row._count._all;
-    summaryByPersonId.set(row.personId, existing);
+    const existing = summaryByPersonId.get(personId) ?? createMealBreakdown();
+    existing.total += 1;
+    existing[mealType].total += 1;
+    if (row.redeemed) {
+      existing.redeemed += 1;
+      existing[mealType].redeemed += 1;
+    } else {
+      existing[mealType].available += 1;
+      if (row.mealDate === todayKey) {
+        existing[mealType].todayAvailable += 1;
+      }
+    }
+    summaryByPersonId.set(personId, existing);
   }
 
   const entitlementNames = await prisma.mealEntitlement.groupBy({

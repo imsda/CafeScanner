@@ -72,6 +72,12 @@ app.use('/api/dashboard', requireAuth, requireAdmin, dashboardRoutes);
 app.use('/api/reports', requireAuth, requireAdmin, reportRoutes);
 app.use('/api/system', requireAuth, requireAdmin, systemRoutes);
 
+app.use('/api', (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const message = error instanceof Error && error.message ? error.message : 'Internal server error';
+  console.error('[API] Unhandled error.', error);
+  res.status(500).json({ error: message });
+});
+
 app.listen(port, host, () => {
   console.log(`Backend listening on http://${host}:${port}`);
 
