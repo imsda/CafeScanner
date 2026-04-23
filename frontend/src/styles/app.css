@@ -91,6 +91,18 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.92rem; }
 th, td { border: 1px solid #d8e4f4; padding: 0.45rem 0.5rem; text-align: left; }
 th { background: #f7fbff; }
+.people-table { font-size: 0.86rem; }
+.people-table th,
+.people-table td { padding: 0.3rem 0.4rem; white-space: nowrap; vertical-align: middle; }
+.people-number-input {
+  min-width: 72px;
+  padding: 0.22rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+.people-actions { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.people-actions .small { padding: 0.24rem 0.48rem; font-size: 0.76rem; }
 .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.7rem; }
 .badge { background: #fff; border: 1px solid #d8e4f4; border-radius: 8px; padding: 0.7rem; text-align: center; }
 
