@@ -113,12 +113,22 @@ type PersonRecord = {
   lunchCount: number;
   dinnerCount: number;
   totalMealsCount: number;
+  active?: boolean;
+  grade?: string | null;
+  group?: string | null;
+  campus?: string | null;
+  notes?: string | null;
 };
 
 function PeoplePage() {
   const [people, setPeople] = useState<PersonRecord[]>([]);
   const [settings, setSettings] = useState<{ mealTrackingMode: MealTrackingMode } | null>(null);
   const [form, setForm] = useState<Record<string, string | number | boolean>>({ firstName: '', lastName: '', personId: '', codeValue: '', breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0, breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0, active: true });
+  const [personToDelete, setPersonToDelete] = useState<PersonRecord | null>(null);
+  const [deletePhrase, setDeletePhrase] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
 
   const load = () => api<PersonRecord[]>('/people?showInactive=true').then(setPeople);
   useEffect(() => { void load(); void api<{ mealTrackingMode: MealTrackingMode }>('/settings').then(setSettings); }, []);
@@ -127,6 +137,8 @@ function PeoplePage() {
 
   async function addPerson(e: FormEvent) {
     e.preventDefault();
+    setError('');
+    setMessage('');
     const payload = isTally
       ? { ...form, breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0 }
       : { ...form, breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 };
@@ -135,6 +147,8 @@ function PeoplePage() {
   }
 
   async function savePerson(person: PersonRecord) {
+    setError('');
+    setMessage('');
     const payload = isTally
       ? { breakfastCount: person.breakfastCount, lunchCount: person.lunchCount, dinnerCount: person.dinnerCount, totalMealsCount: person.totalMealsCount }
       : { breakfastRemaining: person.breakfastRemaining, lunchRemaining: person.lunchRemaining, dinnerRemaining: person.dinnerRemaining };
@@ -142,7 +156,28 @@ function PeoplePage() {
     await load();
   }
 
-  return <div className="card stack"><h2>People</h2><p className="muted">Active mode: <strong>{isTally ? 'Tally Up' : 'Count Down'}</strong>. Only {isTally ? 'tally counts' : 'remaining balances'} are editable in this mode.</p><form className="grid-form" onSubmit={(e) => void addPerson(e)}>{['firstName', 'lastName', 'personId', 'codeValue', 'grade', 'group', 'campus'].map((k) => <input key={k} placeholder={k} value={String(form[k] || '')} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />)}<button className="primary">Add</button></form><table><thead><tr><th>Name</th><th>Person ID</th><th>Code</th>{isTally ? <><th>Breakfast Count</th><th>Lunch Count</th><th>Dinner Count</th><th>Total Count</th></> : <><th>Breakfast Rem.</th><th>Lunch Rem.</th><th>Dinner Rem.</th></>}<th>Actions</th></tr></thead><tbody>{people.map((p) => <tr key={p.id}><td>{p.firstName} {p.lastName}</td><td>{p.personId}</td><td>{p.codeValue}</td>{isTally ? <><td><input type="number" min={0} value={p.breakfastCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.lunchCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.dinnerCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.totalMealsCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, totalMealsCount: Number(e.target.value) } : row))} /></td></> : <><td><input type="number" min={0} value={p.breakfastRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.lunchRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.dinnerRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerRemaining: Number(e.target.value) } : row))} /></td></>}<td><div className="stack"><button className="small" type="button" onClick={() => void savePerson(p)}>{isTally ? 'Save Tallies' : 'Save Meals'}</button>{isTally && <button className="small secondary" type="button" onClick={() => void api(`/people/reset-tallies/${p.id}`, { method: 'POST' }).then(load)}>Reset Tallies</button>}</div></td></tr>)}</tbody></table></div>;
+  async function deletePerson() {
+    if (!personToDelete || deletePhrase !== 'DELETE USER') return;
+    setIsDeleting(true);
+    setError('');
+    setMessage('');
+
+    try {
+      await api(`/people/${personToDelete.id}`, { method: 'DELETE', body: JSON.stringify({ confirmationPhrase: deletePhrase }) });
+      setMessage(`Deleted ${personToDelete.firstName} ${personToDelete.lastName} (${personToDelete.personId}).`);
+      setPersonToDelete(null);
+      setDeletePhrase('');
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete this person');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  const deleteEnabled = deletePhrase === 'DELETE USER' && !isDeleting;
+
+  return <div className="card stack"><h2>People</h2><p className="muted">Active mode: <strong>{isTally ? 'Tally Up' : 'Count Down'}</strong>. Only {isTally ? 'tally counts' : 'remaining balances'} are editable in this mode.</p>{message && <p>{message}</p>}{error && <p className="error">{error}</p>}<form className="grid-form" onSubmit={(e) => void addPerson(e)}>{['firstName', 'lastName', 'personId', 'codeValue', 'grade', 'group', 'campus'].map((k) => <input key={k} placeholder={k} value={String(form[k] || '')} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />)}<button className="primary">Add</button></form><table><thead><tr><th>Name</th><th>Person ID</th><th>Code</th>{isTally ? <><th>Breakfast Count</th><th>Lunch Count</th><th>Dinner Count</th><th>Total Count</th></> : <><th>Breakfast Rem.</th><th>Lunch Rem.</th><th>Dinner Rem.</th></>}<th>Actions</th></tr></thead><tbody>{people.map((p) => <tr key={p.id}><td>{p.firstName} {p.lastName}</td><td>{p.personId}</td><td>{p.codeValue}</td>{isTally ? <><td><input type="number" min={0} value={p.breakfastCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.lunchCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.dinnerCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerCount: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.totalMealsCount} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, totalMealsCount: Number(e.target.value) } : row))} /></td></> : <><td><input type="number" min={0} value={p.breakfastRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, breakfastRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.lunchRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, lunchRemaining: Number(e.target.value) } : row))} /></td><td><input type="number" min={0} value={p.dinnerRemaining} onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id ? { ...row, dinnerRemaining: Number(e.target.value) } : row))} /></td></>}<td><div className="stack"><button className="small" type="button" onClick={() => void savePerson(p)}>{isTally ? 'Save Tallies' : 'Save Meals'}</button>{isTally && <button className="small secondary" type="button" onClick={() => void api(`/people/reset-tallies/${p.id}`, { method: 'POST' }).then(load)}>Reset Tallies</button>}<button className="small danger" type="button" onClick={() => { setPersonToDelete(p); setDeletePhrase(''); setError(''); setMessage(''); }}>Delete Person</button></div></td></tr>)}</tbody></table>{personToDelete && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Confirm Person Deletion</h4><p>You are deleting <strong>{personToDelete.firstName} {personToDelete.lastName}</strong>.</p><p>Person ID: <strong>{personToDelete.personId}</strong></p><p className="error">Warning: This permanently removes this person and their related scan transaction history. This cannot be easily undone.</p><p>Type <code>DELETE USER</code> to enable deletion.</p><input value={deletePhrase} onChange={(e) => setDeletePhrase(e.target.value)} placeholder="DELETE USER" /><div className="button-row"><button className="secondary" type="button" onClick={() => { setPersonToDelete(null); setDeletePhrase(''); }}>Cancel</button><button className="danger" type="button" disabled={!deleteEnabled} onClick={() => void deletePerson()}>{isDeleting ? 'Deleting…' : 'Delete Person'}</button></div></div></div>}</div>;
 }
 
 function ImportPage() { const [file, setFile] = useState<File>(); const [preview, setPreview] = useState<any>(); const [result, setResult] = useState<any>(); async function previewFile() { if (!file) return; const form = new FormData(); form.append('file', file); const res = await fetch(`${API_BASE}/import/preview`, { method: 'POST', credentials: 'include', body: form }); setPreview(await res.json()); } async function commit() { if (!file) return; const form = new FormData(); form.append('file', file); form.append('generateMissingCodes', 'true'); const res = await fetch(`${API_BASE}/import/commit`, { method: 'POST', credentials: 'include', body: form }); setResult(await res.json()); } return <div className="card"><h2>CSV Import</h2><a href={`${API_BASE}/import/template`} target="_blank" rel="noreferrer">Download Template</a><input type="file" accept=".csv" onChange={(e)=>setFile(e.target.files?.[0])}/><div className="button-row"><button className="secondary" onClick={previewFile} disabled={!file}>Preview</button><button className="primary" onClick={commit} disabled={!file}>Commit Partial Import</button></div>{preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}{result && <pre>{JSON.stringify(result, null, 2)}</pre>}</div>; }

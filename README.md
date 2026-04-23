@@ -160,6 +160,19 @@ Admins can now use **Settings → System: Clear Database** to run a destructive 
   - admin/scanner login accounts (`AdminUser`),
   - app settings (`Setting`) including the currently selected meal tracking mode.
 
+## Admin: Delete Individual Person
+
+Admins can delete one specific person record from **People** without clearing the whole system.
+
+- This action is **admin-only** in both frontend visibility and backend authorization.
+- The delete confirmation modal shows the person name and `personId`.
+- Confirmation requires typing the exact phrase: `DELETE USER`.
+- The action deletes only the selected person and related scan transaction records tied to that person.
+- The action does **not** delete:
+  - other people,
+  - admin/scanner login accounts (`AdminUser`),
+  - system settings (`Setting`) or the selected meal tracking mode.
+
 ## Schema / Migration Updates
 
 A new migration `0004_meal_tracking_mode_and_tallies` adds:
