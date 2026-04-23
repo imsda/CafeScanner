@@ -28,7 +28,7 @@ function normalizeMealType(value: string): MealType | null {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'breakfast') return MealType.BREAKFAST;
   if (normalized === 'lunch') return MealType.LUNCH;
-  if (normalized === 'dinner') return MealType.DINNER;
+  if (normalized === 'dinner' || normalized === 'supper') return MealType.DINNER;
   return null;
 }
 
@@ -122,7 +122,9 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
     if (!personName) errors.push('Column C (Name) is required');
     if (!mealTypeRaw) errors.push('Column D (Meal Type) is required');
     if (!mealDateRaw) errors.push('Column F (Meal Date) is required');
-    if (mealTypeRaw && !normalizeMealType(mealTypeRaw)) errors.push('Column D must be Breakfast, Lunch, or Dinner');
+    if (mealTypeRaw && !normalizeMealType(mealTypeRaw)) {
+      errors.push('Column D must be Breakfast, Lunch, Dinner, or Supper');
+    }
     if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date');
 
     return {
