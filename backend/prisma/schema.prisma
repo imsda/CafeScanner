@@ -26,7 +26,7 @@ enum ScanResult {
 }
 
 enum MealTrackingMode {
-  countdown
+  camp_meeting
   tally
 }
 
@@ -80,7 +80,7 @@ model Setting {
   enableSounds             Boolean          @default(true)
   allowManualMealOverride  Boolean          @default(false)
   hideInactiveByDefault    Boolean          @default(true)
-  mealTrackingMode         MealTrackingMode @default(countdown)
+  mealTrackingMode         MealTrackingMode @default(camp_meeting)
   updatedAt                DateTime         @updatedAt
 }
 
@@ -96,6 +96,24 @@ model ScanTransaction {
   adminUserId   Int?
   person        Person?    @relation(fields: [personId], references: [id])
   adminUser     AdminUser? @relation(fields: [adminUserId], references: [id])
+}
+
+
+
+model MealEntitlement {
+  id         Int      @id @default(autoincrement())
+  personId   String
+  personName String?
+  mealType   MealType
+  mealDate   String
+  redeemed   Boolean  @default(false)
+  redeemedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([personId, mealType, mealDate, redeemed])
+  @@index([personId])
+  @@index([mealDate])
 }
 
 model ImportHistory {

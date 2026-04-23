@@ -1,5 +1,5 @@
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
-export type MealTrackingMode = 'countdown' | 'tally';
+export type MealTrackingMode = 'camp_meeting' | 'tally';
 
 export interface ScanPerson {
   id?: number;
@@ -68,6 +68,11 @@ export interface ReportsSummaryResponse {
     breakfastRemaining: number;
     lunchRemaining: number;
     dinnerRemaining: number;
+  };
+  entitlementSummary: {
+    totalEntitlements: number;
+    totalRedeemed: number;
+    totalRemaining: number;
   };
   tallySummary: {
     breakfastCount: number;

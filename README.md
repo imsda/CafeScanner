@@ -157,7 +157,7 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 
 CafeScanner uses exactly one global **meal tracking mode** at a time (`Settings → Meal tracking mode`). There is no mixed mode in normal operation.
 
-- **Count Down** (`countdown`)
+- **Camp Meeting** (`camp_meeting`)
   - Each scan deducts from `breakfastRemaining`, `lunchRemaining`, or `dinnerRemaining`.
   - If a meal balance is already `0`, the scan is rejected with “no meals remaining.”
 - **Tally Up** (`tally`)
