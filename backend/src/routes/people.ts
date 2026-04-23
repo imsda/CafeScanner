@@ -27,28 +27,92 @@ const personSchema = z.object({
 
 router.get('/', async (req, res) => {
   const showInactive = req.query.showInactive === 'true';
-  const people = await prisma.person.findMany({ where: showInactive ? {} : { active: true }, orderBy: [{ lastName: 'asc' }] });
+  const [people, settings] = await Promise.all([
+    prisma.person.findMany({ where: showInactive ? {} : { active: true }, orderBy: [{ lastName: 'asc' }] }),
+    prisma.setting.findUnique({ where: { id: 1 }, select: { timezone: true } })
+  ]);
+
+  const todayKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: settings?.timezone || 'Etc/UTC',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
 
   const entitlementGroups = await prisma.mealEntitlement.groupBy({
-    by: ['personId', 'redeemed'],
+    by: ['personId', 'mealType', 'redeemed'],
+    where: { mealType: { in: ['BREAKFAST', 'LUNCH', 'DINNER'] } },
     _count: { _all: true }
   });
 
-  const summaryByPersonId = new Map<string, { total: number; redeemed: number }>();
+  const todayAvailableGroups = await prisma.mealEntitlement.groupBy({
+    by: ['personId', 'mealType'],
+    where: {
+      mealType: { in: ['BREAKFAST', 'LUNCH', 'DINNER'] },
+      mealDate: todayKey,
+      redeemed: false
+    },
+    _count: { _all: true }
+  });
+
+  type MealBreakdown = {
+    total: number;
+    redeemed: number;
+    BREAKFAST: { total: number; redeemed: number; available: number; todayAvailable: number };
+    LUNCH: { total: number; redeemed: number; available: number; todayAvailable: number };
+    DINNER: { total: number; redeemed: number; available: number; todayAvailable: number };
+  };
+
+  const createMealBreakdown = (): MealBreakdown => ({
+    total: 0,
+    redeemed: 0,
+    BREAKFAST: { total: 0, redeemed: 0, available: 0, todayAvailable: 0 },
+    LUNCH: { total: 0, redeemed: 0, available: 0, todayAvailable: 0 },
+    DINNER: { total: 0, redeemed: 0, available: 0, todayAvailable: 0 }
+  });
+
+  const summaryByPersonId = new Map<string, MealBreakdown>();
   for (const row of entitlementGroups) {
-    const existing = summaryByPersonId.get(row.personId) ?? { total: 0, redeemed: 0 };
-    existing.total += row._count._all;
-    if (row.redeemed) existing.redeemed += row._count._all;
+    const mealType = row.mealType as 'BREAKFAST' | 'LUNCH' | 'DINNER';
+    const existing = summaryByPersonId.get(row.personId) ?? createMealBreakdown();
+    const count = row._count._all;
+    existing.total += count;
+    existing[mealType].total += count;
+    if (row.redeemed) {
+      existing.redeemed += count;
+      existing[mealType].redeemed += count;
+    } else {
+      existing[mealType].available += count;
+    }
+    summaryByPersonId.set(row.personId, existing);
+  }
+
+  for (const row of todayAvailableGroups) {
+    const mealType = row.mealType as 'BREAKFAST' | 'LUNCH' | 'DINNER';
+    const existing = summaryByPersonId.get(row.personId) ?? createMealBreakdown();
+    existing[mealType].todayAvailable += row._count._all;
     summaryByPersonId.set(row.personId, existing);
   }
 
   const enriched = people.map((person) => {
-    const summary = summaryByPersonId.get(person.personId) ?? { total: 0, redeemed: 0 };
+    const summary = summaryByPersonId.get(person.personId) ?? createMealBreakdown();
     return {
       ...person,
       campMeetingEntitlements: summary.total,
       campMeetingRedeemed: summary.redeemed,
-      campMeetingRemaining: Math.max(0, summary.total - summary.redeemed)
+      campMeetingRemaining: Math.max(0, summary.total - summary.redeemed),
+      breakfastTotal: summary.BREAKFAST.total,
+      lunchTotal: summary.LUNCH.total,
+      dinnerTotal: summary.DINNER.total,
+      breakfastAvailable: summary.BREAKFAST.available,
+      lunchAvailable: summary.LUNCH.available,
+      dinnerAvailable: summary.DINNER.available,
+      breakfastRedeemed: summary.BREAKFAST.redeemed,
+      lunchRedeemed: summary.LUNCH.redeemed,
+      dinnerRedeemed: summary.DINNER.redeemed,
+      todayBreakfastAvailable: summary.BREAKFAST.todayAvailable,
+      todayLunchAvailable: summary.LUNCH.todayAvailable,
+      todayDinnerAvailable: summary.DINNER.todayAvailable
     };
   });
 
