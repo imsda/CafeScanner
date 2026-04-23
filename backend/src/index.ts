@@ -12,6 +12,8 @@ import dashboardRoutes from './routes/dashboard.js';
 import reportRoutes from './routes/reports.js';
 import systemRoutes from './routes/system.js';
 import { requireAdmin, requireAuth } from './middleware/auth.js';
+import { configureSqlitePragmas } from './db.js';
+import { ensureSettingsInitialized } from './services/settingsService.js';
 
 dotenv.config();
 
@@ -72,4 +74,10 @@ app.use('/api/system', requireAuth, requireAdmin, systemRoutes);
 
 app.listen(port, host, () => {
   console.log(`Backend listening on http://${host}:${port}`);
+
+  void (async () => {
+    await configureSqlitePragmas();
+    await ensureSettingsInitialized();
+    console.log('[SETTINGS] Initialization check completed at startup.');
+  })();
 });
