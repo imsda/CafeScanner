@@ -173,20 +173,44 @@ Admins can delete one specific person record from **People** without clearing th
   - admin/scanner login accounts (`AdminUser`),
   - system settings (`Setting`) or the selected meal tracking mode.
 
-## Schema / Migration Updates
+## Prisma Migration Workflow (Data-Safe)
 
-A new migration `0004_meal_tracking_mode_and_tallies` adds:
+### Non-negotiable rule: applied migrations are immutable
 
-- `Person.breakfastCount`
-- `Person.lunchCount`
-- `Person.dinnerCount`
-- `Person.totalMealsCount`
-- `Setting.mealTrackingMode` (`countdown` or `tally`)
+Once a migration has been applied to any shared environment/database, do **not** edit its SQL file.
 
-Existing setup scripts remain compatible; run setup/migrations/seed as usual:
+- ✅ Make schema changes by creating a **new** migration.
+- ❌ Do not rewrite old migration files.
+
+Rewriting applied migrations causes Prisma migration history drift and often leads to reset prompts.
+
+### Normal setup/update behavior
+
+`./scripts/setup.sh` now uses Prisma deploy-mode migrations so existing databases are updated in place:
+
+- preserves existing SQLite data,
+- applies only pending migrations,
+- does **not** run `prisma migrate reset`,
+- fails with a clear message when migration history diverges instead of silently encouraging destructive actions.
+
+### Commands
+
+- `npm run db:migrate` → safe apply (`prisma migrate deploy`)
+- `npm run db:status` → inspect migration history/state
+- `npm run db:seed` → ensure default records exist without overwriting existing operational data
+
+### Creating future schema changes correctly
+
+Use a development migration command when you intentionally change the Prisma schema:
 
 ```bash
-./scripts/setup.sh
-npm run db:migrate
-npm run db:seed
+npm run prisma:migrate:dev -w backend -- --name <descriptive_change_name>
 ```
+
+Then commit:
+
+1. the updated `backend/prisma/schema.prisma`,
+2. the new folder under `backend/prisma/migrations/`,
+3. any code changes that rely on the schema update.
+
+Destructive reset flows are admin-initiated app actions only (for explicit maintenance), not part of normal pull/setup updates.

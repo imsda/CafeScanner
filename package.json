@@ -12,6 +12,7 @@
     "build": "npm run build -w backend && npm run build -w frontend",
     "start": "npm run start -w backend",
     "db:migrate": "npm run prisma:migrate -w backend",
+    "db:status": "npm run prisma:migrate:status -w backend",
     "db:seed": "npm run prisma:seed -w backend"
   },
   "devDependencies": {

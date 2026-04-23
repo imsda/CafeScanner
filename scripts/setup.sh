@@ -127,6 +127,56 @@ set_generated_value_if_placeholder() {
   echo "[setup] Generated a secure default for ${key} in ${env_file}"
 }
 
+is_sqlite_database_url() {
+  local database_url="$1"
+  [[ "$database_url" == file:* ]]
+}
+
+resolve_sqlite_db_path() {
+  local database_url="$1"
+  local sqlite_target="${database_url#file:}"
+
+  if [[ "$sqlite_target" == /* ]]; then
+    printf '%s\n' "$sqlite_target"
+    return
+  fi
+
+  printf '%s\n' "backend/${sqlite_target#./}"
+}
+
+run_prisma_status_check() {
+  echo "[setup] Checking Prisma migration status"
+
+  if npm run db:status; then
+    return
+  fi
+
+  cat <<'EOF'
+[setup] ERROR: Prisma migration history does not match the current database state.
+[setup] This usually means a migration file was changed after being applied, or migration history diverged across clones.
+[setup] Refusing to continue because automatic reset would destroy existing operational data.
+[setup] Required fix: restore migration history consistency in the repository and add a NEW migration for new schema changes.
+[setup] Do NOT edit already-applied migration files and do NOT use prisma migrate reset for normal pulls.
+EOF
+  exit 1
+}
+
+run_prisma_deploy() {
+  echo "[setup] Applying Prisma migrations (non-destructive deploy mode)"
+
+  if npm run db:migrate; then
+    return
+  fi
+
+  cat <<'EOF'
+[setup] ERROR: Failed to apply Prisma migrations in deploy mode.
+[setup] Existing data has NOT been deleted.
+[setup] Likely cause: repository migration history diverged from this database.
+[setup] Required fix: repair migration files at the repository level and add forward-only migrations.
+EOF
+  exit 1
+}
+
 is_placeholder_value() {
   local value="$1"
 
@@ -221,11 +271,27 @@ echo "[setup] Validating environment values"
 validate_required_env_vars "backend/.env" "backend/.env.example"
 validate_required_env_vars "frontend/.env" "frontend/.env.example"
 
+database_url="$(env_get_value "backend/.env" "DATABASE_URL")"
+
 echo "[setup] Installing npm dependencies (root + workspaces)"
 npm install --workspaces --include-workspace-root
 
-echo "[setup] Running database migrations"
-npm run db:migrate
+if is_sqlite_database_url "$database_url"; then
+  sqlite_db_path="$(resolve_sqlite_db_path "$database_url")"
+
+  if [[ -f "$sqlite_db_path" ]]; then
+    echo "[setup] Existing SQLite database detected at ${sqlite_db_path}. Preserving data and validating migration history."
+    run_prisma_status_check
+  else
+    echo "[setup] No existing SQLite database found at ${sqlite_db_path}. A new database will be created."
+  fi
+else
+  echo "[setup] Non-SQLite DATABASE_URL detected; running migration status check before deploy."
+  run_prisma_status_check
+fi
+
+run_prisma_deploy
+run_prisma_status_check
 
 echo "[setup] Seeding database"
 npm run db:seed
