@@ -77,6 +77,8 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 
 .grid-form { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 1rem; }
 .button-row, .filters-row { display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: end; }
+.people-filters label { min-width: 220px; flex: 1 1 260px; }
+.people-filters button { align-self: end; }
 
 table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.92rem; }
 th, td { border: 1px solid #d8e4f4; padding: 0.45rem 0.5rem; text-align: left; }
