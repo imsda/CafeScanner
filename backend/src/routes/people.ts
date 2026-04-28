@@ -6,6 +6,26 @@ import { nanoid } from 'nanoid';
 const router = Router();
 const DELETE_CONFIRMATION_PHRASE = 'DELETE USER';
 
+function localMealDay(timezone: string): 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' {
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    weekday: 'short'
+  }).format(new Date()).toUpperCase();
+
+  const map = {
+    SUN: 'SUN',
+    MON: 'MON',
+    TUE: 'TUE',
+    WED: 'WED',
+    THU: 'THU',
+    FRI: 'FRI',
+    SAT: 'SAT'
+  } as const;
+
+  return map[weekday as keyof typeof map] ?? 'SUN';
+}
+
+
 const personSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
@@ -32,12 +52,7 @@ router.get('/', async (req, res) => {
     prisma.setting.findUnique({ where: { id: 1 }, select: { timezone: true } })
   ]);
 
-  const todayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: settings?.timezone || 'Etc/UTC',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date());
+  const todayMealDay = localMealDay(settings?.timezone || 'Etc/UTC');
 
   type MealBreakdown = {
     total: number;
@@ -82,7 +97,7 @@ router.get('/', async (req, res) => {
       where: {
         mealType: { in: ['BREAKFAST', 'LUNCH', 'DINNER'] },
         redeemed: false,
-        mealDate: todayKey
+        mealDay: todayMealDay
       },
       _count: { _all: true }
     })
