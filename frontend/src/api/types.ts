@@ -61,6 +61,26 @@ export interface ApiErrorResponse {
   error?: string;
 }
 
+export interface Settings {
+  id: number;
+  schoolName: string;
+  timezone: string;
+  breakfastStart: string;
+  breakfastEnd: string;
+  lunchStart: string;
+  lunchEnd: string;
+  dinnerStart: string;
+  dinnerEnd: string;
+  scannerCooldownSeconds: number;
+  scannerDiagnosticsEnabled: boolean;
+  stationName: string;
+  enableSounds: boolean;
+  allowManualMealOverride: boolean;
+  hideInactiveByDefault: boolean;
+  mealTrackingMode: MealTrackingMode;
+  updatedAt: string;
+}
+
 export interface ReportsSummaryResponse {
   from: string;
   to: string;

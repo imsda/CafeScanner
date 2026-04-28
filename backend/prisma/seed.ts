@@ -29,7 +29,11 @@ async function main() {
 
   await prisma.setting.upsert({
     where: { id: 1 },
-    create: { id: 1 },
+    create: {
+      id: 1,
+      scannerDiagnosticsEnabled: false,
+      scannerCooldownSeconds: 1
+    },
     update: {}
   });
 
