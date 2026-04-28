@@ -97,6 +97,14 @@ type ScanResultState = ({
   redeemedEntitlement?: { id: number; personName?: string | null; personId: string; mealDate: string };
 } | { ok: false; error: string }) | null;
 
+type PendingCampMeetingSelection = {
+  scannedValue: string;
+  originalScannedValue?: string;
+  mealType: MealType;
+  mealDate: string;
+  options: Array<{ entitlementId: number; personName: string }>;
+};
+
 function ScanResultCard({ result }: { result: ScanResultState }) {
   if (!result) return <div className="scan-result info"><h3>Ready</h3><p>Scan a person ID barcode or use USB scanner/manual ID entry.</p></div>;
   if (!result.ok) return <div className="scan-result fail"><h3>Scan Failed</h3><p>{result.error}</p></div>;
@@ -109,6 +117,7 @@ function ScanResultCard({ result }: { result: ScanResultState }) {
 
 function ScanPage() {
   const [result, setResult] = useState<ScanResultState>(null);
+  const [pendingSelection, setPendingSelection] = useState<PendingCampMeetingSelection | null>(null);
   const [manual, setManual] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mode, setMode] = useState<'camera' | 'usb'>('camera');
@@ -147,7 +156,7 @@ function ScanPage() {
 
   useEffect(() => () => clearAutoSubmitTimeout(), []);
 
-  const submitScan = async (code: string) => {
+  const submitScan = async (code: string, entitlementId?: number) => {
     const trimmed = code.trim();
     if (!trimmed || isSubmitting) return;
 
@@ -155,7 +164,25 @@ function ScanPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed }) });
+      const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed, entitlementId }) });
+      if (!response.ok && response.pendingSelection) {
+        setPendingSelection({
+          scannedValue: response.scannedValue,
+          originalScannedValue: response.originalScannedValue,
+          mealType: response.mealType,
+          mealDate: response.mealDate,
+          options: response.options
+        });
+        setResult(null);
+        setManual('');
+        scannerLikeInputRef.current = false;
+        focusUsbInput();
+        return;
+      }
+      if (!response.ok) {
+        throw new Error('Unable to process this scan right now.');
+      }
+
       setResult({
         ok: true,
         person: response.person,
@@ -165,12 +192,14 @@ function ScanPage() {
         remainingAvailableTodayForMeal: response.remainingAvailableTodayForMeal,
         redeemedEntitlement: response.redeemedEntitlement
       });
+      setPendingSelection(null);
       setMealTrackingMode(response.mealTrackingMode);
       setManual('');
       scannerLikeInputRef.current = false;
       focusUsbInput();
     } catch (error) {
       setResult({ ok: false, error: error instanceof Error ? error.message : 'Unable to process this scan right now.' });
+      setPendingSelection(null);
       setManual('');
       scannerLikeInputRef.current = false;
       focusUsbInput();
@@ -181,6 +210,7 @@ function ScanPage() {
 
   const onManualSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    setPendingSelection(null);
     await submitScan(manual);
   };
 
@@ -223,10 +253,11 @@ function ScanPage() {
     event.preventDefault();
     scannerLikeInputRef.current = false;
     clearAutoSubmitTimeout();
+    setPendingSelection(null);
     void submitScan(manual);
   };
 
-  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong></p><p className="muted">Scan cooldown: <strong>{scanCooldownSeconds} second{scanCooldownSeconds === 1 ? '' : 's'}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner cooldownMs={scanCooldownSeconds * 1000} onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => onManualInputChange(e.target.value)} onKeyDown={onManualKeyDown} aria-label="Person ID input" onBlur={() => focusUsbInput()} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}</section><ScanResultCard result={result} /></div>;
+  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong></p><p className="muted">Scan cooldown: <strong>{scanCooldownSeconds} second{scanCooldownSeconds === 1 ? '' : 's'}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner cooldownMs={scanCooldownSeconds * 1000} onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => onManualInputChange(e.target.value)} onKeyDown={onManualKeyDown} aria-label="Person ID input" onBlur={() => focusUsbInput()} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}{pendingSelection && <div className="selection-card stack"><h3>Select person for this meal</h3><p className="muted">Shared ID: <strong>{pendingSelection.scannedValue}</strong>{pendingSelection.originalScannedValue && pendingSelection.originalScannedValue !== pendingSelection.scannedValue ? ` (entered: ${pendingSelection.originalScannedValue})` : ''}</p><p className="muted">Meal: <strong>{formatMealLabel(pendingSelection.mealType)}</strong> · Date: <strong>{pendingSelection.mealDate}</strong></p><div className="selection-options">{pendingSelection.options.map((option) => <button key={option.entitlementId} type="button" className="primary selection-option" onClick={() => void submitScan(pendingSelection.scannedValue, option.entitlementId)} disabled={isSubmitting}>{option.personName}</button>)}</div><button type="button" className="secondary" onClick={() => { setPendingSelection(null); setManual(''); focusUsbInput(); }} disabled={isSubmitting}>Cancel</button></div>}</section><ScanResultCard result={result} /></div>;
 }
 
 type PersonRecord = {
@@ -434,7 +465,7 @@ function ImportPage() {
 }
 
 function BadgesPage() { const [people, setPeople] = useState<any[]>([]); useEffect(() => { void api<any[]>('/people?showInactive=true').then(setPeople); }, []); return <div className="card"><h2>Printable Badges</h2><button className="secondary" onClick={() => window.print()}>Print Sheet</button><div className="badge-grid">{people.map((p)=><div className="badge" key={p.id}><QRCodeSVG value={p.personId} size={90}/><p>{p.firstName} {p.lastName}</p><small>{p.personId}</small></div>)}</div></div>; }
-function TransactionsPage() { const [rows, setRows] = useState<any[]>([]); useEffect(() => { void api<any[]>('/transactions').then(setRows); }, []); return <div className="card stack"><h2>Transactions</h2><div className="button-row"><ButtonLink href={`${API_BASE}/transactions/export.csv`} className="btn-secondary" target="_blank" rel="noreferrer">Export CSV</ButtonLink></div><table><thead><tr><th>Time</th><th>Value</th><th>Meal</th><th>Result</th><th>Reason</th><th>Person</th><th>Station</th></tr></thead><tbody>{rows.map((r)=><tr key={r.id}><td>{new Date(r.timestamp).toLocaleString()}</td><td>{r.scannedValue}</td><td>{r.mealType}</td><td>{r.result}</td><td>{r.failureReason||'-'}</td><td>{r.person?`${r.person.firstName} ${r.person.lastName}`:'-'}</td><td>{r.stationName||'-'}</td></tr>)}</tbody></table></div>; }
+function TransactionsPage() { const [rows, setRows] = useState<any[]>([]); useEffect(() => { void api<any[]>('/transactions').then(setRows); }, []); return <div className="card stack"><h2>Transactions</h2><div className="button-row"><ButtonLink href={`${API_BASE}/transactions/export.csv`} className="btn-secondary" target="_blank" rel="noreferrer">Export CSV</ButtonLink></div><table><thead><tr><th>Time</th><th>Value</th><th>Meal</th><th>Result</th><th>Reason</th><th>Person</th><th>Station</th></tr></thead><tbody>{rows.map((r)=><tr key={r.id}><td>{new Date(r.timestamp).toLocaleString()}</td><td>{r.scannedValue}</td><td>{r.mealType}</td><td>{r.result}</td><td>{r.failureReason||'-'}</td><td>{r.entitlementPersonName || (r.person?`${r.person.firstName} ${r.person.lastName}`:'-')}</td><td>{r.stationName||'-'}</td></tr>)}</tbody></table></div>; }
 
 function ReportsPage() {
   const todayRange = useMemo(() => getRangeForPreset('today'), []);
