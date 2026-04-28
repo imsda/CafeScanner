@@ -255,6 +255,47 @@ env_get_value() {
   ' "$env_file"
 }
 
+is_private_ipv4() {
+  local host="$1"
+  [[ "$host" =~ ^10\. ]] && return 0
+  [[ "$host" =~ ^127\. ]] && return 0
+  [[ "$host" =~ ^192\.168\. ]] && return 0
+  [[ "$host" =~ ^172\.([1][6-9]|2[0-9]|3[0-1])\. ]] && return 0
+  return 1
+}
+
+warn_if_frontend_api_base_direct_http() {
+  local env_file="$1"
+
+  if [[ ! -f "$env_file" ]]; then
+    return
+  fi
+
+  local api_base
+  if ! api_base="$(env_get_value "$env_file" "VITE_API_BASE" 2>/dev/null)"; then
+    return
+  fi
+
+  api_base="${api_base#"${api_base%%[![:space:]]*}"}"
+  api_base="${api_base%"${api_base##*[![:space:]]}"}"
+  [[ -z "$api_base" ]] && return
+
+  local matched=0
+  if [[ "$api_base" =~ ^http://localhost([/:]|$) ]] || [[ "$api_base" =~ ^http://127\. ]]; then
+    matched=1
+  elif [[ "$api_base" =~ ^http://([^/:]+) ]]; then
+    local host="${BASH_REMATCH[1]}"
+    if is_private_ipv4 "$host"; then
+      matched=1
+    fi
+  fi
+
+  if (( matched == 1 )); then
+    echo "[setup] WARNING: frontend/.env VITE_API_BASE is set to '$api_base'."
+    echo "[setup] WARNING: For Traefik/reverse-proxy deployments, set VITE_API_BASE=/api to keep browser API calls same-origin."
+  fi
+}
+
 set_generated_value_if_placeholder() {
   local env_file="$1"
   local key="$2"
@@ -411,6 +452,7 @@ bootstrap_env_file "backend/.env" "backend/.env.example"
 bootstrap_env_file "frontend/.env" "frontend/.env.example"
 merge_missing_env_keys "backend/.env" "backend/.env.example"
 merge_missing_env_keys "frontend/.env" "frontend/.env.example"
+warn_if_frontend_api_base_direct_http "frontend/.env"
 
 set_generated_value_if_placeholder "backend/.env" "SESSION_SECRET" "change-me-super-secret" "$(openssl rand -hex 32)"
 
