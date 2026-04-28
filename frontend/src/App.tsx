@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useSta
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ApiNetworkError, api, API_BASE } from './api/client';
-import type { MealTrackingMode, MealType, ReportsSummaryResponse, ScanPerson, ScanResponse } from './api/types';
+import type { MealTrackingMode, MealType, ReportsSummaryResponse, ScanPerson, ScanResponse, Settings } from './api/types';
 import QrScanner from './components/QrScanner';
 import { useAuth } from './context/AuthContext';
 
@@ -143,11 +143,14 @@ function ScanPage() {
   const [mode, setMode] = useState<'camera' | 'usb'>('camera');
   const [mealTrackingMode, setMealTrackingMode] = useState<MealTrackingMode>('camp_meeting');
   const [scanCooldownSeconds, setScanCooldownSeconds] = useState(1);
+  const [scannerDiagnosticsEnabled, setScannerDiagnosticsEnabled] = useState(false);
+  const [lastScannerError, setLastScannerError] = useState('');
   const usbInputRef = useRef<HTMLInputElement>(null);
   const autoSubmitTimeoutRef = useRef<number | null>(null);
   const lastInputAtRef = useRef(0);
   const previousManualRef = useRef('');
   const scannerLikeInputRef = useRef(false);
+  const lastSubmissionRef = useRef<{ value: string; timestamp: number } | null>(null);
 
   const focusUsbInput = () => {
     if (mode !== 'usb') return;
@@ -168,9 +171,10 @@ function ScanPage() {
   }, [mode]);
 
   useEffect(() => {
-    void api<{ mealTrackingMode: MealTrackingMode; scannerCooldownSeconds: number }>('/settings').then((s) => {
+    void api<Settings>('/settings').then((s) => {
       setMealTrackingMode(s.mealTrackingMode);
-      setScanCooldownSeconds(Math.max(1, s.scannerCooldownSeconds || 1));
+      setScanCooldownSeconds(Math.min(10, Math.max(0.5, s.scannerCooldownSeconds || 1)));
+      setScannerDiagnosticsEnabled(Boolean(s.scannerDiagnosticsEnabled));
     });
   }, []);
 
@@ -179,6 +183,12 @@ function ScanPage() {
   const submitScan = async (code: string, entitlementId?: number) => {
     const trimmed = code.trim();
     if (!trimmed || isSubmitting) return;
+    const dedupeKey = `${trimmed}:${entitlementId ?? 'none'}`;
+    const now = Date.now();
+    if (lastSubmissionRef.current && lastSubmissionRef.current.value === dedupeKey && (now - lastSubmissionRef.current.timestamp) < scanCooldownSeconds * 1000) {
+      return;
+    }
+    lastSubmissionRef.current = { value: dedupeKey, timestamp: now };
 
     clearAutoSubmitTimeout();
     setIsSubmitting(true);
@@ -186,7 +196,7 @@ function ScanPage() {
     try {
       const response = await api<ScanResponse>('/scan', { method: 'POST', body: JSON.stringify({ personId: trimmed, entitlementId }) });
       if (!response.ok && response.pendingSelection) {
-        setPendingSelection({
+      setPendingSelection({
           scannedValue: response.scannedValue,
           originalScannedValue: response.originalScannedValue,
           mealType: response.mealType,
@@ -214,11 +224,14 @@ function ScanPage() {
       });
       setPendingSelection(null);
       setMealTrackingMode(response.mealTrackingMode);
+      setLastScannerError('');
       setManual('');
       scannerLikeInputRef.current = false;
       focusUsbInput();
     } catch (error) {
-      setResult({ ok: false, error: error instanceof Error ? error.message : 'Unable to process this scan right now.' });
+      const failureMessage = error instanceof Error ? error.message : 'Unable to process this scan right now.';
+      setResult({ ok: false, error: failureMessage });
+      setLastScannerError(failureMessage);
       setPendingSelection(null);
       setManual('');
       scannerLikeInputRef.current = false;
@@ -277,7 +290,7 @@ function ScanPage() {
     void submitScan(manual);
   };
 
-  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong></p><p className="muted">Scan cooldown: <strong>{scanCooldownSeconds} second{scanCooldownSeconds === 1 ? '' : 's'}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">Camera mode requires a secure context (HTTPS or localhost). If this URL is insecure, open the HTTPS dev URL from <code>./scripts/dev.sh</code>. If camera access is blocked/unavailable, use USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner cooldownMs={scanCooldownSeconds * 1000} onResult={(text) => void submitScan(text)} onError={(message) => setResult({ ok: false, error: message })} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => onManualInputChange(e.target.value)} onKeyDown={onManualKeyDown} aria-label="Person ID input" onBlur={() => focusUsbInput()} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}{pendingSelection && <div className="selection-card stack"><h3>Select person for this meal</h3><p className="muted">Shared ID: <strong>{pendingSelection.scannedValue}</strong>{pendingSelection.originalScannedValue && pendingSelection.originalScannedValue !== pendingSelection.scannedValue ? ` (entered: ${pendingSelection.originalScannedValue})` : ''}</p><p className="muted">Meal: <strong>{formatMealLabel(pendingSelection.mealType)}</strong> · Day: <strong>{pendingSelection.mealDay}</strong></p><div className="selection-options">{pendingSelection.options.map((option) => <button key={option.entitlementId} type="button" className="primary selection-option" onClick={() => void submitScan(pendingSelection.scannedValue, option.entitlementId)} disabled={isSubmitting}>{option.personName}</button>)}</div><button type="button" className="secondary" onClick={() => { setPendingSelection(null); setManual(''); focusUsbInput(); }} disabled={isSubmitting}>Cancel</button></div>}</section><ScanResultCard result={result} /></div>;
+  return <div className="scan-layout"><section className="card stack"><h2>Scan Station</h2><p className="muted">Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong></p><p className="muted">Scan cooldown: <strong>{scanCooldownSeconds} second{scanCooldownSeconds === 1 ? '' : 's'}</strong></p><div className="button-row"><button className={mode === 'camera' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('camera')}>Camera Scan</button><button className={mode === 'usb' ? 'primary' : 'secondary'} type="button" onClick={() => setMode('usb')}>USB Scanner / Manual ID Entry</button></div><p className="muted">For the fastest line, use camera scan when available. If needed, switch to USB Scanner / Manual ID Entry.</p>{mode === 'camera' ? <QrScanner cooldownMs={scanCooldownSeconds * 1000} diagnosticsEnabled={scannerDiagnosticsEnabled} selectedScannerMode={mode} lastScannerError={lastScannerError} onResult={(text) => void submitScan(text)} onError={(message) => { setLastScannerError(message); setResult({ ok: false, error: message }); }} /> : <form className="stack" onSubmit={onManualSubmit}><label>Person ID input<input ref={usbInputRef} className="scan-input" placeholder="Scan with USB scanner or type person ID and press Enter" value={manual} onChange={(e) => onManualInputChange(e.target.value)} onKeyDown={onManualKeyDown} aria-label="Person ID input" onBlur={() => focusUsbInput()} /></label><button className="primary" type="submit" disabled={isSubmitting || manual.trim().length === 0}>{isSubmitting ? 'Submitting…' : 'Submit ID'}</button></form>}{scannerDiagnosticsEnabled && <div className="scanner-diagnostics"><p><strong>Scanner diagnostics:</strong></p><ul><li>Selected scanner mode: <strong>{mode}</strong></li>{lastScannerError && <li>Last scanner error: <strong>{lastScannerError}</strong></li>}</ul></div>}{pendingSelection && <div className="selection-card stack"><h3>Select person for this meal</h3><p className="muted">Shared ID: <strong>{pendingSelection.scannedValue}</strong>{pendingSelection.originalScannedValue && pendingSelection.originalScannedValue !== pendingSelection.scannedValue ? ` (entered: ${pendingSelection.originalScannedValue})` : ''}</p><p className="muted">Meal: <strong>{formatMealLabel(pendingSelection.mealType)}</strong> · Day: <strong>{pendingSelection.mealDay}</strong></p><div className="selection-options">{pendingSelection.options.map((option) => <button key={option.entitlementId} type="button" className="primary selection-option" onClick={() => void submitScan(pendingSelection.scannedValue, option.entitlementId)} disabled={isSubmitting}>{option.personName}</button>)}</div><button type="button" className="secondary" onClick={() => { setPendingSelection(null); setManual(''); focusUsbInput(); }} disabled={isSubmitting}>Cancel</button></div>}</section><ScanResultCard result={result} /></div>;
 }
 
 type PersonRecord = {
@@ -538,7 +551,7 @@ function ReportsPage() {
 }
 
 function SettingsPage() {
-  const [settings, setSettings] = useState<any>();
+  const [settings, setSettings] = useState<Settings>();
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [clearPhrase, setClearPhrase] = useState('');
@@ -549,7 +562,7 @@ function SettingsPage() {
   const [pendingMode, setPendingMode] = useState<MealTrackingMode | null>(null);
 
   const load = async () => {
-    const loaded = await api('/settings');
+    const loaded = await api<Settings>('/settings');
     setSettings(loaded);
   };
 
@@ -560,8 +573,9 @@ function SettingsPage() {
   const modeEnabled = modePhrase === 'SWITCH MODE';
 
   async function saveSettings() {
+    if (!settings) return;
     setError('');
-    const payload = Object.fromEntries(Object.entries(settings).filter(([key]) => key !== 'mealTrackingMode'));
+    const payload = Object.fromEntries(Object.entries(settings).filter(([key]) => !['id', 'updatedAt', 'mealTrackingMode'].includes(key)));
     await api('/settings', { method: 'PUT', body: JSON.stringify(payload) });
     setMessage('Settings saved.');
     await load();
@@ -586,7 +600,7 @@ function SettingsPage() {
     }
   }
 
-  return <div className="card stack"><h2>Settings</h2><div className="card stack"><h3>Meal Tracking Mode</h3><p className="muted">Current active mode: <strong>{modeLabel(settings.mealTrackingMode)}</strong></p><label>Meal tracking mode<select value={settings.mealTrackingMode} onChange={(e) => { const selected = e.target.value as MealTrackingMode; if (selected === settings.mealTrackingMode) return; setPendingMode(selected); setShowModeConfirm(true); setModePhrase(''); }}><option value="camp_meeting">Camp Meeting (redeem imported meal entitlements)</option><option value="countdown">Count Down (deduct from remaining balances)</option><option value="tally">Tally Up (count each served meal)</option></select></label><p className="error">Warning: Switching mode is destructive and will clear all people, transaction history, import history, and meal entitlements.</p>{showModeConfirm && pendingMode && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Confirm Mode Switch</h4><p>You are switching from <strong>{modeLabel(settings.mealTrackingMode)}</strong> to <strong>{modeLabel(pendingMode)}</strong>.</p><p className="error">This will permanently clear operational data (people, scans, imports). Accounts and settings will be preserved.</p><p>Type <code>SWITCH MODE</code> to continue.</p><input value={modePhrase} onChange={(e) => setModePhrase(e.target.value)} placeholder="SWITCH MODE" /><div className="button-row"><button className="secondary" type="button" onClick={() => { setShowModeConfirm(false); setPendingMode(null); setModePhrase(''); }}>Cancel</button><button className="danger" type="button" disabled={!modeEnabled} onClick={() => void api('/settings/meal-tracking-mode', { method: 'PUT', body: JSON.stringify({ mealTrackingMode: pendingMode, confirmationPhrase: modePhrase }) }).then(async () => { setMessage(`Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`); setError(''); setShowModeConfirm(false); setPendingMode(null); setModePhrase(''); await load(); })}>Switch Mode + Clear Data</button></div></div></div>}</div><div className="grid-form">{Object.keys(settings).filter((k)=>!['id','updatedAt','mealTrackingMode'].includes(k)).map((k)=><label key={k}>{k}<input value={String(settings[k])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k]==='boolean'?e.target.value==='true':typeof settings[k]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><div className="button-row"><button className="primary" onClick={() => void saveSettings()}>Save</button></div>{message && <p>{message}</p>}{error && <p className="error">{error}</p>}<hr /><div className="stack"><h3>System: Clear Database</h3><p className="error">Warning: This permanently deletes all people, scan transactions, and import history. Admin/scanner login accounts and system settings are preserved.</p><button className="danger" type="button" onClick={() => { setShowClearModal(true); setMessage(''); setError(''); setClearPhrase(''); }}>Clear Database</button>{showClearModal && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Clear Database</h4><p className="error"><strong>Warning:</strong> This action removes all operational data, including people, transactions, and import history. Accounts and settings are preserved.</p><p>Type <code>CLEAR DATABASE</code> to continue.</p><input value={clearPhrase} onChange={(e) => setClearPhrase(e.target.value)} placeholder="CLEAR DATABASE" /><div className="button-row"><button className="secondary" onClick={() => { setShowClearModal(false); setClearPhrase(''); }} disabled={isClearingDatabase}>Cancel</button><button className="danger" disabled={!clearEnabled} onClick={() => void clearDatabase()}>{isClearingDatabase ? 'Clearing…' : 'Confirm Clear Database'}</button></div></div></div>}</div></div>;
+  return <div className="card stack"><h2>Settings</h2><div className="card stack"><h3>Meal Tracking Mode</h3><p className="muted">Current active mode: <strong>{modeLabel(settings.mealTrackingMode)}</strong></p><label>Meal tracking mode<select value={settings.mealTrackingMode} onChange={(e) => { const selected = e.target.value as MealTrackingMode; if (selected === settings.mealTrackingMode) return; setPendingMode(selected); setShowModeConfirm(true); setModePhrase(''); }}><option value="camp_meeting">Camp Meeting (redeem imported meal entitlements)</option><option value="countdown">Count Down (deduct from remaining balances)</option><option value="tally">Tally Up (count each served meal)</option></select></label><p className="error">Warning: Switching mode is destructive and will clear all people, transaction history, import history, and meal entitlements.</p>{showModeConfirm && pendingMode && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Confirm Mode Switch</h4><p>You are switching from <strong>{modeLabel(settings.mealTrackingMode)}</strong> to <strong>{modeLabel(pendingMode)}</strong>.</p><p className="error">This will permanently clear operational data (people, scans, imports). Accounts and settings will be preserved.</p><p>Type <code>SWITCH MODE</code> to continue.</p><input value={modePhrase} onChange={(e) => setModePhrase(e.target.value)} placeholder="SWITCH MODE" /><div className="button-row"><button className="secondary" type="button" onClick={() => { setShowModeConfirm(false); setPendingMode(null); setModePhrase(''); }}>Cancel</button><button className="danger" type="button" disabled={!modeEnabled} onClick={() => void api('/settings/meal-tracking-mode', { method: 'PUT', body: JSON.stringify({ mealTrackingMode: pendingMode, confirmationPhrase: modePhrase }) }).then(async () => { setMessage(`Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`); setError(''); setShowModeConfirm(false); setPendingMode(null); setModePhrase(''); await load(); })}>Switch Mode + Clear Data</button></div></div></div>}</div><div className="card stack"><h3>Scanner</h3><label>Scan cooldown<input type="number" min={0.5} max={10} step={0.1} value={settings.scannerCooldownSeconds} onChange={(e) => setSettings({ ...settings, scannerCooldownSeconds: Math.min(10, Math.max(0.5, Number(e.target.value) || 1)) })} /></label><p className="muted">Seconds between duplicate scans of the same ID.</p><label><input type="checkbox" checked={settings.scannerDiagnosticsEnabled} onChange={(e) => setSettings({ ...settings, scannerDiagnosticsEnabled: e.target.checked })} /> Enable scanner diagnostics</label><p className="muted">Shows technical camera/scanner information for troubleshooting.</p></div><div className="grid-form">{Object.keys(settings).filter((k)=>!['id','updatedAt','mealTrackingMode','scannerCooldownSeconds','scannerDiagnosticsEnabled'].includes(k)).map((k)=><label key={k}>{k}<input value={String(settings[k as keyof Settings])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k as keyof Settings]==='boolean'?e.target.value==='true':typeof settings[k as keyof Settings]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><div className="button-row"><button className="primary" onClick={() => void saveSettings()}>Save</button></div>{message && <p>{message}</p>}{error && <p className="error">{error}</p>}<hr /><div className="stack"><h3>System: Clear Database</h3><p className="error">Warning: This permanently deletes all people, scan transactions, and import history. Admin/scanner login accounts and system settings are preserved.</p><button className="danger" type="button" onClick={() => { setShowClearModal(true); setMessage(''); setError(''); setClearPhrase(''); }}>Clear Database</button>{showClearModal && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Clear Database</h4><p className="error"><strong>Warning:</strong> This action removes all operational data, including people, transactions, and import history. Accounts and settings are preserved.</p><p>Type <code>CLEAR DATABASE</code> to continue.</p><input value={clearPhrase} onChange={(e) => setClearPhrase(e.target.value)} placeholder="CLEAR DATABASE" /><div className="button-row"><button className="secondary" onClick={() => { setShowClearModal(false); setClearPhrase(''); }} disabled={isClearingDatabase}>Cancel</button><button className="danger" disabled={!clearEnabled} onClick={() => void clearDatabase()}>{isClearingDatabase ? 'Clearing…' : 'Confirm Clear Database'}</button></div></div></div>}</div></div>;
 }
 
 export default function App() {

@@ -31,11 +31,14 @@ type Props = {
   onResult: (text: string) => void;
   onError: (msg: string) => void;
   cooldownMs?: number;
+  diagnosticsEnabled?: boolean;
+  selectedScannerMode?: 'camera' | 'usb';
+  lastScannerError?: string;
 };
 
 const REAR_CAMERA_LABEL_PATTERN = /rear|back|environment|wide/i;
 
-export default function QrScanner({ onResult, onError, cooldownMs = 1000 }: Props) {
+export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagnosticsEnabled = false, selectedScannerMode = 'camera', lastScannerError }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const activeStreamRef = useRef<MediaStream | null>(null);
@@ -175,7 +178,7 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000 }: Prop
 
       if (message.includes('zxing') || message.includes('decode') || message.includes('reader')) {
         setStatus('library-init-failure');
-        onError('Scanner library failed to initialize from the camera stream. Use USB/manual mode and review diagnostics.');
+        onError('Scanner library failed to initialize from the camera stream. Use USB/manual mode.');
         return;
       }
 
@@ -202,19 +205,20 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000 }: Prop
         {status === 'no-camera' && 'No camera found for this device/browser. Use USB scanner / manual entry mode.'}
         {status === 'scanner-ready' && 'Scanner ready. Aim the rear camera at a person ID barcode.'}
         {status === 'scan-success' && 'Scan success. Processing this barcode…'}
-        {status === 'library-init-failure' && 'Scanner library initialization failed after camera startup. Review diagnostics and try USB scanner / manual entry mode.'}
+        {status === 'library-init-failure' && 'Scanner library initialization failed after camera startup. Try USB scanner / manual entry mode.'}
         {status === 'scan-error' && 'Scan error. Try again or switch to USB scanner / manual entry mode.'}
       </p>
-      <div className="scanner-diagnostics">
-        <p><strong>Camera diagnostics (dev):</strong></p>
+      {diagnosticsEnabled && <div className="scanner-diagnostics">
+        <p><strong>Scanner diagnostics:</strong></p>
         <ul>
+          <li>Selected scanner mode: <strong>{selectedScannerMode}</strong></li>
           <li><code>window.isSecureContext</code>: <strong>{String(diagnostics.isSecureContext)}</strong></li>
-          <li><code>navigator.mediaDevices</code> exists: <strong>{String(diagnostics.hasMediaDevices)}</strong></li>
-          <li><code>navigator.mediaDevices.getUserMedia</code> exists: <strong>{String(diagnostics.hasGetUserMedia)}</strong></li>
+          <li><code>navigator.mediaDevices</code> available: <strong>{String(diagnostics.hasMediaDevices)}</strong></li>
+          <li><code>navigator.mediaDevices.getUserMedia</code> available: <strong>{String(diagnostics.hasGetUserMedia)}</strong></li>
           <li>Top-level page: <strong>{String(diagnostics.isTopLevelPage)}</strong></li>
-          {startupError && <li>Last startup error: <strong>{startupError}</strong></li>}
+          {(lastScannerError || startupError) && <li>Last scanner error: <strong>{lastScannerError || startupError}</strong></li>}
         </ul>
-      </div>
+      </div>}
       <p className="muted">If camera mode is unavailable, switch to USB Scanner / Manual ID Entry below to keep check-in moving.</p>
     </div>
   );
