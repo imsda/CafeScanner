@@ -27,6 +27,7 @@ if (hasHttpsFiles) {
 export default defineConfig({
   plugins: [react()],
   server: {
+    allowedHosts: ['cafescanner.internal.imsda.org'],
     host: frontendHost,
     port: frontendPort,
     strictPort: true,
