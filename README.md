@@ -31,7 +31,10 @@ Install these once on the host before running `./scripts/setup.sh`:
 - Checks required app dependencies and installs missing runtime tools on Ubuntu/Debian when appropriate:
   - Node.js (modern LTS via NodeSource), npm, npx
   - openssl
-- Bootstraps `backend/.env` and `frontend/.env` from example files.
+- Bootstraps `backend/.env` from `backend/.env.example`.
+- Prompts for frontend access mode on first run and writes `frontend/.env` for:
+  - domain / reverse proxy / HTTPS (`VITE_API_BASE=/api`)
+  - direct IP / local network (`VITE_API_BASE=http://SERVER_IP:4000/api`)
 - Merges newly added env keys from `*.env.example` into existing env files without overwriting existing values.
 - Generates a secure `SESSION_SECRET` automatically when the placeholder value is still present.
 - Validates required environment values and fails with clear messages when values are missing/placeholders.
@@ -57,7 +60,9 @@ Scanner-only accounts can sign in and use the scan station, but cannot access ad
 
 - `backend/.env` (auto-created from `backend/.env.example`)
   - Running `./scripts/setup.sh` also auto-merges newly added required keys from `backend/.env.example` into an existing `backend/.env` file without overwriting existing values.
-- `frontend/.env` (auto-created from `frontend/.env.example`)
+- `frontend/.env` (created from first-run setup prompt, with missing keys merged from `frontend/.env.example` when needed)
+  - On first run, `./scripts/setup.sh` asks how users will access the app and writes frontend API settings accordingly.
+  - Existing `frontend/.env` is not overwritten unless `--reconfigure-frontend` is passed.
 
 ### Required backend env values
 
@@ -73,7 +78,37 @@ Scanner-only accounts can sign in and use the scan station, but cannot access ad
 
 ### Frontend env values
 
-- `VITE_API_BASE` (default `/api`)
+- `VITE_API_BASE` (recommended default `/api` for domain/reverse proxy setups)
+- `VITE_ALLOWED_HOSTS` (set to your domain or server IP)
+
+### First-run frontend access configuration
+
+When `frontend/.env` does not exist, setup prompts:
+
+1. `Domain / Reverse Proxy / HTTPS` (default if you press Enter)
+2. `Direct IP / Local Network`
+
+#### Option 1: Domain / Reverse Proxy / HTTPS
+
+- Prompt asks for your domain (example: `cafescanner.internal.imsda.org`)
+- `frontend/.env` is written as:
+  - `VITE_API_BASE=/api`
+  - `VITE_ALLOWED_HOSTS=<your-domain>`
+
+#### Option 2: Direct IP / Local Network
+
+- Prompt asks for your server IP (example: `172.16.8.207`)
+- `frontend/.env` is written as:
+  - `VITE_API_BASE=http://<your-ip>:4000/api`
+  - `VITE_ALLOWED_HOSTS=<your-ip>`
+
+### Reconfigure frontend API settings later
+
+```bash
+./scripts/setup.sh --reconfigure-frontend
+```
+
+This re-prompts for access mode and overwrites only `frontend/.env`.
 
 ## Development Mode
 
@@ -91,7 +126,8 @@ Defaults:
 When running behind Traefik, use same-origin browser API calls (`/api/...`) so the browser never calls `http://localhost:4000` directly.
 
 - Set `frontend/.env` to `VITE_API_BASE=/api`
-- Request flow: `Browser -> HTTPS domain -> Traefik -> Vite -> /api proxy -> backend`
+- Recommended request flow: `Browser -> HTTPS domain -> Traefik -> http://SERVER_IP:5173`
+- API path remains same-origin through Vite proxy: `Browser -> HTTPS domain -> Traefik -> Vite -> /api proxy -> backend`
 
 This keeps login/session cookie flows on same-origin `/api` requests from the browser perspective while still routing API traffic to the local backend process.
 

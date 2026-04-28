@@ -3,6 +3,7 @@ set -euo pipefail
 
 MIN_NODE_MAJOR="${MIN_NODE_MAJOR:-20}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
+RECONFIGURE_FRONTEND=0
 
 log() {
   echo "[setup] $*"
@@ -11,6 +12,20 @@ log() {
 fail() {
   echo "[setup] ERROR: $*" >&2
   exit 1
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --reconfigure-frontend)
+        RECONFIGURE_FRONTEND=1
+        shift
+        ;;
+      *)
+        fail "Unknown option: $1"
+        ;;
+    esac
+  done
 }
 
 command_exists() {
@@ -296,6 +311,101 @@ warn_if_frontend_api_base_direct_http() {
   fi
 }
 
+prompt_frontend_access_mode() {
+  local mode=""
+  echo "How will you access the app?"
+  echo "1) Domain / Reverse Proxy / HTTPS"
+  echo "2) Direct IP / Local Network"
+
+  while true; do
+    read -r -p "Select an option [1]: " mode
+    mode="${mode:-1}"
+
+    if [[ "$mode" == "1" || "$mode" == "2" ]]; then
+      printf '%s\n' "$mode"
+      return
+    fi
+
+    echo "[setup] Invalid selection. Please enter 1 or 2."
+  done
+}
+
+prompt_non_empty_value() {
+  local prompt_text="$1"
+  local value=""
+
+  while true; do
+    read -r -p "$prompt_text" value
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [[ -n "$value" ]]; then
+      printf '%s\n' "$value"
+      return
+    fi
+
+    echo "[setup] Value cannot be empty."
+  done
+}
+
+write_frontend_env_config() {
+  local mode="$1"
+  local entered_value="$2"
+  local env_file="frontend/.env"
+
+  if [[ "$mode" == "1" ]]; then
+    cat > "$env_file" <<EOF
+VITE_API_BASE=/api
+VITE_ALLOWED_HOSTS=$entered_value
+EOF
+    log "Configured frontend/.env for domain/reverse-proxy mode."
+  else
+    cat > "$env_file" <<EOF
+VITE_API_BASE=http://$entered_value:4000/api
+VITE_ALLOWED_HOSTS=$entered_value
+EOF
+    log "Configured frontend/.env for direct IP mode."
+  fi
+}
+
+print_frontend_env_summary() {
+  local env_file="$1"
+  local api_base="<not set>"
+  local allowed_hosts="<not set>"
+
+  if [[ -f "$env_file" ]]; then
+    api_base="$(env_get_value "$env_file" "VITE_API_BASE" 2>/dev/null || printf '%s' "<not set>")"
+    allowed_hosts="$(env_get_value "$env_file" "VITE_ALLOWED_HOSTS" 2>/dev/null || printf '%s' "<not set>")"
+  fi
+
+  echo "[setup] Current frontend/.env:"
+  echo "VITE_API_BASE=$api_base"
+  echo "VITE_ALLOWED_HOSTS=$allowed_hosts"
+}
+
+configure_frontend_env() {
+  local env_file="frontend/.env"
+
+  if [[ -f "$env_file" && "$RECONFIGURE_FRONTEND" -ne 1 ]]; then
+    echo "[setup] frontend/.env already exists. Skipping frontend API configuration."
+    print_frontend_env_summary "$env_file"
+    return
+  fi
+
+  local mode
+  local entered_value
+  mode="$(prompt_frontend_access_mode)"
+
+  if [[ "$mode" == "1" ]]; then
+    entered_value="$(prompt_non_empty_value "Enter your domain, for example cafescanner.internal.imsda.org: ")"
+  else
+    entered_value="$(prompt_non_empty_value "Enter server IP, for example 172.16.8.207: ")"
+  fi
+
+  write_frontend_env_config "$mode" "$entered_value"
+  print_frontend_env_summary "$env_file"
+}
+
 set_generated_value_if_placeholder() {
   local env_file="$1"
   local key="$2"
@@ -445,14 +555,17 @@ validate_required_env_vars() {
   fi
 }
 
+parse_args "$@"
 check_required_tools
 
 log "Bootstrapping environment files"
 bootstrap_env_file "backend/.env" "backend/.env.example"
-bootstrap_env_file "frontend/.env" "frontend/.env.example"
 merge_missing_env_keys "backend/.env" "backend/.env.example"
+configure_frontend_env
 merge_missing_env_keys "frontend/.env" "frontend/.env.example"
 warn_if_frontend_api_base_direct_http "frontend/.env"
+echo "If using HTTPS/domain/reverse proxy, VITE_API_BASE should usually be /api."
+echo "If using direct IP without reverse proxy, VITE_API_BASE should usually be http://SERVER_IP:4000/api."
 
 set_generated_value_if_placeholder "backend/.env" "SESSION_SECRET" "change-me-super-secret" "$(openssl rand -hex 32)"
 
