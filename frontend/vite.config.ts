@@ -4,7 +4,6 @@ import react from '@vitejs/plugin-react';
 
 const frontendHost = process.env.FRONTEND_HOST || '0.0.0.0';
 const frontendPort = Number(process.env.FRONTEND_PORT || 5173);
-const backendTarget = process.env.VITE_DEV_BACKEND_TARGET || `http://${process.env.BACKEND_HOST || '127.0.0.1'}:${process.env.PORT || '4000'}`;
 
 const certFile = process.env.SSL_CERT_FILE;
 const keyFile = process.env.SSL_KEY_FILE;
@@ -34,9 +33,8 @@ export default defineConfig({
     https: httpsConfig,
     proxy: {
       '/api': {
-        target: backendTarget,
-        changeOrigin: true,
-        secure: false
+        target: 'http://127.0.0.1:4000',
+        changeOrigin: true
       }
     }
   }
