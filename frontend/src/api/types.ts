@@ -1,5 +1,5 @@
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
-export type MealTrackingMode = 'camp_meeting' | 'tally';
+export type MealTrackingMode = 'camp_meeting' | 'countdown' | 'tally';
 export type MealDay = 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
 
 export interface ScanPerson {
