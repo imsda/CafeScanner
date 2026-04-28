@@ -90,9 +90,8 @@ Defaults:
 
 When running behind Traefik, use same-origin browser API calls (`/api/...`) so the browser never calls `http://localhost:4000` directly.
 
-- Browser: `https://cafescanner.internal.imsda.org`
-- Traefik forwards frontend traffic to: `http://172.16.8.207:5173`
-- Vite dev server proxies `/api` to backend: `http://127.0.0.1:4000`
+- Set `frontend/.env` to `VITE_API_BASE=/api`
+- Request flow: `Browser -> HTTPS domain -> Traefik -> Vite -> /api proxy -> backend`
 
 This keeps login/session cookie flows on same-origin `/api` requests from the browser perspective while still routing API traffic to the local backend process.
 
