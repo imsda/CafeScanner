@@ -37,6 +37,7 @@ enum ScanResult {
 
 enum MealTrackingMode {
   camp_meeting
+  countdown
   tally
 }
 

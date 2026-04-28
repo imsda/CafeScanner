@@ -50,6 +50,22 @@ const tallyFieldByMeal: Record<MealType, 'breakfastCount' | 'lunchCount' | 'dinn
   NONE: null
 };
 
+const remainingFieldByMeal: Record<MealType, 'breakfastRemaining' | 'lunchRemaining' | 'dinnerRemaining' | null> = {
+  BREAKFAST: 'breakfastRemaining',
+  LUNCH: 'lunchRemaining',
+  DINNER: 'dinnerRemaining',
+  MANUAL: null,
+  NONE: null
+};
+
+const noRemainingErrorByMeal: Record<MealType, string> = {
+  BREAKFAST: 'No breakfasts remaining',
+  LUNCH: 'No lunches remaining',
+  DINNER: 'No dinners remaining',
+  MANUAL: 'No meals remaining',
+  NONE: 'No meals remaining'
+};
+
 async function redeemCampMeetingEntitlement(params: {
   tx: any;
   settings: { stationName: string; timezone: string | null; mealTrackingMode: MealTrackingMode | null };
@@ -301,17 +317,56 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       return { ok: false, error: 'Person is inactive.', reason: 'INACTIVE_PERSON', person };
     }
 
-    const tallyField = tallyFieldByMeal[detectedMeal];
-    const tallyData = tallyField
-      ? {
-          [tallyField]: { increment: 1 },
-          totalMealsCount: { increment: 1 }
-        }
-      : { totalMealsCount: { increment: 1 } };
+    if (mode === MealTrackingMode.countdown) {
+      const remainingField = remainingFieldByMeal[detectedMeal];
+      if (!remainingField || person[remainingField] <= 0) {
+        await tx.scanTransaction.create({
+          data: {
+            scannedValue: personIdValue,
+            mealType: detectedMeal,
+            result: ScanResult.FAILURE,
+            failureReason: 'NO_MEAL_BALANCE',
+            personId: person.id,
+            stationName: settings.stationName,
+            adminUserId: options?.adminUserId
+          }
+        });
+        return {
+          ok: false,
+          error: noRemainingErrorByMeal[detectedMeal],
+          reason: 'NO_MEAL_BALANCE',
+          person
+        };
+      }
 
+      const updated = await tx.person.update({
+        where: { id: person.id },
+        data: { [remainingField]: { decrement: 1 } }
+      });
+
+      await tx.scanTransaction.create({
+        data: {
+          scannedValue: personIdValue,
+          mealType: detectedMeal,
+          result: ScanResult.SUCCESS,
+          personId: person.id,
+          stationName: settings.stationName,
+          adminUserId: options?.adminUserId
+        }
+      });
+
+      return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
+    }
+
+    const tallyField = tallyFieldByMeal[detectedMeal];
     const updated = await tx.person.update({
       where: { id: person.id },
-      data: tallyData
+      data: tallyField
+        ? {
+            [tallyField]: { increment: 1 },
+            totalMealsCount: { increment: 1 }
+          }
+        : { totalMealsCount: { increment: 1 } }
     });
 
     await tx.scanTransaction.create({
