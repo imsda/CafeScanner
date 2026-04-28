@@ -8,7 +8,8 @@ const router = Router();
 const scanRequestSchema = z.object({
   personId: z.string().optional(),
   scannedValue: z.string().optional(),
-  manualMealOverride: z.nativeEnum(MealType).optional()
+  manualMealOverride: z.nativeEnum(MealType).optional(),
+  entitlementId: z.number().int().positive().optional()
 }).refine((payload) => Boolean(payload.personId ?? payload.scannedValue), {
   message: 'personId is required',
   path: ['personId']
@@ -20,9 +21,10 @@ router.post('/', async (req, res) => {
     const personId = (payload.personId ?? payload.scannedValue ?? '').trim();
     const result = await processScan(personId, {
       manualMealOverride: payload.manualMealOverride,
+      entitlementId: payload.entitlementId,
       adminUserId: req.session.adminUserId
     });
-    if (!result.ok) return res.status(400).json(result);
+    if (!result.ok && !('pendingSelection' in result && result.pendingSelection)) return res.status(400).json(result);
     return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {

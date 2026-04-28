@@ -2,6 +2,10 @@ import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 
+function normalizeCampMeetingPersonId(value: string): string {
+  return value.trim().toUpperCase();
+}
+
 function normalizePersonId(value: string): string {
   return value.trim();
 }
@@ -38,10 +42,117 @@ const tallyFieldByMeal: Record<MealType, 'breakfastCount' | 'lunchCount' | 'dinn
   NONE: null
 };
 
-export async function processScan(rawPersonId: string, options?: { manualMealOverride?: MealType; adminUserId?: number }) {
-  const personIdValue = normalizePersonId(rawPersonId);
+async function redeemCampMeetingEntitlement(params: {
+  tx: any;
+  settings: { stationName: string; timezone: string | null; mealTrackingMode: MealTrackingMode | null };
+  adminUserId?: number;
+  personIdValue: string;
+  detectedMeal: MealType;
+  todayKey: string;
+  entitlementId: number;
+}) {
+  const { tx, settings, adminUserId, personIdValue, detectedMeal, todayKey, entitlementId } = params;
+
+  const entitlement = await tx.mealEntitlement.findFirst({
+    where: {
+      id: entitlementId,
+      personId: personIdValue,
+      mealType: detectedMeal,
+      mealDate: todayKey,
+      redeemed: false
+    }
+  });
+
+  if (!entitlement) {
+    await tx.scanTransaction.create({
+      data: {
+        scannedValue: personIdValue,
+        mealType: detectedMeal,
+        result: ScanResult.FAILURE,
+        failureReason: 'INVALID_ENTITLEMENT_SELECTION',
+        stationName: settings.stationName,
+        adminUserId
+      }
+    });
+
+    return {
+      ok: false,
+      error: 'The selected person is no longer available for this meal.',
+      reason: 'INVALID_ENTITLEMENT_SELECTION'
+    };
+  }
+
+  const linkedPerson = await tx.person.findUnique({ where: { personId: personIdValue } });
+
+  await tx.mealEntitlement.update({
+    where: { id: entitlement.id },
+    data: {
+      redeemed: true,
+      redeemedAt: new Date()
+    }
+  });
+
+  await tx.scanTransaction.create({
+    data: {
+      scannedValue: personIdValue,
+      mealType: detectedMeal,
+      result: ScanResult.SUCCESS,
+      personId: linkedPerson?.id,
+      entitlementId: entitlement.id,
+      entitlementPersonName: entitlement.personName,
+      stationName: settings.stationName,
+      adminUserId
+    }
+  });
+
+  const remainingAvailableTodayForMeal = await tx.mealEntitlement.count({
+    where: {
+      personId: personIdValue,
+      mealType: detectedMeal,
+      mealDate: todayKey,
+      redeemed: false
+    }
+  });
+
+  const displayName = deriveDisplayName(entitlement.personName);
+  return {
+    ok: true,
+    person: {
+      id: linkedPerson?.id,
+      personId: personIdValue,
+      firstName: displayName.firstName,
+      lastName: displayName.lastName,
+      breakfastRemaining: linkedPerson?.breakfastRemaining ?? 0,
+      lunchRemaining: linkedPerson?.lunchRemaining ?? 0,
+      dinnerRemaining: linkedPerson?.dinnerRemaining ?? 0,
+      breakfastCount: linkedPerson?.breakfastCount ?? 0,
+      lunchCount: linkedPerson?.lunchCount ?? 0,
+      dinnerCount: linkedPerson?.dinnerCount ?? 0,
+      totalMealsCount: linkedPerson?.totalMealsCount ?? 0,
+      active: linkedPerson?.active ?? true
+    },
+    mealType: detectedMeal,
+    scannedValue: personIdValue,
+    mealTrackingMode: settings.mealTrackingMode ?? MealTrackingMode.camp_meeting,
+    remainingAvailableTodayForMeal,
+    redeemedEntitlement: {
+      id: entitlement.id,
+      personName: entitlement.personName,
+      personId: entitlement.personId,
+      mealDate: entitlement.mealDate
+    }
+  };
+}
+
+export async function processScan(rawPersonId: string, options?: { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number }) {
+  const originalScannedValue = rawPersonId.trim();
   const settings = await prisma.setting.findUnique({ where: { id: 1 } });
   if (!settings) throw new Error('Settings not found');
+
+  const mode = settings.mealTrackingMode ?? MealTrackingMode.camp_meeting;
+  const personIdValue = mode === MealTrackingMode.camp_meeting
+    ? normalizeCampMeetingPersonId(rawPersonId)
+    : normalizePersonId(rawPersonId);
 
   const detectedMeal = options?.manualMealOverride && settings.allowManualMealOverride
     ? options.manualMealOverride
@@ -84,34 +195,28 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
   }
 
   return prisma.$transaction(async (tx) => {
-    const mode = settings.mealTrackingMode ?? MealTrackingMode.camp_meeting;
-
     if (mode === MealTrackingMode.camp_meeting) {
       const todayKey = localDateKey(new Date(), settings.timezone || 'Etc/UTC');
-      const matchingUnusedBefore = await tx.mealEntitlement.count({
-        where: {
-          personId: personIdValue,
-          mealType: detectedMeal,
-          mealDate: todayKey,
-          redeemed: false
-        }
-      });
-
-      console.debug(
-        `[SCAN][camp_meeting] personId=${personIdValue} meal=${detectedMeal} mealDate=${todayKey} matchingUnusedBefore=${matchingUnusedBefore}`
-      );
-
-      const entitlement = await tx.mealEntitlement.findFirst({
+      const matchingUnused = await tx.mealEntitlement.findMany({
         where: {
           personId: personIdValue,
           mealType: detectedMeal,
           mealDate: todayKey,
           redeemed: false
         },
-        orderBy: { id: 'asc' }
+        orderBy: [
+          { personName: 'asc' },
+          { id: 'asc' }
+        ],
+        select: {
+          id: true,
+          personName: true,
+          personId: true,
+          mealDate: true
+        }
       });
 
-      if (!entitlement) {
+      if (matchingUnused.length === 0) {
         const person = await tx.person.findUnique({ where: { personId: personIdValue } });
         await tx.scanTransaction.create({
           data: {
@@ -134,74 +239,43 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         };
       }
 
-      const linkedPerson = await tx.person.findUnique({ where: { personId: personIdValue } });
+      if (options?.entitlementId !== undefined) {
+        return redeemCampMeetingEntitlement({
+          tx,
+          settings,
+          adminUserId: options.adminUserId,
+          personIdValue,
+          detectedMeal,
+          todayKey,
+          entitlementId: options.entitlementId
+        });
+      }
 
-      await tx.mealEntitlement.update({
-        where: { id: entitlement.id },
-        data: {
-          redeemed: true,
-          redeemedAt: new Date()
-        }
-      });
-
-      console.debug(
-        `[SCAN][camp_meeting] redeemed entitlementId=${entitlement.id} personName=${entitlement.personName || '(none)'} personId=${entitlement.personId}`
-      );
-
-      await tx.scanTransaction.create({
-        data: {
+      if (matchingUnused.length > 1) {
+        return {
+          ok: false,
+          pendingSelection: true,
+          reason: 'MULTIPLE_ENTITLEMENTS_FOUND',
           scannedValue: personIdValue,
-          mealType: detectedMeal,
-          result: ScanResult.SUCCESS,
-          personId: linkedPerson?.id,
-          entitlementId: entitlement.id,
-          entitlementPersonName: entitlement.personName,
-          stationName: settings.stationName,
-          adminUserId: options?.adminUserId
-        }
-      });
-
-      const remainingAvailableTodayForMeal = await tx.mealEntitlement.count({
-        where: {
-          personId: personIdValue,
+          originalScannedValue,
           mealType: detectedMeal,
           mealDate: todayKey,
-          redeemed: false
-        }
+          options: matchingUnused.map((option) => ({
+            entitlementId: option.id,
+            personName: option.personName || 'Camp Meeting Guest'
+          }))
+        };
+      }
+
+      return redeemCampMeetingEntitlement({
+        tx,
+        settings,
+        adminUserId: options?.adminUserId,
+        personIdValue,
+        detectedMeal,
+        todayKey,
+        entitlementId: matchingUnused[0].id
       });
-
-      console.debug(
-        `[SCAN][camp_meeting] personId=${personIdValue} meal=${detectedMeal} mealDate=${todayKey} remainingAfter=${remainingAvailableTodayForMeal}`
-      );
-
-      const displayName = deriveDisplayName(entitlement.personName);
-      return {
-        ok: true,
-        person: {
-          id: linkedPerson?.id,
-          personId: personIdValue,
-          firstName: displayName.firstName,
-          lastName: displayName.lastName,
-          breakfastRemaining: linkedPerson?.breakfastRemaining ?? 0,
-          lunchRemaining: linkedPerson?.lunchRemaining ?? 0,
-          dinnerRemaining: linkedPerson?.dinnerRemaining ?? 0,
-          breakfastCount: linkedPerson?.breakfastCount ?? 0,
-          lunchCount: linkedPerson?.lunchCount ?? 0,
-          dinnerCount: linkedPerson?.dinnerCount ?? 0,
-          totalMealsCount: linkedPerson?.totalMealsCount ?? 0,
-          active: linkedPerson?.active ?? true
-        },
-        mealType: detectedMeal,
-        scannedValue: personIdValue,
-        mealTrackingMode: mode,
-        remainingAvailableTodayForMeal,
-        redeemedEntitlement: {
-          id: entitlement.id,
-          personName: entitlement.personName,
-          personId: entitlement.personId,
-          mealDate: entitlement.mealDate
-        }
-      };
     }
 
     const person = await tx.person.findUnique({ where: { personId: personIdValue } });

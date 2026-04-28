@@ -16,7 +16,7 @@ export interface ScanPerson {
   active?: boolean;
 }
 
-export interface ScanResponse {
+export interface ScanSuccessResponse {
   ok: true;
   person: ScanPerson;
   mealType: MealType;
@@ -30,6 +30,22 @@ export interface ScanResponse {
     mealDate: string;
   };
 }
+
+export interface ScanPendingSelectionResponse {
+  ok: false;
+  pendingSelection: true;
+  reason: 'MULTIPLE_ENTITLEMENTS_FOUND';
+  scannedValue: string;
+  originalScannedValue?: string;
+  mealType: MealType;
+  mealDate: string;
+  options: Array<{
+    entitlementId: number;
+    personName: string;
+  }>;
+}
+
+export type ScanResponse = ScanSuccessResponse | ScanPendingSelectionResponse;
 
 export interface ScanFailureResponse {
   ok: false;

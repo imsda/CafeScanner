@@ -26,6 +26,10 @@ type ParsedPersonName = {
   lastName: string;
 };
 
+function normalizeCampMeetingPersonId(value: string): string {
+  return value.trim().toUpperCase();
+}
+
 function parseBool(v: string) {
   return ['1', 'true', 'yes', 'y'].includes((v || '').toLowerCase());
 }
@@ -159,7 +163,7 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
   const rowsWithoutHeader = rows.length > 0 && isCampMeetingHeaderRow(rows[0]) ? rows.slice(1) : rows;
 
   return rowsWithoutHeader.map((cols, idx) => {
-    const personId = (cols[1] || '').trim();
+    const personId = normalizeCampMeetingPersonId(cols[1] || '');
     const personName = (cols[2] || '').trim();
     const mealTypeRaw = (cols[3] || '').trim();
     const mealDateRaw = (cols[5] || '').trim();
@@ -262,11 +266,13 @@ router.post('/commit', upload.single('file'), async (req, res) => {
       const mealType = normalizeMealType(row.mealType);
       const mealDate = normalizeCampMeetingDate(row.mealDate);
       if (!mealType || !mealDate || !row.personId || !row.personName) continue;
+      const normalizedPersonId = normalizeCampMeetingPersonId(row.personId);
+      if (!normalizedPersonId) continue;
 
-      if (!peopleByPersonId.has(row.personId)) {
+      if (!peopleByPersonId.has(normalizedPersonId)) {
         const { firstName, lastName } = splitCampMeetingName(row.personName);
-        peopleByPersonId.set(row.personId, {
-          personId: row.personId,
+        peopleByPersonId.set(normalizedPersonId, {
+          personId: normalizedPersonId,
           personName: row.personName,
           firstName,
           lastName
@@ -274,7 +280,7 @@ router.post('/commit', upload.single('file'), async (req, res) => {
       }
 
       entitlementRows.push({
-        personId: row.personId,
+        personId: normalizedPersonId,
         personName: row.personName,
         mealType,
         mealDate

@@ -81,6 +81,20 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 .scan-result.fail { background: #fff1f3; border-color: #f5c4ce; }
 .scan-result.info { background: #f7fbff; }
 .scan-person { font-size: 1.6rem; font-weight: 700; }
+.selection-card {
+  border: 1px solid #d8e4f4;
+  border-radius: 10px;
+  padding: 0.8rem;
+  background: #f8fbff;
+}
+.selection-card h3 { margin: 0; }
+.selection-options { display: grid; gap: 0.55rem; }
+.selection-option {
+  width: 100%;
+  justify-content: flex-start;
+  font-size: 1rem;
+  padding: 0.72rem 0.8rem;
+}
 
 .grid-form { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 1rem; }
 .button-row, .filters-row { display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: end; }
