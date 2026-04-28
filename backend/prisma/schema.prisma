@@ -15,6 +15,16 @@ enum MealType {
   NONE
 }
 
+enum MealDay {
+  SUN
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+}
+
 enum UserRole {
   ADMIN
   SCANNER
@@ -109,15 +119,17 @@ model MealEntitlement {
   personId   String
   personName String?
   mealType   MealType
+  mealDay    MealDay
   mealDate   String
   redeemed   Boolean  @default(false)
   redeemedAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@index([personId, mealType, mealDate, redeemed])
+  @@index([personId, mealType, mealDay, redeemed])
   @@index([personId])
   @@index([mealDate])
+  @@index([mealDay])
 }
 
 model ImportHistory {

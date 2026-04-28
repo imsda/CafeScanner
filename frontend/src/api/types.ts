@@ -1,5 +1,6 @@
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
 export type MealTrackingMode = 'camp_meeting' | 'tally';
+export type MealDay = 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
 
 export interface ScanPerson {
   id?: number;
@@ -27,6 +28,7 @@ export interface ScanSuccessResponse {
     id: number;
     personName?: string | null;
     personId: string;
+    mealDay: MealDay;
     mealDate: string;
   };
 }
@@ -38,7 +40,7 @@ export interface ScanPendingSelectionResponse {
   scannedValue: string;
   originalScannedValue?: string;
   mealType: MealType;
-  mealDate: string;
+  mealDay: MealDay;
   options: Array<{
     entitlementId: number;
     personName: string;

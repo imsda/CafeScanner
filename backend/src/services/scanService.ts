@@ -1,4 +1,4 @@
-import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
+import { MealDay, MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 
@@ -10,15 +10,23 @@ function normalizePersonId(value: string): string {
   return value.trim();
 }
 
-function localDateKey(date: Date, timezone: string): string {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
+function localMealDay(date: Date, timezone: string): MealDay {
+  const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
+    weekday: 'short'
+  }).format(date).toUpperCase();
 
-  return formatter.format(date);
+  const mealDayMap: Record<string, MealDay> = {
+    SUN: MealDay.SUN,
+    MON: MealDay.MON,
+    TUE: MealDay.TUE,
+    WED: MealDay.WED,
+    THU: MealDay.THU,
+    FRI: MealDay.FRI,
+    SAT: MealDay.SAT
+  };
+
+  return mealDayMap[weekday] ?? MealDay.SUN;
 }
 
 function deriveDisplayName(personName?: string | null): { firstName: string; lastName: string } {
@@ -48,17 +56,17 @@ async function redeemCampMeetingEntitlement(params: {
   adminUserId?: number;
   personIdValue: string;
   detectedMeal: MealType;
-  todayKey: string;
+  todayMealDay: MealDay;
   entitlementId: number;
 }) {
-  const { tx, settings, adminUserId, personIdValue, detectedMeal, todayKey, entitlementId } = params;
+  const { tx, settings, adminUserId, personIdValue, detectedMeal, todayMealDay, entitlementId } = params;
 
   const entitlement = await tx.mealEntitlement.findFirst({
     where: {
       id: entitlementId,
       personId: personIdValue,
       mealType: detectedMeal,
-      mealDate: todayKey,
+      mealDay: todayMealDay,
       redeemed: false
     }
   });
@@ -109,7 +117,7 @@ async function redeemCampMeetingEntitlement(params: {
     where: {
       personId: personIdValue,
       mealType: detectedMeal,
-      mealDate: todayKey,
+      mealDay: todayMealDay,
       redeemed: false
     }
   });
@@ -139,7 +147,8 @@ async function redeemCampMeetingEntitlement(params: {
       id: entitlement.id,
       personName: entitlement.personName,
       personId: entitlement.personId,
-      mealDate: entitlement.mealDate
+      mealDate: entitlement.mealDate,
+      mealDay: entitlement.mealDay
     }
   };
 }
@@ -196,12 +205,14 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
   return prisma.$transaction(async (tx) => {
     if (mode === MealTrackingMode.camp_meeting) {
-      const todayKey = localDateKey(new Date(), settings.timezone || 'Etc/UTC');
+      const now = new Date();
+      const timezone = settings.timezone || 'Etc/UTC';
+      const todayMealDay = localMealDay(now, timezone);
       const matchingUnused = await tx.mealEntitlement.findMany({
         where: {
           personId: personIdValue,
           mealType: detectedMeal,
-          mealDate: todayKey,
+          mealDay: todayMealDay,
           redeemed: false
         },
         orderBy: [
@@ -212,7 +223,8 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           id: true,
           personName: true,
           personId: true,
-          mealDate: true
+          mealDate: true,
+          mealDay: true
         }
       });
 
@@ -232,7 +244,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
         return {
           ok: false,
-          error: 'No unused meal entitlement remains for this ID for this meal and day.',
+          error: 'No unused meal entitlement remains for this ID for this meal day.',
           reason: 'NO_MEAL_ENTITLEMENT',
           person,
           mealType: detectedMeal
@@ -246,7 +258,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           adminUserId: options.adminUserId,
           personIdValue,
           detectedMeal,
-          todayKey,
+          todayMealDay,
           entitlementId: options.entitlementId
         });
       }
@@ -259,7 +271,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           scannedValue: personIdValue,
           originalScannedValue,
           mealType: detectedMeal,
-          mealDate: todayKey,
+          mealDay: todayMealDay,
           options: matchingUnused.map((option) => ({
             entitlementId: option.id,
             personName: option.personName || 'Camp Meeting Guest'
@@ -273,7 +285,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         adminUserId: options?.adminUserId,
         personIdValue,
         detectedMeal,
-        todayKey,
+        todayMealDay,
         entitlementId: matchingUnused[0].id
       });
     }

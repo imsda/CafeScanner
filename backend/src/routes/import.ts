@@ -1,4 +1,4 @@
-import { MealTrackingMode, MealType } from '@prisma/client';
+import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
 import { Router } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
@@ -16,6 +16,7 @@ type CampMeetingPreviewRow = {
   personId: string;
   personName: string;
   mealType: string;
+  mealDay: string;
   mealDate: string;
   errors: string[];
   valid: boolean;
@@ -64,6 +65,35 @@ function normalizeDateOnly(value: string): string | null {
   const month = String(parsed.getMonth() + 1).padStart(2, '0');
   const day = String(parsed.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+
+
+function normalizeCampMeetingMealDay(value: string): MealDay | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const dayMap: Record<string, MealDay> = {
+    sun: MealDay.SUN,
+    sunday: MealDay.SUN,
+    mon: MealDay.MON,
+    monday: MealDay.MON,
+    tue: MealDay.TUE,
+    tues: MealDay.TUE,
+    tuesday: MealDay.TUE,
+    wed: MealDay.WED,
+    wednesday: MealDay.WED,
+    thu: MealDay.THU,
+    thur: MealDay.THU,
+    thurs: MealDay.THU,
+    thursday: MealDay.THU,
+    fri: MealDay.FRI,
+    friday: MealDay.FRI,
+    sat: MealDay.SAT,
+    saturday: MealDay.SAT
+  };
+
+  return dayMap[normalized] ?? null;
 }
 
 function normalizeCampMeetingDate(value: string): string | null {
@@ -118,14 +148,14 @@ function isCampMeetingHeaderRow(cols: string[]): boolean {
   const colB = normalized[1] || '';
   const colC = normalized[2] || '';
   const colD = normalized[3] || '';
-  const colF = normalized[5] || '';
+  const colE = normalized[4] || '';
 
   const personIdLike = new Set(['reg_id', 'personid', 'person_id', 'id']);
   const personNameLike = new Set(['guest_name', 'personname', 'person_name', 'name']);
   const mealTypeLike = new Set(['meal_type', 'mealtype']);
-  const mealDateLike = new Set(['meal_date', 'mealdate', 'date']);
+  const mealDayLike = new Set(['meal_day', 'mealday', 'day', 'day_of_week']);
 
-  return personIdLike.has(colB) && personNameLike.has(colC) && mealTypeLike.has(colD) && mealDateLike.has(colF);
+  return personIdLike.has(colB) && personNameLike.has(colC) && mealTypeLike.has(colD) && mealDayLike.has(colE);
 }
 
 function splitCampMeetingName(personName: string): ParsedPersonName {
@@ -166,28 +196,31 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
     const personId = normalizeCampMeetingPersonId(cols[1] || '');
     const personName = (cols[2] || '').trim();
     const mealTypeRaw = (cols[3] || '').trim();
+    const mealDayRaw = (cols[4] || '').trim();
     const mealDateRaw = (cols[5] || '').trim();
     const errors: string[] = [];
 
     if (!personId) errors.push('Column B (Person ID) is required');
     if (!personName) errors.push('Column C (Name) is required');
     if (!mealTypeRaw) errors.push('Column D (Meal Type) is required');
-    if (!mealDateRaw) errors.push('Column F (Meal Date) is required');
+    if (!mealDayRaw) errors.push('Column E (Meal Day) is required');
     if (mealTypeRaw && !normalizeMealType(mealTypeRaw)) {
       errors.push('Column D must be Breakfast, Lunch, Dinner, or Supper');
     }
-    if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date');
+    if (mealDayRaw && !normalizeCampMeetingMealDay(mealDayRaw)) errors.push('Column E must be a valid day of week');
+    if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date when provided');
 
     return {
       index: idx + 1,
       personId,
       personName,
       mealType: normalizeMealType(mealTypeRaw) ?? mealTypeRaw,
+      mealDay: normalizeCampMeetingMealDay(mealDayRaw) ?? mealDayRaw,
       mealDate: normalizeCampMeetingDate(mealDateRaw) ?? mealDateRaw,
       errors,
       valid: errors.length === 0
     };
-  }).filter((row) => row.personId || row.personName || row.mealType || row.mealDate);
+  }).filter((row) => row.personId || row.personName || row.mealType || row.mealDay || row.mealDate);
 }
 
 router.get('/template', async (_req, res) => {
@@ -260,12 +293,13 @@ router.post('/commit', upload.single('file'), async (req, res) => {
     const errors = invalidRows.map((row) => ({ row: row.index, error: row.errors.join('; ') }));
 
     const peopleByPersonId = new Map<string, { personId: string; personName: string; firstName: string; lastName: string }>();
-    const entitlementRows: Array<{ personId: string; personName: string; mealType: MealType; mealDate: string }> = [];
+    const entitlementRows: Array<{ personId: string; personName: string; mealType: MealType; mealDay: MealDay; mealDate: string }> = [];
 
     for (const row of validRows) {
       const mealType = normalizeMealType(row.mealType);
-      const mealDate = normalizeCampMeetingDate(row.mealDate);
-      if (!mealType || !mealDate || !row.personId || !row.personName) continue;
+      const mealDay = normalizeCampMeetingMealDay(row.mealDay);
+      const mealDate = normalizeCampMeetingDate(row.mealDate) ?? '';
+      if (!mealType || !mealDay || !row.personId || !row.personName) continue;
       const normalizedPersonId = normalizeCampMeetingPersonId(row.personId);
       if (!normalizedPersonId) continue;
 
@@ -283,6 +317,7 @@ router.post('/commit', upload.single('file'), async (req, res) => {
         personId: normalizedPersonId,
         personName: row.personName,
         mealType,
+        mealDay,
         mealDate
       });
     }
