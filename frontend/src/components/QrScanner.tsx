@@ -53,19 +53,10 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
   const diagnostics = useMemo(() => {
     const hasMediaDevices = typeof navigator !== 'undefined' && 'mediaDevices' in navigator;
     const hasGetUserMedia = hasMediaDevices && typeof navigator.mediaDevices?.getUserMedia === 'function';
-    let isTopLevelPage = true;
-
-    try {
-      isTopLevelPage = window.top === window.self;
-    } catch {
-      isTopLevelPage = false;
-    }
-
     return {
       isSecureContext: window.isSecureContext,
       hasMediaDevices,
       hasGetUserMedia,
-      isTopLevelPage
     };
   }, []);
 
@@ -198,8 +189,8 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
       <video ref={videoRef} className="scanner-video" muted autoPlay playsInline controls={false} />
       <p className="scanner-status">
         {status === 'not-started' && 'Camera not started. Tap Start Camera Scanner to request permission and use the rear camera when available.'}
-        {status === 'insecure-context' && 'Camera unavailable here because this page is not secure. Use HTTPS (or localhost) for camera scanning, or use USB scanner / manual entry mode.'}
-        {status === 'api-unavailable' && 'Camera API unavailable in this browser context. This is not the same as permission denial. Use USB scanner / manual entry mode.'}
+        {status === 'insecure-context' && 'Camera scan is unavailable on this page right now. Use USB scanner / manual entry mode.'}
+        {status === 'api-unavailable' && 'Camera scan is unavailable in this browser right now. Use USB scanner / manual entry mode.'}
         {status === 'requesting-permission' && 'Requesting camera permission… Please allow access in your browser prompt.'}
         {status === 'permission-denied' && 'Camera permission denied. You can allow permission in browser settings and retry, or use USB scanner / manual entry mode.'}
         {status === 'no-camera' && 'No camera found for this device/browser. Use USB scanner / manual entry mode.'}
@@ -215,7 +206,6 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
           <li><code>window.isSecureContext</code>: <strong>{String(diagnostics.isSecureContext)}</strong></li>
           <li><code>navigator.mediaDevices</code> available: <strong>{String(diagnostics.hasMediaDevices)}</strong></li>
           <li><code>navigator.mediaDevices.getUserMedia</code> available: <strong>{String(diagnostics.hasGetUserMedia)}</strong></li>
-          <li>Top-level page: <strong>{String(diagnostics.isTopLevelPage)}</strong></li>
           {(lastScannerError || startupError) && <li>Last scanner error: <strong>{lastScannerError || startupError}</strong></li>}
         </ul>
       </div>}
