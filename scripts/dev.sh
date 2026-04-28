@@ -10,7 +10,6 @@ export HOST="${HOST:-$BACKEND_HOST}"
 export PORT="${PORT:-4000}"
 export FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 export FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-export VITE_DEV_BACKEND_TARGET="${VITE_DEV_BACKEND_TARGET:-http://127.0.0.1:${PORT}}"
 
 CERT_DEFAULT="${REPO_ROOT}/certs/dev.crt"
 KEY_DEFAULT="${REPO_ROOT}/certs/dev.key"
@@ -42,7 +41,7 @@ fi
 echo "[dev] Backend URL: http://${BACKEND_HOST}:${PORT}"
 echo "[dev] Frontend local URL: ${FRONTEND_SCHEME}://localhost:${FRONTEND_PORT}"
 echo "[dev] Frontend LAN URL: ${FRONTEND_SCHEME}://${LAN_IP}:${FRONTEND_PORT}"
-echo "[dev] Frontend proxies /api -> ${VITE_DEV_BACKEND_TARGET}"
+echo "[dev] Frontend proxies /api -> http://127.0.0.1:4000"
 
 cd "$REPO_ROOT"
 npm run dev
