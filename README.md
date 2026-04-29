@@ -44,10 +44,25 @@ Install these once on the host before running `./scripts/setup.sh`:
 
 1. `./scripts/setup.sh`
 2. `npm run create-admin -w backend`
+3. `npm run promote-owner -w backend`
+4. `npm run set-owner-recovery-code -w backend`
 
-## Password Recovery
+## User Roles
 
-`npm run reset-password -w backend`
+- **OWNER**: full access, can arm full application wipe.
+- **ADMIN**: full app access, cannot arm full wipe or manage OWNER users.
+- **CUSTOM**: access is limited to individually selected tabs/pages.
+- **SCANNER**: Scan Station only.
+
+## User Management
+
+Use the Users/Admin flows to:
+
+- add users,
+- remove/disable users,
+- reset passwords,
+- assign roles,
+- assign page access for CUSTOM users.
 
 ## Environment Files
 
@@ -245,25 +260,33 @@ Then commit:
 
 Destructive reset flows are admin-initiated app actions only (for explicit maintenance), not part of normal pull/setup updates.
 
-## OWNER role, recovery, and full wipe
+## Password Recovery
 
-Initial setup:
-- `./scripts/setup.sh`
-- `npm run create-admin -w backend`
-- `npm run promote-owner -w backend`
-- `npm run set-owner-recovery-code -w backend`
+- Reset password: `npm run reset-password -w backend`
 
-Password reset:
-- `npm run reset-password -w backend`
+## OWNER Recovery Code
 
-Full wipe:
-1. Login as OWNER
-2. Settings → Danger Zone → Arm Full Application Wipe
-3. Copy the one-time token
-4. SSH into server
-5. Run `npm run full-wipe -w backend -- --token <token>`
-6. Type `DELETE EVERYTHING`
-7. Run:
+- Set/update OWNER recovery code: `npm run set-owner-recovery-code -w backend`
+
+## Create Scanner User
+
+- `npm run create-scanner -w backend`
+
+## Full Application Wipe
+
+1. Login as OWNER.
+2. Open **Settings → Danger Zone → Arm Full Application Wipe**.
+3. Copy the one-time token.
+4. Run: `npm run full-wipe -w backend -- --token <token>`
+5. Type: `DELETE EVERYTHING`
+6. Re-run setup and bootstrap:
    - `./scripts/setup.sh`
    - `npm run create-admin -w backend`
    - `npm run promote-owner -w backend`
+
+## Database/Data Safety
+
+- `./scripts/setup.sh` preserves existing data.
+- Normal setup does not reset users.
+- Full wipe is the only script that deletes everything.
+- Full wipe requires OWNER web authorization plus terminal token.
