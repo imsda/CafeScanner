@@ -43,7 +43,7 @@ button.primary:hover, .primary:hover, .btn-primary:hover { background: #1a4f8f; 
 button:disabled, .btn.disabled, .btn[aria-disabled='true'] { opacity: 0.6; cursor: not-allowed; }
 
 .page { max-width: 1200px; margin: 1rem auto 2rem; padding: 0 1rem; }
-.card { background: #fff; border: 1px solid #d8e4f4; border-radius: 12px; padding: 1rem; box-shadow: 0 1px 2px rgba(12, 44, 88, 0.04); }
+.card { background: #fff; border: 1px solid #d8e4f4; border-radius: 12px; padding: 1rem; box-shadow: 0 1px 2px rgba(12, 44, 88, 0.04); max-width: 100%; overflow: hidden; }
 .stack { display: grid; gap: 0.85rem; }
 .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
 .login-card { width: min(420px, 100%); background: #fff; border: 1px solid #d8e4f4; border-radius: 12px; padding: 1.3rem; }
@@ -98,14 +98,19 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 
 .grid-form { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 1rem; }
 .button-row, .filters-row { display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: end; }
+.grid-form-people { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.add-person-btn { width: 100%; max-width: 130px; justify-self: start; }
 .report-controls { padding: 0.85rem; border: 1px solid #d8e4f4; border-radius: 10px; background: #f8fbff; }
-.people-filters label { min-width: 220px; flex: 1 1 260px; }
+.people-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 220px) auto; align-items: end; }
+.people-filters label { min-width: 0; width: 100%; }
 .people-filters button { align-self: end; }
+.table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
 
 table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.92rem; }
 th, td { border: 1px solid #d8e4f4; padding: 0.45rem 0.5rem; text-align: left; }
 th { background: #f7fbff; }
 .people-table { font-size: 0.86rem; }
+.people-table { min-width: max-content; }
 .people-table th,
 .people-table td { padding: 0.3rem 0.4rem; white-space: nowrap; vertical-align: middle; }
 .people-number-input {
@@ -122,6 +127,8 @@ th { background: #f7fbff; }
 
 @media (max-width: 940px) {
   .scan-layout { grid-template-columns: 1fr; }
+  .people-filters { grid-template-columns: minmax(0, 1fr); }
+  .add-person-btn { max-width: none; }
 }
 
 select {
