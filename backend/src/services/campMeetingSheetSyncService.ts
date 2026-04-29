@@ -35,9 +35,18 @@ function isWithinMealWindowPlus10Minutes(d: Date, tz: string, settings: any): bo
   const now = h*60+m;
   const windows: Array<[string, string]> = [[settings.breakfastStart,settings.breakfastEnd],[settings.lunchStart,settings.lunchEnd],[settings.dinnerStart,settings.dinnerEnd]];
   return windows.some(([s,e])=>{
+    if (!s || !e) return false;
     const [sh,sm]=s.split(':').map(Number); const [eh,em]=e.split(':').map(Number);
+    if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return false;
     return now >= sh*60+sm && now <= eh*60+em+10;
   });
+}
+
+function getSchedulerSkipReason(settings: any): string | null {
+  if (!settings.googleSheetsEnabled) return 'sync disabled';
+  if (!parseSpreadsheetId(settings.googleSheetId || '')) return 'missing sheet ID';
+  if (!isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return 'outside meal window';
+  return null;
 }
 
 function validateServiceAccountCredentials() {
@@ -249,11 +258,11 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
 
 export async function flushCampMeetingRedemptionsToSheet(force = false) {
   const settings = await getSettings();
-  if (settings.mealTrackingMode !== MealTrackingMode.camp_meeting) return;
-  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return;
+  if (settings.mealTrackingMode !== MealTrackingMode.camp_meeting) return { writeBackRowsUpdated: 0 };
+  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
   const pending = await prisma.mealEntitlement.findMany({ where: { redeemed: true, sourceSheetRow: { not: null }, sheetSyncedAt: null } });
-  if (!pending.length) return;
-  if (!settings.googleSheetsEnabled) return;
+  if (!pending.length) return { writeBackRowsUpdated: 0 };
+  if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
   const sheets = getSheetsClient();
   const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
@@ -270,15 +279,25 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
     }
     await prisma.mealEntitlement.update({ where: { id: row.id }, data: { sheetSyncedAt: new Date() } });
   }
+  return { writeBackRowsUpdated: pending.length };
 }
 
 export function startCampMeetingSheetSyncScheduler() {
+  console.log('[SHEET_SYNC] Scheduler started');
   const run = async () => {
     try {
       const settings = await getSettings();
-      if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) await writeBackCampMeetingRedemptions(false);
-      if (settings.mealTrackingMode === MealTrackingMode.tally) await writeBackTallyCounts(false);
-      if (settings.mealTrackingMode === MealTrackingMode.countdown) await writeBackCountdownBalances(false);
+      const skipReason = getSchedulerSkipReason(settings);
+      if (skipReason) {
+        console.log(`[SHEET_SYNC] Skipped: ${skipReason}`);
+      } else {
+        console.log('[SHEET_SYNC] Running scheduled write-back');
+        let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
+        if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
+        if (settings.mealTrackingMode === MealTrackingMode.tally) result = await writeBackTallyCounts(false);
+        if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
+        console.log(`[SHEET_SYNC] Completed scheduled write-back: ${result?.writeBackRowsUpdated ?? 0} rows updated`);
+      }
     } catch (e) {
       console.error('[SHEET_SYNC]', e);
     } finally {
@@ -290,4 +309,21 @@ export function startCampMeetingSheetSyncScheduler() {
     }
   };
   void run();
+}
+
+export async function runGoogleSheetsSyncSchedulerCheckNow() {
+  const settings = await getSettings();
+  const skipReason = getSchedulerSkipReason(settings);
+  if (skipReason) {
+    console.log(`[SHEET_SYNC] Skipped: ${skipReason}`);
+    return { ran: false, reason: skipReason, mode: settings.mealTrackingMode };
+  }
+  console.log('[SHEET_SYNC] Running scheduled write-back');
+  let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
+  if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
+  if (settings.mealTrackingMode === MealTrackingMode.tally) result = await writeBackTallyCounts(false);
+  if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
+  const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
+  console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
+  return { ran: true, rowsUpdated, mode: settings.mealTrackingMode };
 }
