@@ -63,7 +63,7 @@ function ButtonLink({ href, children, className = '', ...props }: { href: string
 
 function Login() {
   const { login } = useAuth();
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [devDiagnostics, setDevDiagnostics] = useState('');
@@ -95,7 +95,7 @@ function Login() {
     }
   }
 
-  return <div className="login-shell"><div className="login-card"><h1>Cafeteria Scanner</h1><p className="muted">IMSDA Meal Scanner</p><form onSubmit={onSubmit} className="stack"><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label><button className="primary" type="submit">Sign in</button>{error && <p className="error" style={{ whiteSpace: 'pre-line' }}>{error}</p>}{import.meta.env.DEV && devDiagnostics && <p className="muted">{devDiagnostics}</p>}</form></div></div>;
+  return <div className="login-shell"><div className="login-card"><h1>Cafeteria Scanner</h1><p className="muted">IMSDA Meal Scanner</p><form onSubmit={onSubmit} className="stack"><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" placeholder="Username" /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label><button className="primary" type="submit">Sign in</button>{error && <p className="error" style={{ whiteSpace: 'pre-line' }}>{error}</p>}{import.meta.env.DEV && devDiagnostics && <p className="muted">{devDiagnostics}</p>}</form></div></div>;
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
