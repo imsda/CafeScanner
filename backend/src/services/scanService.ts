@@ -112,7 +112,9 @@ async function redeemCampMeetingEntitlement(params: {
     where: { id: entitlement.id },
     data: {
       redeemed: true,
-      redeemedAt: new Date()
+      redeemedAt: new Date(),
+      redeemedBy: entitlement.personName || null,
+      sheetSyncedAt: null
     }
   });
 

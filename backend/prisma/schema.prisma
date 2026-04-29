@@ -150,6 +150,8 @@ model ScanTransaction {
 
 model MealEntitlement {
   id         Int      @id @default(autoincrement())
+  sourceTicketId String?
+  sourceSheetRow Int?
   personId   String
   personName String?
   mealType   MealType
@@ -157,9 +159,13 @@ model MealEntitlement {
   mealDate   String
   redeemed   Boolean  @default(false)
   redeemedAt DateTime?
+  redeemedBy String?
+  notes      String?
+  sheetSyncedAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  @@unique([sourceTicketId])
   @@index([personId, mealType, mealDay, redeemed])
   @@index([personId])
   @@index([mealDate])
