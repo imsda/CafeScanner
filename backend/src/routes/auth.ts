@@ -6,8 +6,8 @@ const router = Router();
 const ALL_PAGES = ['DASHBOARD', 'SCAN', 'PEOPLE', 'IMPORT', 'BADGES', 'TRANSACTIONS', 'REPORTS', 'SETTINGS', 'USER_MANAGEMENT'] as const;
 const SCANNER_PAGES = ['SCAN'] as const;
 
-function allowedPagesFor(role: 'ADMIN' | 'SCANNER' | 'CUSTOM', customPages: string[]): string[] {
-  if (role === 'ADMIN') return [...ALL_PAGES];
+function allowedPagesFor(role: 'OWNER' | 'ADMIN' | 'SCANNER' | 'CUSTOM', customPages: string[]): string[] {
+  if (role === 'OWNER' || role === 'ADMIN') return [...ALL_PAGES];
   if (role === 'SCANNER') return [...SCANNER_PAGES];
   return customPages;
 }

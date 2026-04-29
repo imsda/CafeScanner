@@ -244,3 +244,26 @@ Then commit:
 3. any code changes that rely on the schema update.
 
 Destructive reset flows are admin-initiated app actions only (for explicit maintenance), not part of normal pull/setup updates.
+
+## OWNER role, recovery, and full wipe
+
+Initial setup:
+- `./scripts/setup.sh`
+- `npm run create-admin -w backend`
+- `npm run promote-owner -w backend`
+- `npm run set-owner-recovery-code -w backend`
+
+Password reset:
+- `npm run reset-password -w backend`
+
+Full wipe:
+1. Login as OWNER
+2. Settings → Danger Zone → Arm Full Application Wipe
+3. Copy the one-time token
+4. SSH into server
+5. Run `npm run full-wipe -w backend -- --token <token>`
+6. Type `DELETE EVERYTHING`
+7. Run:
+   - `./scripts/setup.sh`
+   - `npm run create-admin -w backend`
+   - `npm run promote-owner -w backend`

@@ -26,9 +26,10 @@ enum MealDay {
 }
 
 enum UserRole {
+  OWNER
   ADMIN
-  SCANNER
   CUSTOM
+  SCANNER
 }
 
 enum AppPage {
@@ -58,6 +59,7 @@ model AdminUser {
   id           Int      @id @default(autoincrement())
   username     String   @unique
   passwordHash String
+  ownerRecoveryCodeHash String?
   role         UserRole @default(ADMIN)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -119,6 +121,10 @@ model Setting {
   allowManualMealOverride  Boolean          @default(false)
   hideInactiveByDefault    Boolean          @default(true)
   mealTrackingMode         MealTrackingMode @default(camp_meeting)
+  fullWipeTokenHash        String?
+  fullWipeTokenExpiresAt   DateTime?
+  fullWipeTokenUsedAt      DateTime?
+  fullWipeArmedByUserId    Int?
   updatedAt                DateTime         @updatedAt
 }
 

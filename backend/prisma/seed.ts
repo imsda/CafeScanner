@@ -6,9 +6,10 @@ dotenv.config();
 const prisma = new PrismaClient();
 
 async function main() {
-  const adminCount = await prisma.adminUser.count({ where: { role: 'ADMIN' } });
-  if (adminCount === 0) {
-    console.log('No admin account exists. Run: npm run create-admin -w backend');
+  const privilegedCount = await prisma.adminUser.count({ where: { role: { in: ['ADMIN', 'OWNER'] } } });
+  if (privilegedCount === 0) {
+    console.log('No ADMIN/OWNER account exists. Run: npm run create-admin -w backend');
+    console.log('Then run: npm run promote-owner -w backend');
   }
 
   await prisma.setting.upsert({
