@@ -38,7 +38,28 @@ export async function ensureSettingsInitialized() {
 
 export async function getSettings() {
   await ensureSettingsInitialized();
-  return prisma.setting.findUniqueOrThrow({ where: { id: 1 } });
+  return prisma.setting.findUniqueOrThrow({
+    where: { id: 1 },
+    select: {
+      id: true,
+      schoolName: true,
+      timezone: true,
+      breakfastStart: true,
+      breakfastEnd: true,
+      lunchStart: true,
+      lunchEnd: true,
+      dinnerStart: true,
+      dinnerEnd: true,
+      scannerCooldownSeconds: true,
+      scannerDiagnosticsEnabled: true,
+      stationName: true,
+      enableSounds: true,
+      allowManualMealOverride: true,
+      hideInactiveByDefault: true,
+      mealTrackingMode: true,
+      updatedAt: true
+    }
+  });
 }
 
 export async function getMealTrackingMode() {

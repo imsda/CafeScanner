@@ -47,7 +47,7 @@ router.put('/', async (req, res) => {
 });
 
 
-router.post('/arm-full-wipe', async (req, res) => {
+router.post('/full-wipe/arm', async (req, res) => {
   if (req.session.role !== 'OWNER') return res.status(403).json({ error: 'OWNER access required' });
   const payload = armFullWipeSchema.parse(req.body);
   if (payload.confirmationPhrase !== 'ARM FULL WIPE') return res.status(400).json({ error: 'Confirmation phrase must exactly match ARM FULL WIPE.' });
