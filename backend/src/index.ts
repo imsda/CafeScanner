@@ -15,6 +15,7 @@ import usersRoutes from './routes/users.js';
 import { requireAdmin, requireAuth, requirePageAccess } from './middleware/auth.js';
 import { configureSqlitePragmas } from './db.js';
 import { ensureSettingsInitialized } from './services/settingsService.js';
+import { startCampMeetingSheetSyncScheduler } from './services/campMeetingSheetSyncService.js';
 
 dotenv.config();
 
@@ -86,6 +87,7 @@ app.listen(port, host, () => {
   void (async () => {
     await configureSqlitePragmas();
     await ensureSettingsInitialized();
+    startCampMeetingSheetSyncScheduler();
     console.log('[SETTINGS] Initialization check completed at startup.');
   })();
 });

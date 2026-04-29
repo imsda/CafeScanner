@@ -5,6 +5,7 @@ import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
 import { nanoid } from 'nanoid';
 import { getMealTrackingMode } from '../services/settingsService.js';
+import { flushCampMeetingRedemptionsToSheet, importCampMeetingFromSheet } from '../services/campMeetingSheetSyncService.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const router = Router();
@@ -249,6 +250,19 @@ router.get('/camp-meeting/summary', async (_req, res) => {
     totalRedeemed,
     totalRemaining: Math.max(0, totalEntitlements - totalRedeemed)
   });
+});
+
+router.post('/camp-meeting/google-sheet/import', async (_req, res) => {
+  const mode = await getMode();
+  if (mode !== MealTrackingMode.camp_meeting) return res.status(400).json({ error: 'Camp Meeting mode required.' });
+  await importCampMeetingFromSheet();
+  return res.json({ ok: true });
+});
+
+router.post('/camp-meeting/google-sheet/write-back-now', async (req, res) => {
+  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+  await flushCampMeetingRedemptionsToSheet(true);
+  return res.json({ ok: true });
 });
 
 router.post('/preview', upload.single('file'), async (req, res) => {

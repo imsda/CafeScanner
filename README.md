@@ -173,14 +173,39 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 CafeScanner uses exactly one global **meal tracking mode** at a time (`Settings → Meal tracking mode`). There is no mixed mode in normal operation.
 
 - **Camp Meeting** (`camp_meeting`)
-  - Each scan deducts from `breakfastRemaining`, `lunchRemaining`, or `dinnerRemaining`.
-  - If a meal balance is already `0`, the scan is rejected with “no meals remaining.”
+  - Uses ticket-style `MealEntitlement` rows (one row = one entitlement; rows are never collapsed by `reg_id`).
+  - Scan ID is `reg_id` (shared family/person key), and scanners pick the specific `guest_name` row when multiple options are available for the same meal/day.
+  - Meal types map as: `breakfast -> BREAKFAST`, `lunch -> LUNCH`, `supper -> DINNER`.
 - **Tally Up** (`tally`)
   - Each scan increments `breakfastCount`, `lunchCount`, or `dinnerCount`.
   - `totalMealsCount` is also incremented for every successful meal scan.
   - No “out of meals” blocking is enforced in this mode.
 
 `Setting.mealTrackingMode` is stored in the database and persists across rebuilds, restarts, and redeploys as long as the database is preserved.
+
+### Camp Meeting Google Sheets sync (ticket-style format)
+
+Use this exact Google Sheet header row:
+
+`ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date,ticket_type,price,redeemed,redeemed_at,redeemed_by,notes`
+
+Behavior:
+- `ticket_id` is the stable unique key (stored as `sourceTicketId`).
+- `reg_id` maps to scanner `personId` / shared family ID.
+- `guest_name` is the individual name for that specific ticket row.
+- Each row imports as its own entitlement (no grouping/collapsing by `reg_id`).
+- On redemption, local SQLite updates first (`redeemed`, `redeemedAt`, `redeemedBy`), and sync writes are queued.
+- Write-back updates only columns: `redeemed` (`yes`), `redeemed_at` (timestamp), `redeemed_by` (selected guest).
+- Automatic write-back runs every 5 minutes and only during configured meal windows plus 10 minutes.
+- OWNER/ADMIN can trigger manual write-back via API endpoint `POST /api/import/camp-meeting/google-sheet/write-back-now`.
+- If Google Sheets is unavailable, scanning still works (SQLite remains source of truth); retries occur on the next sync.
+
+Service-account configuration (recommended):
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
+- `GOOGLE_SHEETS_SPREADSHEET_ID`
+- Optional: `GOOGLE_SHEETS_RANGE` (default `Sheet1!A:L`)
+- Optional: `GOOGLE_SHEETS_TAB` (default `Sheet1`)
 
 ### Switching meal tracking mode
 
