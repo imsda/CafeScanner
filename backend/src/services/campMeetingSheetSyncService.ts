@@ -25,6 +25,9 @@ function mealDayFromSheet(value: string): MealDay | null {
   const map: Record<string, MealDay> = {sun:MealDay.SUN,mon:MealDay.MON,tue:MealDay.TUE,wed:MealDay.WED,thu:MealDay.THU,fri:MealDay.FRI,sat:MealDay.SAT};
   return map[v] ?? null;
 }
+function parseBool(value: string): boolean {
+  return ['1', 'true', 'yes', 'y'].includes(value.trim().toLowerCase());
+}
 function isWithinMealWindowPlus10Minutes(d: Date, tz: string, settings: any): boolean {
   const fmt = new Intl.DateTimeFormat('en-US',{timeZone:tz,hour:'2-digit',minute:'2-digit',hour12:false});
   const [h,m] = fmt.format(d).split(':').map(Number);
@@ -91,36 +94,79 @@ export async function importCampMeetingFromSheet() {
     throw mapGoogleSheetsError(error);
   }
   const rows = resp.data.values || [];
-  const hasHeader = JSON.stringify((rows[0]||[]).map((v:string)=>v.toLowerCase())) === JSON.stringify(HEADER);
+  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
+  const hasHeader = JSON.stringify(normalizedHeader) === JSON.stringify(HEADER);
+  const missingHeaders = HEADER.filter((header) => !normalizedHeader.includes(header));
   const dataRows = hasHeader ? rows.slice(1) : rows;
-  if (!dataRows.length) {
-    return { imported: 0, updated: 0, skipped: 0, reason: 'No data rows found in the configured sheet tab.' };
+  if (!hasHeader) {
+    return {
+      peopleCreated: 0,
+      peopleUpdated: 0,
+      entitlementsCreated: 0,
+      entitlementsUpdated: 0,
+      skippedRows: dataRows.length,
+      errors: [`Invalid header row. Missing required headers: ${missingHeaders.join(', ') || 'unknown'}`]
+    };
   }
-  await prisma.mealEntitlement.deleteMany({});
-  let imported = 0;
-  let skipped = 0;
+  if (!dataRows.length) {
+    return {
+      peopleCreated: 0,
+      peopleUpdated: 0,
+      entitlementsCreated: 0,
+      entitlementsUpdated: 0,
+      skippedRows: 0,
+      errors: ['No data rows found in the configured sheet tab.']
+    };
+  }
+  let peopleCreated = 0;
+  let peopleUpdated = 0;
+  let entitlementsCreated = 0;
+  let entitlementsUpdated = 0;
+  let skippedRows = 0;
+  const errors: string[] = [];
   for (let i=0;i<dataRows.length;i++) {
     const r = dataRows[i] as string[];
+    const regId = (r[1] || '').trim().toUpperCase();
+    const personName = (r[2] || '').trim();
     const mealType = mealTypeFromSheet(r[3] || '');
     const mealDay = mealDayFromSheet(r[4] || '');
-    if (!mealType || !mealDay || !(r[1]||'').trim()) {
-      skipped += 1;
+    if (!mealType || !mealDay || !regId) {
+      skippedRows += 1;
+      errors.push(`Row ${i + 2}: invalid reg_id, meal_type, or meal_day.`);
       continue;
     }
+    const displayName = personName || regId;
+    const existingPerson = await prisma.person.findUnique({ where: { personId: regId }, select: { id: true } });
+    if (existingPerson) {
+      await prisma.person.update({
+        where: { personId: regId },
+        data: { firstName: displayName, lastName: ' ', codeValue: regId, active: true }
+      });
+      peopleUpdated += 1;
+    } else {
+      await prisma.person.create({
+        data: { personId: regId, codeValue: regId, firstName: displayName, lastName: ' ', active: true }
+      });
+      peopleCreated += 1;
+    }
+
+    const ticketId = (r[0] || '').trim() || `row-${i + 2}`;
+    const existingEntitlement = await prisma.mealEntitlement.findUnique({ where: { sourceTicketId: ticketId }, select: { id: true } });
     await prisma.mealEntitlement.upsert({
-      where: { sourceTicketId: (r[0]||'').trim() || `row-${i+2}` },
+      where: { sourceTicketId: ticketId },
       update: {
-        personId: (r[1]||'').trim().toUpperCase(), personName: (r[2]||'').trim(), mealType, mealDay, mealDate: (r[5]||'').trim(), redeemed: String(r[8]||'').toLowerCase()==='yes', notes: (r[11]||'').trim() || null, sourceSheetRow: i+2
+        personId: regId, personName, mealType, mealDay, mealDate: (r[5]||'').trim(), redeemed: parseBool(String(r[8]||'')), notes: (r[11]||'').trim() || null, sourceSheetRow: i+2
       },
       create: {
-        sourceTicketId: (r[0]||'').trim() || `row-${i+2}`,
+        sourceTicketId: ticketId,
         sourceSheetRow: i+2,
-        personId: (r[1]||'').trim().toUpperCase(), personName: (r[2]||'').trim(), mealType, mealDay, mealDate: (r[5]||'').trim(), redeemed: String(r[8]||'').toLowerCase()==='yes', notes: (r[11]||'').trim() || null
+        personId: regId, personName, mealType, mealDay, mealDate: (r[5]||'').trim(), redeemed: parseBool(String(r[8]||'')), notes: (r[11]||'').trim() || null
       }
     });
-    imported += 1;
+    if (existingEntitlement) entitlementsUpdated += 1;
+    else entitlementsCreated += 1;
   }
-  return { imported, updated: 0, skipped };
+  return { peopleCreated, peopleUpdated, entitlementsCreated, entitlementsUpdated, skippedRows, errors };
 }
 
 export async function flushCampMeetingRedemptionsToSheet(force = false) {
