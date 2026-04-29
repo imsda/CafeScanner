@@ -25,6 +25,10 @@ function normalizeTimeValue(value: string): string {
   return `${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
+function isHHmm(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
 function isValidTimezone(value: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: value });
@@ -91,7 +95,11 @@ router.put('/', async (req, res) => {
   for (const field of TIME_FIELDS) {
     const value = payload[field];
     if (typeof value === 'string') {
-      payload[field] = normalizeTimeValue(value);
+      const normalizedValue = normalizeTimeValue(value);
+      if (!isHHmm(normalizedValue)) {
+        return res.status(400).json({ error: `${field} must be a valid HH:mm time.` });
+      }
+      payload[field] = normalizedValue;
     }
   }
   await getSettings();

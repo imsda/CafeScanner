@@ -72,6 +72,10 @@ function normalizeSettingsForTimeAndTimezone(source: Settings): Settings {
   };
 }
 
+function renderStoredTimeValue(timeValue: string): string {
+  return normalizeTimeValue(timeValue);
+}
+
 function formatMealLabel(meal: string): string {
   return meal.charAt(0) + meal.slice(1).toLowerCase();
 }
@@ -2062,7 +2066,7 @@ function SettingsPage() {
           </select>
         </label>
         <p className="muted">
-          Meal windows are stored in 24-hour time and use the selected timezone.
+          Your browser may display AM/PM, but values are saved as 24-hour HH:mm.
         </p>
         <label>
           Breakfast start
@@ -2071,6 +2075,7 @@ function SettingsPage() {
             value={settings.breakfastStart}
             onChange={(e) => setSettings({ ...settings, breakfastStart: e.target.value })}
           />
+          <small className="muted">Stored value: {renderStoredTimeValue(settings.breakfastStart)}</small>
         </label>
         <label>
           Breakfast end
@@ -2079,6 +2084,7 @@ function SettingsPage() {
             value={settings.breakfastEnd}
             onChange={(e) => setSettings({ ...settings, breakfastEnd: e.target.value })}
           />
+          <small className="muted">Stored value: {renderStoredTimeValue(settings.breakfastEnd)}</small>
         </label>
         <label>
           Lunch start
@@ -2087,6 +2093,7 @@ function SettingsPage() {
             value={settings.lunchStart}
             onChange={(e) => setSettings({ ...settings, lunchStart: e.target.value })}
           />
+          <small className="muted">Stored value: {renderStoredTimeValue(settings.lunchStart)}</small>
         </label>
         <label>
           Lunch end
@@ -2095,6 +2102,7 @@ function SettingsPage() {
             value={settings.lunchEnd}
             onChange={(e) => setSettings({ ...settings, lunchEnd: e.target.value })}
           />
+          <small className="muted">Stored value: {renderStoredTimeValue(settings.lunchEnd)}</small>
         </label>
         <label>
           Dinner start
@@ -2103,6 +2111,7 @@ function SettingsPage() {
             value={settings.dinnerStart}
             onChange={(e) => setSettings({ ...settings, dinnerStart: e.target.value })}
           />
+          <small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerStart)}</small>
         </label>
         <label>
           Dinner end
@@ -2111,6 +2120,7 @@ function SettingsPage() {
             value={settings.dinnerEnd}
             onChange={(e) => setSettings({ ...settings, dinnerEnd: e.target.value })}
           />
+          <small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerEnd)}</small>
         </label>
         <label>
           <input
