@@ -2073,11 +2073,8 @@ function SettingsPage() {
 
       {canManageGoogleSheets ? (
         <section className="card stack">
-          <h3>Camp Meeting Google Sheets Sync</h3>
-          {!isCampMeetingMode ? (
-            <p className="muted">Google Sheets sync is only available in Camp Meeting mode</p>
-          ) : (
-            <>
+          <h3>Google Sheets Sync</h3>
+          <>
               <label>
                 <input
                   type="checkbox"
@@ -2097,6 +2094,9 @@ function SettingsPage() {
               </label>
               <p className="muted">
                 Share your Google Sheet with the service account email, then paste the sheet URL here.
+              </p>
+              <p className="muted">
+                Expected columns: {isCampMeetingMode ? "ticket_id, reg_id, guest_name, meal_type, meal_day, meal_date, ticket_type, price, redeemed, redeemed_at, redeemed_by, notes" : "ID, Name, Breakfast, Lunch, Dinner, Total"}
               </p>
               <label>
                 Worksheet / Tab Name
@@ -2138,14 +2138,15 @@ function SettingsPage() {
               {!hasGoogleSheetId ? (
                 <p className="muted">Enter and save a Google Sheet URL or Sheet ID first.</p>
               ) : null}
-            </>
-          )}
+          </>
           <div className="button-row">
+            <button type="button" className="secondary" onClick={() => window.open("/api/import/template", "_blank")}>
+              Download Template
+            </button>
             <button
               type="button"
               className="secondary"
               disabled={
-                !isCampMeetingMode ||
                 !isGoogleSheetsSyncEnabled ||
                 isSyncingSheet ||
                 isSavingGoogleSheetsSettings ||
@@ -2166,24 +2167,19 @@ function SettingsPage() {
                       throw new Error("Save Google Sheets settings before importing.");
                     }
                     const result = await api<{
-                      totalRows: number;
-                      validRows: number;
-                      skippedRows: number;
-                      created: number;
-                      updated: number;
-                      errors: string[];
+                      peopleCreated: number; peopleUpdated: number; rowsImported: number; rowsSkipped: number; writeBackRowsUpdated: number; errors: string[];
                     }>(
-                      "/import/camp-meeting/google-sheet/import",
+                      "/import/google-sheet/import",
                       { method: "POST" },
                     );
-                    const importedCount = result.created + result.updated;
+                    const importedCount = result.peopleCreated + result.peopleUpdated;
                     const errorSuffix = result.errors.length
                       ? ` Reason: ${result.errors.join(" | ")}`
                       : "";
                     if (importedCount === 0) {
-                      setError(`Imported 0 rows (${result.skippedRows} skipped).${errorSuffix || " Reason: no valid rows"}`);
+                      setError(`Imported 0 rows (${result.rowsSkipped} skipped).${errorSuffix || " Reason: no valid rows"}`);
                     } else {
-                      setMessage(`Imported ${importedCount} rows (${result.skippedRows} skipped).${errorSuffix}`);
+                      setMessage(`Imported ${importedCount} rows (${result.rowsSkipped} skipped).${errorSuffix}`);
                     }
                   })
                   .catch((syncError) => {
@@ -2202,7 +2198,6 @@ function SettingsPage() {
               type="button"
               className="secondary"
               disabled={
-                !isCampMeetingMode ||
                 !isGoogleSheetsSyncEnabled ||
                 isWritingBackSheet ||
                 isSavingGoogleSheetsSettings ||
@@ -2218,16 +2213,16 @@ function SettingsPage() {
                   : Promise.resolve(settingsToSave);
                 void savePromise
                   .then(() =>
-                    api("/import/camp-meeting/google-sheet/write-back-now", { method: "POST" }),
+                    api("/import/google-sheet/write-back-now", { method: "POST" }),
                   )
-                  .then(() => setMessage("Wrote back pending redemptions to Google Sheet."))
+                  .then(() => setMessage("Wrote back current mode data to Google Sheet."))
                   .catch((syncError) =>
                     setError(syncError instanceof Error ? syncError.message : "Google Sheet write-back failed."),
                   )
                   .finally(() => setIsWritingBackSheet(false));
               }}
             >
-              Write Back Redemptions
+              Write Back to Google Sheet
             </button>
           </div>
         </section>

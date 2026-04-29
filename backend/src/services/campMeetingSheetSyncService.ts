@@ -4,6 +4,7 @@ import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
+const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
 
 function parseSpreadsheetId(input: string): string {
@@ -172,12 +173,78 @@ export async function importCampMeetingFromSheet() {
     }
   }
 
-  const summary = { totalRows, validRows, skippedRows, created, updated, errors };
-  if (created + updated === 0 && errors.length === 0) {
-    summary.errors.push('no valid rows');
-  }
-  console.log('[SHEET_IMPORT]', summary);
+  const summary = { peopleCreated: created, peopleUpdated: updated, rowsImported: validRows, rowsSkipped: skippedRows, writeBackRowsUpdated: 0, errors };
+  if (created + updated === 0 && errors.length === 0) summary.errors.push('no valid rows');
+  console.log('[SHEET_IMPORT]', { totalRows, validRows, skippedRows, created, updated, errors });
   return summary;
+}
+
+export async function importTallyFromSheet() {
+  const { spreadsheetId, sheetName, rows } = await readSheetRows();
+  void spreadsheetId; void sheetName;
+  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
+  const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
+  return importPeopleFromRows(dataRows, false);
+}
+
+export async function importCountdownFromSheet() {
+  const { rows } = await readSheetRows();
+  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
+  const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
+  return importPeopleFromRows(dataRows, true);
+}
+
+async function readSheetRows() {
+  const settings = await getSettings();
+  if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
+  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
+  const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
+  const range = `${sheetName}!A:L`;
+  const sheets = getSheetsClient();
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  return { spreadsheetId, sheetName, rows: resp.data.values || [] };
+}
+
+async function importPeopleFromRows(dataRows: string[][], includeBalances: boolean) {
+  let peopleCreated = 0; let peopleUpdated = 0; let rowsImported = 0; let rowsSkipped = 0;
+  const errors: string[] = [];
+  for (let i = 0; i < dataRows.length; i++) {
+    const r = dataRows[i] as string[];
+    const id = (r[0] || '').trim();
+    const name = (r[1] || '').trim();
+    if (!id) { rowsSkipped += 1; errors.push(`Row ${i + 2}: missing ID`); continue; }
+    const existing = await prisma.person.findFirst({ where: { OR: [{ personId: id }, { codeValue: id }] }, select: { id: true } });
+    const breakfast = Number(r[2] || 0); const lunch = Number(r[3] || 0); const dinner = Number(r[4] || 0);
+    const total = breakfast + lunch + dinner;
+    const data: any = { personId: id, codeValue: id, firstName: name || id, lastName: ' ', active: true };
+    if (includeBalances) Object.assign(data, { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner, totalMealsCount: total });
+    if (existing) { await prisma.person.update({ where: { id: existing.id }, data }); peopleUpdated += 1; }
+    else { await prisma.person.create({ data }); peopleCreated += 1; }
+    rowsImported += 1;
+  }
+  return { peopleCreated, peopleUpdated, rowsImported, rowsSkipped, writeBackRowsUpdated: 0, errors };
+}
+
+export async function writeBackTallyCounts(force = false) { return writeBackPeopleRows(false, force); }
+export async function writeBackCountdownBalances(force = false) { return writeBackPeopleRows(true, force); }
+export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
+
+async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
+  const settings = await getSettings();
+  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
+  if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
+  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
+  const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
+  const sheets = getSheetsClient();
+  const people = await prisma.person.findMany({ where: { active: true }, orderBy: { personId: 'asc' } });
+  const values = [TALLY_HEADER, ...people.map((p) => {
+    const b = useBalances ? p.breakfastRemaining : p.breakfastCount;
+    const l = useBalances ? p.lunchRemaining : p.lunchCount;
+    const d = useBalances ? p.dinnerRemaining : p.dinnerCount;
+    return [p.personId, `${p.firstName} ${p.lastName}`.trim(), b, l, d, b + l + d];
+  })];
+  await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!A1:F${values.length}`, valueInputOption: 'USER_ENTERED', requestBody: { values } });
+  return { writeBackRowsUpdated: people.length };
 }
 
 export async function flushCampMeetingRedemptionsToSheet(force = false) {
@@ -208,7 +275,10 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
 export function startCampMeetingSheetSyncScheduler() {
   const run = async () => {
     try {
-      await flushCampMeetingRedemptionsToSheet(false);
+      const settings = await getSettings();
+      if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) await writeBackCampMeetingRedemptions(false);
+      if (settings.mealTrackingMode === MealTrackingMode.tally) await writeBackTallyCounts(false);
+      if (settings.mealTrackingMode === MealTrackingMode.countdown) await writeBackCountdownBalances(false);
     } catch (e) {
       console.error('[SHEET_SYNC]', e);
     } finally {
