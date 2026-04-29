@@ -102,7 +102,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const { logout, user } = useAuth();
   const links = PAGE_LABELS.filter((entry) => user?.allowedPages?.includes(entry.key));
 
-  return <div><header className="topbar"><div className="topbar-inner"><a href="https://tools.imsda.org" className="back-link" rel="noreferrer">← Back to Tools</a><h2>Cafeteria Scanner</h2><div className="right-actions"><span className="user-pill">{user?.username} · {user?.role}</span><button type="button" className="secondary" onClick={() => logout()}>Logout</button></div></div><nav>{links.map((entry) => <NavLink key={entry.path} to={`/${entry.path}`} className={({ isActive }) => (isActive ? 'active' : '')}>{entry.label}</NavLink>)}</nav></header><main className="page">{children}</main></div>;
+  return <div><header className="topbar"><div className="topbar-inner"><h2 className="topbar-title">Cafeteria Scanner</h2><div className="right-actions"><span className="user-pill">{user?.username} · {user?.role}</span><button type="button" className="secondary" onClick={() => logout()}>Logout</button></div></div><nav>{links.map((entry) => <NavLink key={entry.path} to={`/${entry.path}`} className={({ isActive }) => (isActive ? 'active' : '')}>{entry.label}</NavLink>)}</nav></header><main className="page">{children}</main></div>;
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
