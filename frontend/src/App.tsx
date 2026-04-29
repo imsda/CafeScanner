@@ -5,6 +5,19 @@ import { ApiNetworkError, api, API_BASE } from './api/client';
 import type { MealTrackingMode, MealType, ReportsSummaryResponse, ScanPerson, ScanResponse, Settings } from './api/types';
 import QrScanner from './components/QrScanner';
 import { useAuth } from './context/AuthContext';
+import type { AppPage } from './context/AuthContext';
+
+const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
+  { key: 'DASHBOARD', path: 'dashboard', label: 'Dashboard' },
+  { key: 'SCAN', path: 'scan', label: 'Scan Station' },
+  { key: 'PEOPLE', path: 'people', label: 'People' },
+  { key: 'IMPORT', path: 'import', label: 'Import' },
+  { key: 'BADGES', path: 'badges', label: 'Badges' },
+  { key: 'TRANSACTIONS', path: 'transactions', label: 'Transactions' },
+  { key: 'REPORTS', path: 'reports', label: 'Reports' },
+  { key: 'SETTINGS', path: 'settings', label: 'Settings' },
+  { key: 'USER_MANAGEMENT', path: 'users', label: 'User Management' }
+];
 
 function formatMealLabel(meal: string): string {
   return meal.charAt(0) + meal.slice(1).toLowerCase();
@@ -87,16 +100,20 @@ function Login() {
 
 function Layout({ children }: { children: React.ReactNode }) {
   const { logout, user } = useAuth();
-  const isAdmin = user?.role === 'ADMIN';
+  const links = PAGE_LABELS.filter((entry) => user?.allowedPages?.includes(entry.key));
 
-  const links = isAdmin ? [['dashboard', 'Dashboard'], ['scan', 'Scan Station'], ['people', 'People'], ['import', 'Import'], ['badges', 'Badges'], ['transactions', 'Transactions'], ['reports', 'Reports'], ['settings', 'Settings']] : [['scan', 'Scan Station']];
-
-  return <div><header className="topbar"><div className="topbar-inner"><a href="https://tools.imsda.org" className="back-link" rel="noreferrer">← Back to Tools</a><h2>Cafeteria Scanner</h2><div className="right-actions"><span className="user-pill">{user?.username} · {user?.role}</span><button type="button" className="secondary" onClick={() => logout()}>Logout</button></div></div><nav>{links.map(([path, label]) => <NavLink key={path} to={`/${path}`} className={({ isActive }) => (isActive ? 'active' : '')}>{label}</NavLink>)}</nav></header><main className="page">{children}</main></div>;
+  return <div><header className="topbar"><div className="topbar-inner"><a href="https://tools.imsda.org" className="back-link" rel="noreferrer">← Back to Tools</a><h2>Cafeteria Scanner</h2><div className="right-actions"><span className="user-pill">{user?.username} · {user?.role}</span><button type="button" className="secondary" onClick={() => logout()}>Logout</button></div></div><nav>{links.map((entry) => <NavLink key={entry.path} to={`/${entry.path}`} className={({ isActive }) => (isActive ? 'active' : '')}>{entry.label}</NavLink>)}</nav></header><main className="page">{children}</main></div>;
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (user?.role !== 'ADMIN') return <Navigate to="/scan" replace />;
+  return <>{children}</>;
+}
+
+function PermissionOnly({ page, children }: { page: AppPage; children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user?.allowedPages?.includes(page)) return <div className="card"><h2>Not authorized</h2><p>You do not have access to this page.</p></div>;
   return <>{children}</>;
 }
 
@@ -603,10 +620,35 @@ function SettingsPage() {
   return <div className="card stack"><h2>Settings</h2><div className="card stack"><h3>Meal Tracking Mode</h3><p className="muted">Current active mode: <strong>{modeLabel(settings.mealTrackingMode)}</strong></p><label>Meal tracking mode<select value={settings.mealTrackingMode} onChange={(e) => { const selected = e.target.value as MealTrackingMode; if (selected === settings.mealTrackingMode) return; setPendingMode(selected); setShowModeConfirm(true); setModePhrase(''); }}><option value="camp_meeting">Camp Meeting (redeem imported meal entitlements)</option><option value="countdown">Count Down (deduct from remaining balances)</option><option value="tally">Tally Up (count each served meal)</option></select></label><p className="error">Warning: Switching mode is destructive and will clear all people, transaction history, import history, and meal entitlements.</p>{showModeConfirm && pendingMode && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Confirm Mode Switch</h4><p>You are switching from <strong>{modeLabel(settings.mealTrackingMode)}</strong> to <strong>{modeLabel(pendingMode)}</strong>.</p><p className="error">This will permanently clear operational data (people, scans, imports). Accounts and settings will be preserved.</p><p>Type <code>SWITCH MODE</code> to continue.</p><input value={modePhrase} onChange={(e) => setModePhrase(e.target.value)} placeholder="SWITCH MODE" /><div className="button-row"><button className="secondary" type="button" onClick={() => { setShowModeConfirm(false); setPendingMode(null); setModePhrase(''); }}>Cancel</button><button className="danger" type="button" disabled={!modeEnabled} onClick={() => void api('/settings/meal-tracking-mode', { method: 'PUT', body: JSON.stringify({ mealTrackingMode: pendingMode, confirmationPhrase: modePhrase }) }).then(async () => { setMessage(`Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`); setError(''); setShowModeConfirm(false); setPendingMode(null); setModePhrase(''); await load(); })}>Switch Mode + Clear Data</button></div></div></div>}</div><div className="card stack"><h3>Scanner</h3><label>Scan cooldown<input type="number" min={0.5} max={10} step={0.1} value={settings.scannerCooldownSeconds} onChange={(e) => setSettings({ ...settings, scannerCooldownSeconds: Math.min(10, Math.max(0.5, Number(e.target.value) || 1)) })} /></label><p className="muted">Seconds between duplicate scans of the same ID.</p><label><input type="checkbox" checked={settings.scannerDiagnosticsEnabled} onChange={(e) => setSettings({ ...settings, scannerDiagnosticsEnabled: e.target.checked })} /> Enable scanner diagnostics</label><p className="muted">Shows technical camera/scanner information for troubleshooting.</p></div><div className="grid-form">{Object.keys(settings).filter((k)=>!['id','updatedAt','mealTrackingMode','scannerCooldownSeconds','scannerDiagnosticsEnabled'].includes(k)).map((k)=><label key={k}>{k}<input value={String(settings[k as keyof Settings])} onChange={(e)=>setSettings({...settings,[k]:typeof settings[k as keyof Settings]==='boolean'?e.target.value==='true':typeof settings[k as keyof Settings]==='number'?Number(e.target.value):e.target.value})}/></label>)}</div><div className="button-row"><button className="primary" onClick={() => void saveSettings()}>Save</button></div>{message && <p>{message}</p>}{error && <p className="error">{error}</p>}<hr /><div className="stack"><h3>System: Clear Database</h3><p className="error">Warning: This permanently deletes all people, scan transactions, and import history. Admin/scanner login accounts and system settings are preserved.</p><button className="danger" type="button" onClick={() => { setShowClearModal(true); setMessage(''); setError(''); setClearPhrase(''); }}>Clear Database</button>{showClearModal && <div className="confirm-overlay" role="dialog" aria-modal="true"><div className="confirm-modal stack"><h4>Clear Database</h4><p className="error"><strong>Warning:</strong> This action removes all operational data, including people, transactions, and import history. Accounts and settings are preserved.</p><p>Type <code>CLEAR DATABASE</code> to continue.</p><input value={clearPhrase} onChange={(e) => setClearPhrase(e.target.value)} placeholder="CLEAR DATABASE" /><div className="button-row"><button className="secondary" onClick={() => { setShowClearModal(false); setClearPhrase(''); }} disabled={isClearingDatabase}>Cancel</button><button className="danger" disabled={!clearEnabled} onClick={() => void clearDatabase()}>{isClearingDatabase ? 'Clearing…' : 'Confirm Clear Database'}</button></div></div></div>}</div></div>;
 }
 
+function UserManagementPage() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'ADMIN' | 'SCANNER'>('SCANNER');
+  const [allowedPages, setAllowedPages] = useState<AppPage[]>(['SCAN']);
+
+  const loadUsers = () => api<any[]>('/users').then(setUsers);
+  useEffect(() => { void loadUsers(); }, []);
+  const togglePage = (page: AppPage) => setAllowedPages((prev) => prev.includes(page) ? prev.filter((entry) => entry !== page) : [...prev, page]);
+
+  return <div className="card stack"><h2>User Management</h2>
+    <form className="stack" onSubmit={(e) => { e.preventDefault(); void api('/users', { method: 'POST', body: JSON.stringify({ username, password, role, allowedPages }) }).then(() => { setUsername(''); setPassword(''); setRole('SCANNER'); setAllowedPages(['SCAN']); return loadUsers(); }); }}>
+      <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+      <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+      <label>Role<select value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'SCANNER')}><option value="SCANNER">SCANNER</option><option value="ADMIN">ADMIN</option></select></label>
+      {role !== 'ADMIN' && <div><p className="muted">Allowed tabs</p>{PAGE_LABELS.map((entry) => <label key={entry.key} style={{ display: 'inline-flex', marginRight: 12, gap: 6 }}><input type="checkbox" checked={allowedPages.includes(entry.key)} onChange={() => togglePage(entry.key)} />{entry.label}</label>)}</div>}
+      <button className="primary" type="submit">Add user</button>
+    </form>
+    <table><thead><tr><th>User</th><th>Role</th><th>Allowed Pages</th><th>Actions</th></tr></thead><tbody>
+      {users.map((u) => <tr key={u.id}><td>{u.username}</td><td>{u.role}</td><td>{(u.allowedPages || []).join(', ')}</td><td><button className="secondary" onClick={() => { const next = prompt(`New password for ${u.username}`); if (next) void api(`/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ password: next }) }).then(loadUsers); }}>Reset Password</button> <button className="secondary" onClick={() => { if (confirm(`Delete ${u.username}?`)) void api(`/users/${u.id}`, { method: 'DELETE' }).then(loadUsers); }}>Delete</button></td></tr>)}
+    </tbody></table>
+  </div>;
+}
+
 export default function App() {
   const { user, loading } = useAuth();
   if (loading) return <p>Loading...</p>;
   if (!user) return <Login />;
 
-  return <Layout><Routes><Route path="/" element={<Navigate to={user.role === 'ADMIN' ? '/dashboard' : '/scan'} />} /><Route path="/scan" element={<ScanPage />} /><Route path="/dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} /><Route path="/people" element={<AdminOnly><PeoplePage /></AdminOnly>} /><Route path="/import" element={<AdminOnly><ImportPage /></AdminOnly>} /><Route path="/badges" element={<AdminOnly><BadgesPage /></AdminOnly>} /><Route path="/transactions" element={<AdminOnly><TransactionsPage /></AdminOnly>} /><Route path="/reports" element={<AdminOnly><ReportsPage /></AdminOnly>} /><Route path="/settings" element={<AdminOnly><SettingsPage /></AdminOnly>} /></Routes></Layout>;
+  return <Layout><Routes><Route path="/" element={<Navigate to={user.allowedPages.includes('DASHBOARD') ? '/dashboard' : '/scan'} />} /><Route path="/scan" element={<PermissionOnly page="SCAN"><ScanPage /></PermissionOnly>} /><Route path="/dashboard" element={<PermissionOnly page="DASHBOARD"><Dashboard /></PermissionOnly>} /><Route path="/people" element={<PermissionOnly page="PEOPLE"><PeoplePage /></PermissionOnly>} /><Route path="/import" element={<PermissionOnly page="IMPORT"><ImportPage /></PermissionOnly>} /><Route path="/badges" element={<PermissionOnly page="BADGES"><BadgesPage /></PermissionOnly>} /><Route path="/transactions" element={<PermissionOnly page="TRANSACTIONS"><TransactionsPage /></PermissionOnly>} /><Route path="/reports" element={<PermissionOnly page="REPORTS"><ReportsPage /></PermissionOnly>} /><Route path="/settings" element={<PermissionOnly page="SETTINGS"><SettingsPage /></PermissionOnly>} /><Route path="/users" element={<AdminOnly><PermissionOnly page="USER_MANAGEMENT"><UserManagementPage /></PermissionOnly></AdminOnly>} /></Routes></Layout>;
 }

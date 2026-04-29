@@ -30,6 +30,18 @@ enum UserRole {
   SCANNER
 }
 
+enum AppPage {
+  DASHBOARD
+  SCAN
+  PEOPLE
+  IMPORT
+  BADGES
+  TRANSACTIONS
+  REPORTS
+  SETTINGS
+  USER_MANAGEMENT
+}
+
 enum ScanResult {
   SUCCESS
   FAILURE
@@ -49,6 +61,19 @@ model AdminUser {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   transactions ScanTransaction[]
+  pageAccess   UserPageAccess[]
+}
+
+model UserPageAccess {
+  id          Int      @id @default(autoincrement())
+  adminUserId Int
+  page        AppPage
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@unique([adminUserId, page])
+  @@index([adminUserId])
 }
 
 model Person {
