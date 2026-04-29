@@ -2095,9 +2095,13 @@ function SettingsPage() {
                 setIsSyncingSheet(true);
                 void api("/import/camp-meeting/google-sheet/import", { method: "POST" })
                   .then(() => setMessage("Imported Camp Meeting entitlements from Google Sheet."))
-                  .catch((syncError) =>
-                    setError(syncError instanceof Error ? syncError.message : "Google Sheet import failed."),
-                  )
+                  .catch((syncError) => {
+                    if (syncError instanceof ApiNetworkError) {
+                      setError(`Google Sheet import failed: could not reach backend (${syncError.message}).`);
+                      return;
+                    }
+                    setError(syncError instanceof Error ? syncError.message : "Google Sheet import failed.");
+                  })
                   .finally(() => setIsSyncingSheet(false));
               }}
             >

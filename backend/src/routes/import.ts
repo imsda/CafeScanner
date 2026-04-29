@@ -253,10 +253,18 @@ router.get('/camp-meeting/summary', async (_req, res) => {
 });
 
 router.post('/camp-meeting/google-sheet/import', async (_req, res) => {
-  const mode = await getMode();
-  if (mode !== MealTrackingMode.camp_meeting) return res.status(400).json({ error: 'Camp Meeting mode required.' });
-  await importCampMeetingFromSheet();
-  return res.json({ ok: true });
+  try {
+    const mode = await getMode();
+    if (mode !== MealTrackingMode.camp_meeting) return res.status(400).json({ error: 'Camp Meeting mode required.' });
+    await importCampMeetingFromSheet();
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[GOOGLE_SHEETS_IMPORT]', error);
+    const message = error instanceof Error ? error.message : 'Google Sheet import failed.';
+    const lower = message.toLowerCase();
+    const isBadRequest = lower.includes('missing') || lower.includes('invalid') || lower.includes('not found') || lower.includes('denied access') || lower.includes('disabled');
+    return res.status(isBadRequest ? 400 : 500).json({ error: message });
+  }
 });
 
 router.post('/camp-meeting/google-sheet/write-back-now', async (req, res) => {

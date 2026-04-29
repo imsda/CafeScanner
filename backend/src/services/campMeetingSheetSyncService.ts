@@ -36,10 +36,22 @@ function isWithinMealWindowPlus10Minutes(d: Date, tz: string, settings: any): bo
   });
 }
 
+function validateServiceAccountCredentials() {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim() || '';
+  const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '';
+  const key = rawKey.replace(/\\n/g, '\n').trim();
+
+  if (!email) throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable.');
+  if (!key) throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY environment variable.');
+  if (!key.includes('BEGIN PRIVATE KEY') || !key.includes('END PRIVATE KEY')) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY format is invalid. Expected a PEM private key.');
+  }
+
+  return { email, key };
+}
+
 function getSheetsClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-  if (!email || !key) throw new Error('Missing service account credentials');
+  const { email, key } = validateServiceAccountCredentials();
   const auth = new google.auth.JWT({
     email,
     key,
@@ -48,15 +60,36 @@ function getSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
+function mapGoogleSheetsError(error: unknown): Error {
+  const maybe = error as { code?: number; message?: string; response?: { status?: number; data?: { error?: { message?: string } } } };
+  const status = maybe?.response?.status ?? maybe?.code;
+  const apiMessage = maybe?.response?.data?.error?.message || maybe?.message || 'Unknown Google Sheets API error';
+
+  if (status === 403) {
+    return new Error('Google Sheets API denied access (403). Share the sheet with the service account email and confirm API access is enabled.');
+  }
+  if (status === 404) {
+    return new Error('Google Sheet or worksheet not found (404). Verify the sheet ID and tab name in Settings.');
+  }
+
+  return new Error(`Google Sheets API error${status ? ` (${status})` : ''}: ${apiMessage}`);
+}
+
 export async function importCampMeetingFromSheet() {
   const settings = await getSettings();
   if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
-  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId);
+  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
   if (!spreadsheetId) throw new Error('Missing Google Sheet URL or Sheet ID in Settings.');
-  const sheetName = settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME;
+  const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
+  if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
   const range = `${sheetName}!A:L`;
   const sheets = getSheetsClient();
-  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  let resp;
+  try {
+    resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  } catch (error) {
+    throw mapGoogleSheetsError(error);
+  }
   const rows = resp.data.values || [];
   const hasHeader = JSON.stringify((rows[0]||[]).map((v:string)=>v.toLowerCase())) === JSON.stringify(HEADER);
   const dataRows = hasHeader ? rows.slice(1) : rows;
@@ -88,14 +121,19 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   if (!pending.length) return;
   if (!settings.googleSheetsEnabled) return;
   const sheets = getSheetsClient();
-  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId);
-  const sheetName = settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME;
+  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
+  const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
   if (!spreadsheetId) throw new Error('Missing Google Sheet URL or Sheet ID in Settings.');
+  if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
   for (const row of pending) {
     const r = row.sourceSheetRow!;
-    await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: [
-      { range: `${sheetName}!I${r}:K${r}`, values: [['yes', row.redeemedAt?.toISOString() || new Date().toISOString(), row.redeemedBy || row.personName || '']] }
-    ] } });
+    try {
+      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: [
+        { range: `${sheetName}!I${r}:K${r}`, values: [['yes', row.redeemedAt?.toISOString() || new Date().toISOString(), row.redeemedBy || row.personName || '']] }
+      ] } });
+    } catch (error) {
+      throw mapGoogleSheetsError(error);
+    }
     await prisma.mealEntitlement.update({ where: { id: row.id }, data: { sheetSyncedAt: new Date() } });
   }
 }
