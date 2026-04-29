@@ -331,7 +331,7 @@ resolve_sqlite_db_path() {
     return
   fi
 
-  printf '%s\n' "backend/${sqlite_target#./}"
+  printf '%s\n' "backend/prisma/${sqlite_target#./}"
 }
 
 run_prisma_status_check() {
@@ -481,6 +481,9 @@ fi
 
 run_prisma_deploy
 run_prisma_status_check
+
+log "Generating Prisma client"
+npm run prisma:generate -w backend
 
 log "Seeding database"
 npm run db:seed
