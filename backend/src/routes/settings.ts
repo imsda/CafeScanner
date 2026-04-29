@@ -82,7 +82,7 @@ router.put('/meal-tracking-mode', async (req, res) => {
     ok: true,
     mealTrackingMode: updatedSettings.mealTrackingMode,
     dataCleared: true,
-    message: 'Meal tracking mode switched. People, transactions, import history, and meal entitlements were cleared.'
+    message: 'Meal tracking mode switched. Meal tracking data was reset (people, transactions, import history, entitlements). User accounts and permissions were preserved.'
   });
 });
 
