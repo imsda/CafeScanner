@@ -9,9 +9,9 @@ body { margin: 0; background: #f3f6fa; color: #1a2f47; }
 a { color: #1f5da8; }
 
 .topbar { position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid #d4deea; padding: 0.65rem 1rem; }
-.topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; max-width: 1200px; margin: 0 auto; }
+.topbar-inner { display: flex; align-items: center; gap: 1rem; max-width: 1200px; margin: 0 auto; }
 .topbar h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
-.back-link { text-decoration: none; color: #4a617a; font-size: 0.9rem; }
+.topbar-title { margin-right: auto; }
 .right-actions { display: flex; gap: 0.6rem; align-items: center; }
 .user-pill { font-size: 0.8rem; color: #526a84; background: #f6f9fe; border: 1px solid #d8e4f4; padding: 0.25rem 0.5rem; border-radius: 999px; }
 
