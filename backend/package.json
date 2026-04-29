@@ -14,7 +14,10 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "create-admin": "tsx scripts/create-admin.ts",
     "reset-password": "tsx scripts/reset-password.ts",
-    "create-scanner": "tsx scripts/create-scanner.ts"
+    "create-scanner": "tsx scripts/create-scanner.ts",
+    "promote-owner": "tsx scripts/promote-owner.ts",
+    "set-owner-recovery-code": "tsx scripts/set-owner-recovery-code.ts",
+    "full-wipe": "tsx scripts/full-wipe.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.6.0",

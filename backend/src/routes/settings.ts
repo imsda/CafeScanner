@@ -1,4 +1,6 @@
 import { MealTrackingMode } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
@@ -24,6 +26,8 @@ const settingsSchema = z.object({
   hideInactiveByDefault: z.boolean().optional()
 });
 
+const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });
+
 const switchModeSchema = z.object({
   mealTrackingMode: z.nativeEnum(MealTrackingMode),
   confirmationPhrase: z.string()
@@ -40,6 +44,18 @@ router.put('/', async (req, res) => {
   const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload }));
   console.log('[SETTINGS] Updated settings payload keys:', Object.keys(payload));
   res.json(updated);
+});
+
+
+router.post('/arm-full-wipe', async (req, res) => {
+  if (req.session.role !== 'OWNER') return res.status(403).json({ error: 'OWNER access required' });
+  const payload = armFullWipeSchema.parse(req.body);
+  if (payload.confirmationPhrase !== 'ARM FULL WIPE') return res.status(400).json({ error: 'Confirmation phrase must exactly match ARM FULL WIPE.' });
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = await bcrypt.hash(token, 12);
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await prisma.setting.update({ where: { id: 1 }, data: { fullWipeTokenHash: tokenHash, fullWipeTokenExpiresAt: expiresAt, fullWipeTokenUsedAt: null, fullWipeArmedByUserId: req.session.adminUserId ?? null } });
+  return res.json({ ok: true, token, expiresAt });
 });
 
 router.put('/meal-tracking-mode', async (req, res) => {

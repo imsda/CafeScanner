@@ -46,6 +46,8 @@ async function main() {
     process.stdout.write('\n');
     const confirmPassword = await ask('Confirm Password: ', true);
     process.stdout.write('\n');
+    const recoveryCode = await ask('OWNER recovery code (required only for OWNER): ', true);
+    process.stdout.write('\n');
     const confirm = await ask('Are you sure? (y/n): ');
 
     if (confirm.toLowerCase() !== 'y') {
@@ -66,6 +68,14 @@ async function main() {
     const user = await prisma.adminUser.findUnique({ where: { username } });
     if (!user) {
       throw new Error('User not found');
+    }
+
+    if (user.role === 'OWNER') {
+      if (!user.ownerRecoveryCodeHash) {
+        throw new Error('OWNER recovery code is not set. Use server owner recovery process.');
+      }
+      const validRecovery = await bcrypt.compare(recoveryCode, user.ownerRecoveryCodeHash);
+      if (!validRecovery) throw new Error('Invalid OWNER recovery code');
     }
 
     const passwordHash = await bcrypt.hash(password, 12);

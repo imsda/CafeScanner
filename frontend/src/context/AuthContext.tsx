@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../api/client';
 
-export type UserRole = 'ADMIN' | 'SCANNER' | 'CUSTOM';
+export type UserRole = 'OWNER' | 'ADMIN' | 'SCANNER' | 'CUSTOM';
 export type AppPage = 'DASHBOARD' | 'SCAN' | 'PEOPLE' | 'IMPORT' | 'BADGES' | 'TRANSACTIONS' | 'REPORTS' | 'SETTINGS' | 'USER_MANAGEMENT';
 type User = { id: number; username: string; role: UserRole; allowedPages: AppPage[] };
 
