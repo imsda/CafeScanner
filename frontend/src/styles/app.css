@@ -113,6 +113,13 @@ th { background: #f7fbff; }
 .people-table { min-width: max-content; }
 .people-table th,
 .people-table td { padding: 0.3rem 0.4rem; white-space: nowrap; vertical-align: middle; }
+.people-table td:first-child,
+.people-table th:first-child {
+  white-space: normal;
+  word-break: break-word;
+  max-width: 260px;
+}
+.people-table td:first-child { line-height: 1.2; }
 .people-number-input {
   min-width: 72px;
   padding: 0.22rem 0.35rem;
