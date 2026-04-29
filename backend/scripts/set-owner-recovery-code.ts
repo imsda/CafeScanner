@@ -1,4 +1,53 @@
-import { PrismaClient } from '@prisma/client'; import bcrypt from 'bcryptjs'; import dotenv from 'dotenv'; import readline from 'readline';
-dotenv.config(); const prisma = new PrismaClient();
-function createPrompt(){const mutableStdout=new (class{muted=false;write(c:any){if(!this.muted)process.stdout.write(c)}})(); const rl=readline.createInterface({input:process.stdin,output:mutableStdout as any,terminal:true}); const ask=(q:string,h=false)=>new Promise<string>(r=>{mutableStdout.muted=false;rl.question(q,a=>{mutableStdout.muted=false;r(a.trim())}); if(h) mutableStdout.muted=true;}); return {rl,ask};}
-(async()=>{const {rl,ask}=createPrompt(); try{ const username=await ask('OWNER username: '); const code=await ask('Recovery code: ',true); process.stdout.write('\n'); const code2=await ask('Confirm recovery code: ',true); process.stdout.write('\n'); if(code.length<16) throw new Error('Recovery code must be at least 16 characters'); if(code!==code2) throw new Error('Recovery codes do not match'); const user=await prisma.adminUser.findUnique({where:{username}}); if(!user||user.role!=='OWNER') throw new Error('OWNER user not found'); const hash=await bcrypt.hash(code,12); await prisma.adminUser.update({where:{id:user.id},data:{ownerRecoveryCodeHash:hash}}); console.log('OWNER recovery code updated.'); } finally {rl.close(); await prisma.$disconnect();}})().catch(e=>{console.error(e instanceof Error?e.message:'Failed');process.exit(1)});
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import dotenv from 'dotenv';
+import { createPrompt } from './lib/prompt';
+
+dotenv.config();
+
+const prisma = new PrismaClient();
+
+async function main() {
+  const prompt = createPrompt();
+
+  try {
+    const username = await prompt.ask('OWNER username: ');
+    if (!username) {
+      throw new Error('OWNER username is required');
+    }
+
+    const user = await prisma.adminUser.findUnique({ where: { username } });
+    if (!user) {
+      throw new Error('User not found');
+    }
+    if (user.role !== 'OWNER') {
+      throw new Error('User is not an OWNER');
+    }
+
+    const recoveryCode = await prompt.askHidden('Recovery code: ');
+    const confirmRecoveryCode = await prompt.askHidden('Confirm recovery code: ');
+
+    if (recoveryCode.length < 16) {
+      throw new Error('Recovery code must be at least 16 characters');
+    }
+    if (recoveryCode !== confirmRecoveryCode) {
+      throw new Error('Recovery codes do not match');
+    }
+
+    const hash = await bcrypt.hash(recoveryCode, 12);
+    await prisma.adminUser.update({
+      where: { id: user.id },
+      data: { ownerRecoveryCodeHash: hash },
+    });
+
+    console.log('OWNER recovery code updated.');
+  } finally {
+    prompt.close();
+    await prisma.$disconnect();
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : 'Failed');
+  process.exit(1);
+});
