@@ -625,23 +625,27 @@ function UserManagementPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'ADMIN' | 'SCANNER'>('SCANNER');
+  const [role, setRole] = useState<'ADMIN' | 'SCANNER' | 'CUSTOM'>('SCANNER');
   const [allowedPages, setAllowedPages] = useState<AppPage[]>(['SCAN']);
 
   const loadUsers = () => api<any[]>('/users').then(setUsers);
   useEffect(() => { void loadUsers(); }, []);
   const togglePage = (page: AppPage) => setAllowedPages((prev) => prev.includes(page) ? prev.filter((entry) => entry !== page) : [...prev, page]);
+  const roleAllowsCustomPermissions = role === 'CUSTOM';
+  const effectivePages = role === 'ADMIN' ? PAGE_LABELS.map((entry) => entry.key) : role === 'SCANNER' ? ['SCAN'] : allowedPages;
+  const pageLabelMap = new Map(PAGE_LABELS.map((entry) => [entry.key, entry.label]));
+  const formatPages = (pages: AppPage[]) => pages.map((page) => pageLabelMap.get(page) || page).join(', ');
 
   return <div className="card stack"><h2>User Management</h2>
-    <form className="stack" onSubmit={(e) => { e.preventDefault(); void api('/users', { method: 'POST', body: JSON.stringify({ username, password, role, allowedPages }) }).then(() => { setUsername(''); setPassword(''); setRole('SCANNER'); setAllowedPages(['SCAN']); return loadUsers(); }); }}>
+    <form className="stack" onSubmit={(e) => { e.preventDefault(); void api('/users', { method: 'POST', body: JSON.stringify({ username, password, role, allowedPages: effectivePages }) }).then(() => { setUsername(''); setPassword(''); setRole('SCANNER'); setAllowedPages(['SCAN']); return loadUsers(); }); }}>
       <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label>
       <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-      <label>Role<select value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'SCANNER')}><option value="SCANNER">SCANNER</option><option value="ADMIN">ADMIN</option></select></label>
-      {role !== 'ADMIN' && <div><p className="muted">Allowed tabs</p>{PAGE_LABELS.map((entry) => <label key={entry.key} style={{ display: 'inline-flex', marginRight: 12, gap: 6 }}><input type="checkbox" checked={allowedPages.includes(entry.key)} onChange={() => togglePage(entry.key)} />{entry.label}</label>)}</div>}
+      <label>Role<select value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'SCANNER' | 'CUSTOM')}><option value="ADMIN">ADMIN</option><option value="SCANNER">SCANNER</option><option value="CUSTOM">CUSTOM</option></select></label>
+      {roleAllowsCustomPermissions && <div><p className="muted">Allowed tabs</p><div className="permission-grid">{PAGE_LABELS.map((entry) => <label key={entry.key} className="permission-option"><input type="checkbox" checked={allowedPages.includes(entry.key)} onChange={() => togglePage(entry.key)} /><span>{entry.label}</span></label>)}</div></div>}
       <button className="primary" type="submit">Add user</button>
     </form>
     <table><thead><tr><th>User</th><th>Role</th><th>Allowed Pages</th><th>Actions</th></tr></thead><tbody>
-      {users.map((u) => <tr key={u.id}><td>{u.username}</td><td>{u.role}</td><td>{(u.allowedPages || []).join(', ')}</td><td><button className="secondary" onClick={() => { const next = prompt(`New password for ${u.username}`); if (next) void api(`/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ password: next }) }).then(loadUsers); }}>Reset Password</button> <button className="secondary" onClick={() => { if (confirm(`Delete ${u.username}?`)) void api(`/users/${u.id}`, { method: 'DELETE' }).then(loadUsers); }}>Delete</button></td></tr>)}
+      {users.map((u) => <tr key={u.id}><td>{u.username}</td><td>{u.role}</td><td>{formatPages((u.allowedPages || []) as AppPage[])}</td><td><button className="secondary" onClick={() => { const next = prompt(`New password for ${u.username}`); if (next) void api(`/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ password: next }) }).then(loadUsers); }}>Reset Password</button> <button className="secondary" onClick={() => { if (confirm(`Delete ${u.username}?`)) void api(`/users/${u.id}`, { method: 'DELETE' }).then(loadUsers); }}>Delete</button></td></tr>)}
     </tbody></table>
   </div>;
 }
