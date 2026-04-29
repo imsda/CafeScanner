@@ -1,20 +1,19 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
-import { createPrompt } from './lib/prompt';
+import { promptHidden, promptText } from './lib/prompt';
 
 dotenv.config();
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const prompt = createPrompt();
   try {
-    const username = await prompt.ask('Username: ');
-    const password = await prompt.askHidden('New Password: ');
-    const confirmPassword = await prompt.askHidden('Confirm Password: ');
-    const recoveryCode = await prompt.askHidden('OWNER recovery code (required only for OWNER): ');
-    const confirm = await prompt.ask('Are you sure? (y/n): ');
+    const username = await promptText('Username: ');
+    const password = await promptHidden('New Password: ');
+    const confirmPassword = await promptHidden('Confirm Password: ');
+    const recoveryCode = await promptHidden('OWNER recovery code (required only for OWNER): ');
+    const confirm = await promptText('Are you sure? (y/n): ');
 
     if (confirm.toLowerCase() !== 'y') {
       console.log('Cancelled');
@@ -29,9 +28,7 @@ async function main() {
     if (!user) throw new Error('User not found');
 
     if (user.role === 'OWNER') {
-      if (!user.ownerRecoveryCodeHash) {
-        throw new Error('OWNER recovery code is not set. Use server owner recovery process.');
-      }
+      if (!user.ownerRecoveryCodeHash) throw new Error('OWNER recovery code is not set. Use server owner recovery process.');
       const validRecovery = await bcrypt.compare(recoveryCode, user.ownerRecoveryCodeHash);
       if (!validRecovery) throw new Error('Invalid OWNER recovery code');
     }
@@ -41,7 +38,6 @@ async function main() {
 
     console.log('Password updated successfully');
   } finally {
-    prompt.close();
     await prisma.$disconnect();
   }
 }

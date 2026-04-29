@@ -150,8 +150,9 @@ function Login() {
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              placeholder="Username"
+              autoComplete="off"
+              name="login-user"
+              placeholder="Enter username"
             />
           </label>
           <label>
@@ -160,7 +161,8 @@ function Login() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
+              autoComplete="new-password"
+              name="login-pass"
             />
           </label>
           <button className="primary" type="submit">
