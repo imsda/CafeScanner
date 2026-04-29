@@ -34,6 +34,43 @@ const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
   { key: "SETTINGS", path: "settings", label: "Settings" },
   { key: "USER_MANAGEMENT", path: "users", label: "User Management" },
 ];
+const TIMEZONE_OPTIONS = [
+  "America/Chicago",
+  "America/New_York",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Phoenix",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+  "Etc/UTC",
+] as const;
+
+function normalizeTimeValue(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+  if (!match) return trimmed;
+  const hour12 = Number(match[1]);
+  const minute = Number(match[2]);
+  const suffix = match[3].toUpperCase();
+  const hour24 = (hour12 % 12) + (suffix === "PM" ? 12 : 0);
+  return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeSettingsForTimeAndTimezone(source: Settings): Settings {
+  return {
+    ...source,
+    timezone: TIMEZONE_OPTIONS.includes(source.timezone as (typeof TIMEZONE_OPTIONS)[number])
+      ? source.timezone
+      : "America/Chicago",
+    breakfastStart: normalizeTimeValue(source.breakfastStart),
+    breakfastEnd: normalizeTimeValue(source.breakfastEnd),
+    lunchStart: normalizeTimeValue(source.lunchStart),
+    lunchEnd: normalizeTimeValue(source.lunchEnd),
+    dinnerStart: normalizeTimeValue(source.dinnerStart),
+    dinnerEnd: normalizeTimeValue(source.dinnerEnd),
+  };
+}
 
 function formatMealLabel(meal: string): string {
   return meal.charAt(0) + meal.slice(1).toLowerCase();
@@ -1797,7 +1834,7 @@ function SettingsPage() {
 
   const load = async () => {
     const loaded = await api<Settings>("/settings");
-    setSettings(loaded);
+    setSettings(normalizeSettingsForTimeAndTimezone(loaded));
     setSavedGoogleSheetsSettings({
       googleSheetsEnabled: loaded.googleSheetsEnabled,
       googleSheetId: loaded.googleSheetId ?? "",
@@ -1835,9 +1872,10 @@ function SettingsPage() {
   async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
     const sourceSettings = settingsOverride ?? settings;
     if (!sourceSettings) return null;
+    const normalized = normalizeSettingsForTimeAndTimezone(sourceSettings);
     setError("");
     const payload = Object.fromEntries(
-      Object.entries(sourceSettings).filter(
+      Object.entries(normalized).filter(
         ([key]) =>
           ![
             "id",
@@ -1850,7 +1888,9 @@ function SettingsPage() {
           ].includes(key),
       ),
     );
-    const saved = await api<Settings>("/settings", { method: "PUT", body: JSON.stringify(payload) });
+    const saved = normalizeSettingsForTimeAndTimezone(
+      await api<Settings>("/settings", { method: "PUT", body: JSON.stringify(payload) }),
+    );
     setMessage(successMessage);
     setSettings(saved);
     setSavedGoogleSheetsSettings({
@@ -2010,11 +2050,20 @@ function SettingsPage() {
         </label>
         <label>
           Timezone
-          <input
+          <select
             value={settings.timezone}
             onChange={(e) => setSettings({ ...settings, timezone: e.target.value })}
-          />
+          >
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
         </label>
+        <p className="muted">
+          Meal windows are stored in 24-hour time and use the selected timezone.
+        </p>
         <label>
           Breakfast start
           <input
