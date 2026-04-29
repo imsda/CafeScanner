@@ -57,6 +57,10 @@ export async function getSettings() {
       allowManualMealOverride: true,
       hideInactiveByDefault: true,
       mealTrackingMode: true,
+      googleSheetsEnabled: true,
+      googleSheetId: true,
+      googleSheetTabName: true,
+      googleSyncIntervalMinutes: true,
       updatedAt: true
     }
   });

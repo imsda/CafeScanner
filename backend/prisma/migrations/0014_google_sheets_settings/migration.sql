@@ -1,0 +1,4 @@
+ALTER TABLE "Setting" ADD COLUMN "googleSheetsEnabled" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Setting" ADD COLUMN "googleSheetId" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Setting" ADD COLUMN "googleSheetTabName" TEXT NOT NULL DEFAULT 'Sheet1';
+ALTER TABLE "Setting" ADD COLUMN "googleSyncIntervalMinutes" INTEGER NOT NULL DEFAULT 5;

@@ -1799,6 +1799,9 @@ function SettingsPage() {
   const modeEnabled = modePhrase === "SWITCH MODE";
   const fullWipeEnabled = fullWipePhrase === "ARM FULL WIPE";
   const isOwner = user?.role === "OWNER";
+  const canManageGoogleSheets = user?.role === "OWNER" || user?.role === "ADMIN";
+  const isCampMeetingMode = settings.mealTrackingMode === "camp_meeting";
+  const isGoogleSheetsSyncEnabled = settings.googleSheetsEnabled;
 
   async function saveSettings() {
     if (!settings) return;
@@ -2029,48 +2032,98 @@ function SettingsPage() {
         </button>
       </section>
 
-      <section className="card stack">
-        <h3>Camp Meeting Google Sheets Sync</h3>
-        <p className="muted">Available when using Camp Meeting mode integrations.</p>
-        <div className="button-row">
-          <button
-            type="button"
-            className="secondary"
-            disabled={isSyncingSheet}
-            onClick={() => {
-              setMessage("");
-              setError("");
-              setIsSyncingSheet(true);
-              void api("/import/camp-meeting/google-sheet/import", { method: "POST" })
-                .then(() => setMessage("Imported Camp Meeting entitlements from Google Sheet."))
-                .catch((syncError) =>
-                  setError(syncError instanceof Error ? syncError.message : "Google Sheet import failed."),
-                )
-                .finally(() => setIsSyncingSheet(false));
-            }}
-          >
-            Import from Google Sheet
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={isWritingBackSheet}
-            onClick={() => {
-              setMessage("");
-              setError("");
-              setIsWritingBackSheet(true);
-              void api("/import/camp-meeting/google-sheet/write-back-now", { method: "POST" })
-                .then(() => setMessage("Wrote back pending redemptions to Google Sheet."))
-                .catch((syncError) =>
-                  setError(syncError instanceof Error ? syncError.message : "Google Sheet write-back failed."),
-                )
-                .finally(() => setIsWritingBackSheet(false));
-            }}
-          >
-            Write Back Redemptions
-          </button>
-        </div>
-      </section>
+      {canManageGoogleSheets ? (
+        <section className="card stack">
+          <h3>Camp Meeting Google Sheets Sync</h3>
+          {!isCampMeetingMode ? (
+            <p className="muted">Google Sheets sync is only available in Camp Meeting mode</p>
+          ) : (
+            <>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.googleSheetsEnabled}
+                  onChange={(e) =>
+                    setSettings({ ...settings, googleSheetsEnabled: e.target.checked })
+                  }
+                />
+                Enable Google Sheets Sync
+              </label>
+              <label>
+                Google Sheet URL or Sheet ID
+                <input
+                  value={settings.googleSheetId}
+                  onChange={(e) => setSettings({ ...settings, googleSheetId: e.target.value })}
+                />
+              </label>
+              <p className="muted">
+                Share your Google Sheet with the service account email, then paste the sheet URL here.
+              </p>
+              <label>
+                Worksheet / Tab Name
+                <input
+                  value={settings.googleSheetTabName}
+                  onChange={(e) =>
+                    setSettings({ ...settings, googleSheetTabName: e.target.value || "Sheet1" })
+                  }
+                />
+              </label>
+              <label>
+                Sync interval (minutes)
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.googleSyncIntervalMinutes}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      googleSyncIntervalMinutes: Math.max(1, Number(e.target.value) || 5),
+                    })
+                  }
+                />
+              </label>
+            </>
+          )}
+          <div className="button-row">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!isCampMeetingMode || !isGoogleSheetsSyncEnabled || isSyncingSheet}
+              onClick={() => {
+                setMessage("");
+                setError("");
+                setIsSyncingSheet(true);
+                void api("/import/camp-meeting/google-sheet/import", { method: "POST" })
+                  .then(() => setMessage("Imported Camp Meeting entitlements from Google Sheet."))
+                  .catch((syncError) =>
+                    setError(syncError instanceof Error ? syncError.message : "Google Sheet import failed."),
+                  )
+                  .finally(() => setIsSyncingSheet(false));
+              }}
+            >
+              Import from Google Sheet
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={!isCampMeetingMode || !isGoogleSheetsSyncEnabled || isWritingBackSheet}
+              onClick={() => {
+                setMessage("");
+                setError("");
+                setIsWritingBackSheet(true);
+                void api("/import/camp-meeting/google-sheet/write-back-now", { method: "POST" })
+                  .then(() => setMessage("Wrote back pending redemptions to Google Sheet."))
+                  .catch((syncError) =>
+                    setError(syncError instanceof Error ? syncError.message : "Google Sheet write-back failed."),
+                  )
+                  .finally(() => setIsWritingBackSheet(false));
+              }}
+            >
+              Write Back Redemptions
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="card stack">
         <h3>Data Reset Tools</h3>
