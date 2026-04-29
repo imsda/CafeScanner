@@ -183,7 +183,7 @@ CafeScanner uses exactly one global **meal tracking mode** at a time (`Settings 
 
 `Setting.mealTrackingMode` is stored in the database and persists across rebuilds, restarts, and redeploys as long as the database is preserved.
 
-### Camp Meeting Google Sheets sync (ticket-style format)
+### Google Sheets Sync (all meal tracking modes)
 
 Use this exact Google Sheet header row:
 
@@ -196,9 +196,26 @@ Behavior:
 - Each row imports as its own entitlement (no grouping/collapsing by `reg_id`).
 - On redemption, local SQLite updates first (`redeemed`, `redeemedAt`, `redeemedBy`), and sync writes are queued.
 - Write-back updates only columns: `redeemed` (`yes`), `redeemed_at` (timestamp), `redeemed_by` (selected guest).
-- Automatic write-back runs every 5 minutes and only during configured meal windows plus 10 minutes.
-- OWNER/ADMIN can trigger manual write-back via API endpoint `POST /api/import/camp-meeting/google-sheet/write-back-now`.
+- Automatic write-back runs at configured sync interval and only during configured meal windows plus 10 minutes for all modes.
+- OWNER/ADMIN can trigger manual write-back anytime via API endpoint `POST /api/import/google-sheet/write-back-now`.
 - If Google Sheets is unavailable, scanning still works (SQLite remains source of truth); retries occur on the next sync.
+
+Tally Up / Count Down sheet format:
+
+`ID,Name,Breakfast,Lunch,Dinner,Total`
+
+- **Tally Up import**: imports `ID` + `Name` only and updates/creates `Person` by stable `ID` (`personId` / `codeValue`).
+- **Tally Up write-back**: writes current local `Breakfast/Lunch/Dinner/Total` tally counts (`Total = Breakfast + Lunch + Dinner`).
+- **Count Down import**: imports `ID`, `Name`, and remaining `Breakfast/Lunch/Dinner` balances; if `Total` conflicts, per-meal columns are preferred.
+- **Count Down write-back**: writes current local remaining balances and recomputed `Total`.
+- Re-imports update existing people instead of duplicating.
+
+Template download:
+- Settings → Google Sheets Sync → **Download Template** generates a CSV header template for the active mode.
+- Filenames:
+  - `camp-meeting-google-sheet-template.csv`
+  - `tally-up-google-sheet-template.csv`
+  - `count-down-google-sheet-template.csv`
 
 Service-account configuration (recommended):
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`

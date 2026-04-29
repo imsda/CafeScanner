@@ -5,7 +5,7 @@ import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
 import { nanoid } from 'nanoid';
 import { getMealTrackingMode } from '../services/settingsService.js';
-import { flushCampMeetingRedemptionsToSheet, importCampMeetingFromSheet } from '../services/campMeetingSheetSyncService.js';
+import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts } from '../services/campMeetingSheetSyncService.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const router = Router();
@@ -227,15 +227,14 @@ function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
 router.get('/template', async (_req, res) => {
   const mode = await getMode();
   if (mode === MealTrackingMode.camp_meeting) {
-    const header = 'ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date\n';
+    const header = 'ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date,ticket_type,price,redeemed,redeemed_at,redeemed_by,notes\n';
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="camp-meeting-template.csv"');
+    res.setHeader('Content-Disposition', 'attachment; filename="camp-meeting-google-sheet-template.csv"');
     return res.send(header);
   }
-
-  const header = 'firstName,lastName,personId,codeValue,breakfastRemaining,lunchRemaining,dinnerRemaining,breakfastCount,lunchCount,dinnerCount,totalMealsCount,active,grade,group,campus,notes\n';
+  const header = 'ID,Name,Breakfast,Lunch,Dinner,Total\n';
   res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="people-template.csv"');
+  res.setHeader('Content-Disposition', `attachment; filename="${mode === MealTrackingMode.tally ? 'tally-up' : 'count-down'}-google-sheet-template.csv"`);
   return res.send(header);
 });
 
@@ -252,11 +251,10 @@ router.get('/camp-meeting/summary', async (_req, res) => {
   });
 });
 
-router.post('/camp-meeting/google-sheet/import', async (_req, res) => {
+router.post('/google-sheet/import', async (_req, res) => {
   try {
     const mode = await getMode();
-    if (mode !== MealTrackingMode.camp_meeting) return res.status(400).json({ error: 'Camp Meeting mode required.' });
-    const result = await importCampMeetingFromSheet();
+    const result = mode === MealTrackingMode.camp_meeting ? await importCampMeetingFromSheet() : mode === MealTrackingMode.tally ? await importTallyFromSheet() : await importCountdownFromSheet();
     return res.json({ ok: true, ...result });
   } catch (error) {
     console.error('[GOOGLE_SHEETS_IMPORT]', error);
@@ -267,10 +265,11 @@ router.post('/camp-meeting/google-sheet/import', async (_req, res) => {
   }
 });
 
-router.post('/camp-meeting/google-sheet/write-back-now', async (req, res) => {
+router.post('/google-sheet/write-back-now', async (req, res) => {
   if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
-  await flushCampMeetingRedemptionsToSheet(true);
-  return res.json({ ok: true });
+  const mode = await getMode();
+  const result = mode === MealTrackingMode.camp_meeting ? await writeBackCampMeetingRedemptions(true) : mode === MealTrackingMode.tally ? await writeBackTallyCounts(true) : await writeBackCountdownBalances(true);
+  return res.json({ ok: true, ...result });
 });
 
 router.post('/preview', upload.single('file'), async (req, res) => {
