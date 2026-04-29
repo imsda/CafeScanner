@@ -13,3 +13,14 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   }
   next();
 }
+
+export function requirePageAccess(page: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session.adminUserId || !req.session.role) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (req.session.role === 'ADMIN') return next();
+    if (req.session.allowedPages?.includes(page)) return next();
+    return res.status(403).json({ error: 'Not authorized for this page' });
+  };
+}

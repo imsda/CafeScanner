@@ -11,7 +11,8 @@ import importRoutes from './routes/import.js';
 import dashboardRoutes from './routes/dashboard.js';
 import reportRoutes from './routes/reports.js';
 import systemRoutes from './routes/system.js';
-import { requireAdmin, requireAuth } from './middleware/auth.js';
+import usersRoutes from './routes/users.js';
+import { requireAdmin, requireAuth, requirePageAccess } from './middleware/auth.js';
 import { configureSqlitePragmas } from './db.js';
 import { ensureSettingsInitialized } from './services/settingsService.js';
 
@@ -63,14 +64,15 @@ app.use(
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRoutes);
 
-app.use('/api/scan', requireAuth, scanRoutes);
-app.use('/api/people', requireAuth, requireAdmin, peopleRoutes);
-app.use('/api/settings', requireAuth, requireAdmin, settingsRoutes);
-app.use('/api/transactions', requireAuth, requireAdmin, transactionRoutes);
-app.use('/api/import', requireAuth, requireAdmin, importRoutes);
-app.use('/api/dashboard', requireAuth, requireAdmin, dashboardRoutes);
-app.use('/api/reports', requireAuth, requireAdmin, reportRoutes);
-app.use('/api/system', requireAuth, requireAdmin, systemRoutes);
+app.use('/api/scan', requireAuth, requirePageAccess('SCAN'), scanRoutes);
+app.use('/api/people', requireAuth, requirePageAccess('PEOPLE'), peopleRoutes);
+app.use('/api/settings', requireAuth, requirePageAccess('SETTINGS'), settingsRoutes);
+app.use('/api/transactions', requireAuth, requirePageAccess('TRANSACTIONS'), transactionRoutes);
+app.use('/api/import', requireAuth, requirePageAccess('IMPORT'), importRoutes);
+app.use('/api/dashboard', requireAuth, requirePageAccess('DASHBOARD'), dashboardRoutes);
+app.use('/api/reports', requireAuth, requirePageAccess('REPORTS'), reportRoutes);
+app.use('/api/system', requireAuth, requirePageAccess('SETTINGS'), systemRoutes);
+app.use('/api/users', requireAuth, requireAdmin, usersRoutes);
 
 app.use('/api', (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = error instanceof Error && error.message ? error.message : 'Internal server error';
