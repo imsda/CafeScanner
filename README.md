@@ -40,18 +40,14 @@ Install these once on the host before running `./scripts/setup.sh`:
 - Runs seed logic (`npm run db:seed`).
 - Runs the full app build (`npm run build`).
 
-## Default Login Credentials
+## Initial Setup
 
-Seeded from `backend/.env` (or defaults below):
+1. `./scripts/setup.sh`
+2. `npm run create-admin -w backend`
 
-- **Admin**
-  - Username: `DEFAULT_ADMIN_USERNAME` (default `admin`)
-  - Password: `DEFAULT_ADMIN_PASSWORD` (default `AdminPass123!Dev`)
-- **Scanner-only**
-  - Username: `DEFAULT_SCANNER_USERNAME` (default `scanner`)
-  - Password: `DEFAULT_SCANNER_PASSWORD` (default `ScannerPass123!Dev`)
+## Password Recovery
 
-Scanner-only accounts can sign in and use the scan station, but cannot access admin pages.
+`npm run reset-password -w backend`
 
 ## Environment Files
 
@@ -63,10 +59,6 @@ Scanner-only accounts can sign in and use the scan station, but cannot access ad
 
 - `DATABASE_URL`
 - `SESSION_SECRET`
-- `DEFAULT_ADMIN_USERNAME`
-- `DEFAULT_ADMIN_PASSWORD`
-- `DEFAULT_SCANNER_USERNAME`
-- `DEFAULT_SCANNER_PASSWORD`
 - `PORT` (default `4000`)
 - `BACKEND_HOST` (default `0.0.0.0`)
 - `CLIENT_ORIGIN`
