@@ -1,2 +1,2 @@
-ALTER TABLE "Setting" ALTER COLUMN "googleSheetId" DROP NOT NULL;
-ALTER TABLE "Setting" ALTER COLUMN "googleSheetId" DROP DEFAULT;
+-- No-op migration for SQLite compatibility.
+-- googleSheetId remains TEXT NOT NULL DEFAULT '' and application code treats empty string as "not configured".
