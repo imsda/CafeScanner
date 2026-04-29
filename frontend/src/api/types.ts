@@ -79,7 +79,7 @@ export interface Settings {
   hideInactiveByDefault: boolean;
   mealTrackingMode: MealTrackingMode;
   googleSheetsEnabled: boolean;
-  googleSheetId: string;
+  googleSheetId: string | null;
   googleSheetTabName: string;
   googleSyncIntervalMinutes: number;
   updatedAt: string;

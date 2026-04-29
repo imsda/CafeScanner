@@ -122,7 +122,7 @@ model Setting {
   hideInactiveByDefault    Boolean          @default(true)
   mealTrackingMode         MealTrackingMode @default(camp_meeting)
   googleSheetsEnabled      Boolean          @default(false)
-  googleSheetId            String           @default("")
+  googleSheetId            String?
   googleSheetTabName       String           @default("Sheet1")
   googleSyncIntervalMinutes Int             @default(5)
   fullWipeTokenHash        String?
