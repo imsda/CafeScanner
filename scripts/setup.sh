@@ -487,7 +487,7 @@ npm run prisma:generate -w backend
 log "Seeding database"
 npm run db:seed
 
-if ! npm exec -w backend -- node -e "const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.adminUser.count({ where: { role: 'ADMIN' } }).then((count) => process.exit(count > 0 ? 0 : 1)).catch(() => process.exit(1)).finally(() => prisma.$disconnect());"; then
+if ! npm exec -w backend -- node -e "const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.adminUser.count({ where: { role: 'ADMIN' } }).then((count) => process.exit(count > 0 ? 0 : 1)).catch(() => process.exit(1)).finally(() => prisma.\$disconnect());"; then
   log "No admin account found. Run: npm run create-admin -w backend"
 fi
 
