@@ -55,9 +55,9 @@ input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.5
 
 .error { color: #b1002d; margin: 0; }
 .muted { color: #5a718c; margin: 0; }
-.stats-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-.stat-card { background: #f7fbff; border: 1px solid #d8e4f4; border-radius: 10px; padding: 0.75rem; }
-.value { font-size: 1.35rem; font-weight: 700; margin: 0.2rem 0 0; color: #0f4b8f; }
+.stats-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: stretch; }
+.stat-card { background: #f7fbff; border: 1px solid #d8e4f4; border-radius: 10px; padding: 0.75rem; min-width: 0; }
+.value { font-size: clamp(1.1rem, 2vw, 1.35rem); font-weight: 700; margin: 0.2rem 0 0; color: #0f4b8f; }
 
 .scan-layout { display: grid; gap: 1rem; grid-template-columns: 1.2fr 1fr; }
 .scanner-card { background: #f7fbff; border: 1px solid #d8e4f4; border-radius: 10px; padding: 0.7rem; }
