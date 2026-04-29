@@ -201,6 +201,20 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   const payload = personSchema.partial().parse(req.body);
+
+  const hasAnyTallyField = payload.breakfastCount !== undefined || payload.lunchCount !== undefined || payload.dinnerCount !== undefined;
+  if (hasAnyTallyField) {
+    const existing = await prisma.person.findUniqueOrThrow({
+      where: { id: Number(req.params.id) },
+      select: { breakfastCount: true, lunchCount: true, dinnerCount: true }
+    });
+
+    const breakfastCount = payload.breakfastCount ?? existing.breakfastCount;
+    const lunchCount = payload.lunchCount ?? existing.lunchCount;
+    const dinnerCount = payload.dinnerCount ?? existing.dinnerCount;
+    payload.totalMealsCount = breakfastCount + lunchCount + dinnerCount;
+  }
+
   const person = await prisma.person.update({ where: { id: Number(req.params.id) }, data: payload });
   res.json(person);
 });
