@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
 import { getSettings } from '../services/settingsService.js';
+import { getGoogleSheetsSchedulerStatus, runGoogleSheetsSyncSchedulerCheckNow } from '../services/campMeetingSheetSyncService.js';
 
 const router = Router();
 const MODE_SWITCH_CONFIRMATION = 'SWITCH MODE';
@@ -40,6 +41,16 @@ const switchModeSchema = z.object({
 router.get('/', async (_req, res) => {
   const settings = await getSettings();
   res.json(settings);
+});
+
+router.get('/google-sheets/scheduler-status', async (_req, res) => {
+  res.json(getGoogleSheetsSchedulerStatus());
+});
+
+router.post('/google-sheets/run-scheduled-check-now', async (req, res) => {
+  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+  const result = await runGoogleSheetsSyncSchedulerCheckNow();
+  res.json({ ok: true, ...result });
 });
 
 router.put('/', async (req, res) => {

@@ -85,6 +85,15 @@ export interface Settings {
   updatedAt: string;
 }
 
+export interface GoogleSheetsSchedulerStatus {
+  schedulerEnabled: boolean;
+  lastAutomaticCheckTime: string | null;
+  lastAutomaticWriteBackTime: string | null;
+  lastSkipReason: string | null;
+  lastRowsUpdated: number;
+  nextExpectedRunTime: string | null;
+}
+
 export interface ReportsSummaryResponse {
   from: string;
   to: string;

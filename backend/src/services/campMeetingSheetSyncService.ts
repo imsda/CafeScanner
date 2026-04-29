@@ -6,6 +6,23 @@ import { prisma } from '../db.js';
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
+type SchedulerStatus = {
+  schedulerEnabled: boolean;
+  lastAutomaticCheckTime: string | null;
+  lastAutomaticWriteBackTime: string | null;
+  lastSkipReason: string | null;
+  lastRowsUpdated: number;
+  nextExpectedRunTime: string | null;
+};
+
+const schedulerStatus: SchedulerStatus = {
+  schedulerEnabled: false,
+  lastAutomaticCheckTime: null,
+  lastAutomaticWriteBackTime: null,
+  lastSkipReason: null,
+  lastRowsUpdated: 0,
+  nextExpectedRunTime: null
+};
 
 function parseSpreadsheetId(input: string): string {
   const trimmed = input.trim();
@@ -40,6 +57,25 @@ function isWithinMealWindowPlus10Minutes(d: Date, tz: string, settings: any): bo
     if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return false;
     return now >= sh*60+sm && now <= eh*60+em+10;
   });
+}
+function getLocalTimeHHMM(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+}
+function calculateActiveWindow(d: Date, tz: string, settings: any): string | null {
+  const [h,m] = getLocalTimeHHMM(d, tz).split(':').map(Number);
+  const now = h * 60 + m;
+  const windows: Array<{ key: string; start?: string; end?: string }> = [
+    { key: 'breakfast', start: settings.breakfastStart, end: settings.breakfastEnd },
+    { key: 'lunch', start: settings.lunchStart, end: settings.lunchEnd },
+    { key: 'dinner', start: settings.dinnerStart, end: settings.dinnerEnd }
+  ];
+  for (const window of windows) {
+    if (!window.start || !window.end) continue;
+    const [sh,sm]=window.start.split(':').map(Number); const [eh,em]=window.end.split(':').map(Number);
+    if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) continue;
+    if (now >= sh*60+sm && now <= eh*60+em+10) return `${window.key} (${window.start}-${window.end}+10m)`;
+  }
+  return null;
 }
 
 function getSchedulerSkipReason(settings: any): string | null {
@@ -261,6 +297,7 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   if (settings.mealTrackingMode !== MealTrackingMode.camp_meeting) return { writeBackRowsUpdated: 0 };
   if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
   const pending = await prisma.mealEntitlement.findMany({ where: { redeemed: true, sourceSheetRow: { not: null }, sheetSyncedAt: null } });
+  console.log(`[SHEET_SYNC] Camp Meeting pending redeemed rows (sheetSyncedAt=null): ${pending.length}`);
   if (!pending.length) return { writeBackRowsUpdated: 0 };
   if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
   const sheets = getSheetsClient();
@@ -284,25 +321,45 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
 
 export function startCampMeetingSheetSyncScheduler() {
   console.log('[SHEET_SYNC] Scheduler started');
+  schedulerStatus.schedulerEnabled = true;
   const run = async () => {
     try {
       const settings = await getSettings();
+      const now = new Date();
+      const intervalMinutes = Math.max(1, settings.googleSyncIntervalMinutes ?? 5);
+      const timezone = settings.timezone || 'Etc/UTC';
+      const activeWindow = calculateActiveWindow(now, timezone, settings);
+      schedulerStatus.lastAutomaticCheckTime = now.toISOString();
       const skipReason = getSchedulerSkipReason(settings);
+      console.log(
+        `[SHEET_SYNC] cycle ts=${now.toISOString()} intervalMin=${intervalMinutes} mode=${settings.mealTrackingMode} enabled=${settings.googleSheetsEnabled} sheetIdPresent=${Boolean(parseSpreadsheetId(settings.googleSheetId || ''))} localTime=${getLocalTimeHHMM(now, timezone)} tz=${timezone} activeMealWindow=${Boolean(activeWindow)} activeWindow=${activeWindow ?? 'none'} skipReason=${skipReason ?? 'none'}`
+      );
       if (skipReason) {
         console.log(`[SHEET_SYNC] Skipped: ${skipReason}`);
+        schedulerStatus.lastSkipReason = skipReason;
+        schedulerStatus.lastRowsUpdated = 0;
       } else {
         console.log('[SHEET_SYNC] Running scheduled write-back');
         let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
         if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
         if (settings.mealTrackingMode === MealTrackingMode.tally) result = await writeBackTallyCounts(false);
         if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
-        console.log(`[SHEET_SYNC] Completed scheduled write-back: ${result?.writeBackRowsUpdated ?? 0} rows updated`);
+        const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
+        if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
+          console.log('[SHEET_SYNC] Completed scheduled write-back: 0 rows updated (no pending redemptions)');
+        } else {
+          console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
+        }
+        schedulerStatus.lastAutomaticWriteBackTime = now.toISOString();
+        schedulerStatus.lastSkipReason = null;
+        schedulerStatus.lastRowsUpdated = rowsUpdated;
       }
     } catch (e) {
       console.error('[SHEET_SYNC]', e);
     } finally {
       const settings = await getSettings().catch(() => null);
       const intervalMinutes = Math.max(1, settings?.googleSyncIntervalMinutes ?? 5);
+      schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
       setTimeout(() => {
         void run();
       }, intervalMinutes * 60 * 1000);
@@ -313,9 +370,20 @@ export function startCampMeetingSheetSyncScheduler() {
 
 export async function runGoogleSheetsSyncSchedulerCheckNow() {
   const settings = await getSettings();
+  const now = new Date();
+  const intervalMinutes = Math.max(1, settings.googleSyncIntervalMinutes ?? 5);
+  const timezone = settings.timezone || 'Etc/UTC';
+  const activeWindow = calculateActiveWindow(now, timezone, settings);
+  schedulerStatus.lastAutomaticCheckTime = now.toISOString();
   const skipReason = getSchedulerSkipReason(settings);
+  console.log(
+    `[SHEET_SYNC] manual-cycle ts=${now.toISOString()} intervalMin=${intervalMinutes} mode=${settings.mealTrackingMode} enabled=${settings.googleSheetsEnabled} sheetIdPresent=${Boolean(parseSpreadsheetId(settings.googleSheetId || ''))} localTime=${getLocalTimeHHMM(now, timezone)} tz=${timezone} activeMealWindow=${Boolean(activeWindow)} activeWindow=${activeWindow ?? 'none'} skipReason=${skipReason ?? 'none'}`
+  );
   if (skipReason) {
     console.log(`[SHEET_SYNC] Skipped: ${skipReason}`);
+    schedulerStatus.lastSkipReason = skipReason;
+    schedulerStatus.lastRowsUpdated = 0;
+    schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
     return { ran: false, reason: skipReason, mode: settings.mealTrackingMode };
   }
   console.log('[SHEET_SYNC] Running scheduled write-back');
@@ -324,6 +392,18 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
   if (settings.mealTrackingMode === MealTrackingMode.tally) result = await writeBackTallyCounts(false);
   if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
   const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
-  console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
+  if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
+    console.log('[SHEET_SYNC] Completed scheduled write-back: 0 rows updated (no pending redemptions)');
+  } else {
+    console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
+  }
+  schedulerStatus.lastAutomaticWriteBackTime = now.toISOString();
+  schedulerStatus.lastSkipReason = null;
+  schedulerStatus.lastRowsUpdated = rowsUpdated;
+  schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
   return { ran: true, rowsUpdated, mode: settings.mealTrackingMode };
+}
+
+export function getGoogleSheetsSchedulerStatus() {
+  return { ...schedulerStatus };
 }
