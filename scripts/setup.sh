@@ -491,7 +491,10 @@ if ! npm exec -w backend -- node -e "const { PrismaClient } = require('@prisma/c
   log "No admin account found. Run: npm run create-admin -w backend"
 fi
 
-log "Running full build"
-npm run build
+log "Building backend"
+npm run build -w backend
+
+log "Building frontend"
+npm run build -w frontend
 
 log "Setup complete"

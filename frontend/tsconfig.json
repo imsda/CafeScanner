@@ -14,7 +14,9 @@
     "noEmit": true,
     "types": [
       "vite/client"
-    ]
+    ],
+    "incremental": true,
+    "noEmitOnError": true
   },
   "include": [
     "src"
