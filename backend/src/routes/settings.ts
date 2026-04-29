@@ -44,6 +44,9 @@ router.get('/', async (_req, res) => {
 
 router.put('/', async (req, res) => {
   const payload = settingsSchema.parse(req.body);
+  if (typeof payload.googleSheetId === 'string') {
+    payload.googleSheetId = payload.googleSheetId.trim();
+  }
   await getSettings();
   const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload }));
   console.log('[SETTINGS] Updated settings payload keys:', Object.keys(payload));
