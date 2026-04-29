@@ -17,7 +17,8 @@
     "create-scanner": "tsx scripts/create-scanner.ts",
     "promote-owner": "tsx scripts/promote-owner.ts",
     "set-owner-recovery-code": "tsx scripts/set-owner-recovery-code.ts",
-    "full-wipe": "tsx scripts/full-wipe.ts"
+    "full-wipe": "tsx scripts/full-wipe.ts",
+    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json"
   },
   "dependencies": {
     "@prisma/client": "^6.6.0",
