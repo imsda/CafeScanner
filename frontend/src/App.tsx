@@ -2104,22 +2104,25 @@ function SettingsPage() {
                       throw new Error("Save Google Sheets settings before importing.");
                     }
                     const result = await api<{
-                      peopleCreated: number;
-                      peopleUpdated: number;
-                      entitlementsCreated: number;
-                      entitlementsUpdated: number;
+                      totalRows: number;
+                      validRows: number;
                       skippedRows: number;
+                      created: number;
+                      updated: number;
                       errors: string[];
                     }>(
                       "/import/camp-meeting/google-sheet/import",
                       { method: "POST" },
                     );
+                    const importedCount = result.created + result.updated;
                     const errorSuffix = result.errors.length
-                      ? ` Issues: ${result.errors.join(" | ")}`
+                      ? ` Reason: ${result.errors.join(" | ")}`
                       : "";
-                    setMessage(
-                      `Import complete. People created: ${result.peopleCreated}, people updated: ${result.peopleUpdated}, entitlements created: ${result.entitlementsCreated}, entitlements updated: ${result.entitlementsUpdated}, skipped rows: ${result.skippedRows}.${errorSuffix}`,
-                    );
+                    if (importedCount === 0) {
+                      setError(`Imported 0 rows (${result.skippedRows} skipped).${errorSuffix || " Reason: no valid rows"}`);
+                    } else {
+                      setMessage(`Imported ${importedCount} rows (${result.skippedRows} skipped).${errorSuffix}`);
+                    }
                   })
                   .catch((syncError) => {
                     if (syncError instanceof ApiNetworkError) {
