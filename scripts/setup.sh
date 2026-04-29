@@ -358,9 +358,36 @@ run_prisma_deploy() {
     return
   fi
 
+  if [[ "${database_url:-}" == file:* ]]; then
+    log "Prisma migrate failed for SQLite. Checking if this is a failed migration recovery case (P3009)."
+    if npm run db:migrate 2>&1 | tee /tmp/cafescanner_prisma_migrate_retry.log | rg -q "P3009|failed migration"; then
+      local sqlite_db_path
+      sqlite_db_path="$(resolve_sqlite_db_path "$database_url")"
+      local sqlite_db_dir
+      sqlite_db_dir="$(dirname "$sqlite_db_path")"
+      local sqlite_db_file
+      sqlite_db_file="$(basename "$sqlite_db_path")"
+
+      if [[ "$sqlite_db_file" == "dev.db" && "$sqlite_db_dir" == "backend/prisma" ]]; then
+        log "Detected failed migration state on fresh SQLite dev DB. Removing local SQLite files and retrying setup migrations."
+        rm -f "${sqlite_db_path}" "${sqlite_db_path}-wal" "${sqlite_db_path}-shm" "${sqlite_db_path}-journal"
+        if npm run db:migrate; then
+          log "SQLite migration recovery succeeded after recreating fresh dev database."
+          return
+        fi
+      fi
+    fi
+  fi
+
   cat <<'EOM'
 [setup] ERROR: Failed to apply Prisma migrations in deploy mode.
 [setup] Existing data has NOT been deleted.
+[setup] If this is a local fresh SQLite setup with failed migration state (P3009),
+[setup] you can recover by deleting only local dev DB files and re-running setup:
+[setup]   rm -f backend/prisma/dev.db backend/prisma/dev.db-wal backend/prisma/dev.db-shm backend/prisma/dev.db-journal
+[setup]   ./scripts/setup.sh
+[setup] For existing production databases, do NOT delete the database.
+[setup] Use prisma migrate resolve only after verifying the migration is fixed or intentionally skipped.
 [setup] Likely cause: repository migration history diverged from this database.
 [setup] Required fix: repair migration files at the repository level and add forward-only migrations.
 EOM
