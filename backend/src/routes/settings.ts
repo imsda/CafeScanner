@@ -23,7 +23,11 @@ const settingsSchema = z.object({
   stationName: z.string().min(1).optional(),
   enableSounds: z.boolean().optional(),
   allowManualMealOverride: z.boolean().optional(),
-  hideInactiveByDefault: z.boolean().optional()
+  hideInactiveByDefault: z.boolean().optional(),
+  googleSheetsEnabled: z.boolean().optional(),
+  googleSheetId: z.string().optional(),
+  googleSheetTabName: z.string().min(1).optional(),
+  googleSyncIntervalMinutes: z.number().int().min(1).max(1440).optional()
 });
 
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });

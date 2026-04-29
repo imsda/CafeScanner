@@ -4,6 +4,14 @@ import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
+const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
+
+function parseSpreadsheetId(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match?.[1] ?? trimmed;
+}
 
 function mealTypeFromSheet(value: string): MealType | null {
   const v = value.trim().toLowerCase();
@@ -41,9 +49,12 @@ function getSheetsClient() {
 }
 
 export async function importCampMeetingFromSheet() {
-  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-  const range = process.env.GOOGLE_SHEETS_RANGE || 'Sheet1!A:L';
-  if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEETS_SPREADSHEET_ID');
+  const settings = await getSettings();
+  if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
+  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId);
+  if (!spreadsheetId) throw new Error('Missing Google Sheet URL or Sheet ID in Settings.');
+  const sheetName = settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME;
+  const range = `${sheetName}!A:L`;
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = resp.data.values || [];
@@ -75,10 +86,11 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return;
   const pending = await prisma.mealEntitlement.findMany({ where: { redeemed: true, sourceSheetRow: { not: null }, sheetSyncedAt: null } });
   if (!pending.length) return;
+  if (!settings.googleSheetsEnabled) return;
   const sheets = getSheetsClient();
-  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
-  const sheetName = process.env.GOOGLE_SHEETS_TAB || 'Sheet1';
-  if (!spreadsheetId) throw new Error('Missing GOOGLE_SHEETS_SPREADSHEET_ID');
+  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId);
+  const sheetName = settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME;
+  if (!spreadsheetId) throw new Error('Missing Google Sheet URL or Sheet ID in Settings.');
   for (const row of pending) {
     const r = row.sourceSheetRow!;
     await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: [
@@ -89,5 +101,18 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
 }
 
 export function startCampMeetingSheetSyncScheduler() {
-  setInterval(() => { void flushCampMeetingRedemptionsToSheet(false).catch((e) => console.error('[SHEET_SYNC]', e)); }, 5 * 60 * 1000);
+  const run = async () => {
+    try {
+      await flushCampMeetingRedemptionsToSheet(false);
+    } catch (e) {
+      console.error('[SHEET_SYNC]', e);
+    } finally {
+      const settings = await getSettings().catch(() => null);
+      const intervalMinutes = Math.max(1, settings?.googleSyncIntervalMinutes ?? 5);
+      setTimeout(() => {
+        void run();
+      }, intervalMinutes * 60 * 1000);
+    }
+  };
+  void run();
 }
