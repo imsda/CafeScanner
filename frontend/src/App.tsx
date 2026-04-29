@@ -1784,10 +1784,23 @@ function SettingsPage() {
   } | null>(null);
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const [isWritingBackSheet, setIsWritingBackSheet] = useState(false);
+  const [isSavingGoogleSheetsSettings, setIsSavingGoogleSheetsSettings] = useState(false);
+  const [savedGoogleSheetsSettings, setSavedGoogleSheetsSettings] = useState<{
+    googleSheetsEnabled: boolean;
+    googleSheetId: string;
+    googleSheetTabName: string;
+    googleSyncIntervalMinutes: number;
+  } | null>(null);
 
   const load = async () => {
     const loaded = await api<Settings>("/settings");
     setSettings(loaded);
+    setSavedGoogleSheetsSettings({
+      googleSheetsEnabled: loaded.googleSheetsEnabled,
+      googleSheetId: loaded.googleSheetId ?? "",
+      googleSheetTabName: loaded.googleSheetTabName,
+      googleSyncIntervalMinutes: loaded.googleSyncIntervalMinutes,
+    });
   };
 
   useEffect(() => {
@@ -1804,8 +1817,15 @@ function SettingsPage() {
   const canManageGoogleSheets = user?.role === "OWNER" || user?.role === "ADMIN";
   const isCampMeetingMode = settings.mealTrackingMode === "camp_meeting";
   const isGoogleSheetsSyncEnabled = settings.googleSheetsEnabled;
+  const hasGoogleSheetId = Boolean(settings.googleSheetId?.trim());
+  const hasUnsavedGoogleSheetsChanges =
+    !!savedGoogleSheetsSettings &&
+    (settings.googleSheetsEnabled !== savedGoogleSheetsSettings.googleSheetsEnabled ||
+      (settings.googleSheetId ?? "") !== savedGoogleSheetsSettings.googleSheetId ||
+      settings.googleSheetTabName !== savedGoogleSheetsSettings.googleSheetTabName ||
+      settings.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes);
 
-  async function saveSettings(settingsOverride?: Settings) {
+  async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
     const sourceSettings = settingsOverride ?? settings;
     if (!sourceSettings) return null;
     setError("");
@@ -1824,9 +1844,24 @@ function SettingsPage() {
       ),
     );
     const saved = await api<Settings>("/settings", { method: "PUT", body: JSON.stringify(payload) });
-    setMessage("Settings saved.");
+    setMessage(successMessage);
     setSettings(saved);
+    setSavedGoogleSheetsSettings({
+      googleSheetsEnabled: saved.googleSheetsEnabled,
+      googleSheetId: saved.googleSheetId ?? "",
+      googleSheetTabName: saved.googleSheetTabName,
+      googleSyncIntervalMinutes: saved.googleSyncIntervalMinutes,
+    });
     return saved;
+  }
+
+  async function saveGoogleSheetsSettings(settingsOverride?: Settings) {
+    setIsSavingGoogleSheetsSettings(true);
+    try {
+      return await saveSettings(settingsOverride, "Google Sheets settings saved.");
+    } finally {
+      setIsSavingGoogleSheetsSettings(false);
+    }
   }
 
   async function clearOperationalData() {
@@ -2086,18 +2121,45 @@ function SettingsPage() {
                   }
                 />
               </label>
+              <button
+                type="button"
+                className="primary"
+                disabled={isSavingGoogleSheetsSettings}
+                onClick={() => {
+                  setMessage("");
+                  setError("");
+                  void saveGoogleSheetsSettings();
+                }}
+              >
+                {isSavingGoogleSheetsSettings
+                  ? "Saving Google Sheets Settings…"
+                  : "Save Google Sheets Settings"}
+              </button>
+              {!hasGoogleSheetId ? (
+                <p className="muted">Enter and save a Google Sheet URL or Sheet ID first.</p>
+              ) : null}
             </>
           )}
           <div className="button-row">
             <button
               type="button"
               className="secondary"
-              disabled={!isCampMeetingMode || !isGoogleSheetsSyncEnabled || isSyncingSheet}
+              disabled={
+                !isCampMeetingMode ||
+                !isGoogleSheetsSyncEnabled ||
+                isSyncingSheet ||
+                isSavingGoogleSheetsSettings ||
+                !hasGoogleSheetId
+              }
               onClick={() => {
                 setMessage("");
                 setError("");
                 setIsSyncingSheet(true);
-                void saveSettings()
+                const settingsToSave = settings;
+                const savePromise = hasUnsavedGoogleSheetsChanges
+                  ? saveGoogleSheetsSettings(settingsToSave)
+                  : Promise.resolve(settingsToSave);
+                void savePromise
                   .then(async (saved) => {
                     if (!saved) return;
                     if (!saved.googleSheetId?.trim()) {
@@ -2139,12 +2201,25 @@ function SettingsPage() {
             <button
               type="button"
               className="secondary"
-              disabled={!isCampMeetingMode || !isGoogleSheetsSyncEnabled || isWritingBackSheet}
+              disabled={
+                !isCampMeetingMode ||
+                !isGoogleSheetsSyncEnabled ||
+                isWritingBackSheet ||
+                isSavingGoogleSheetsSettings ||
+                !hasGoogleSheetId
+              }
               onClick={() => {
                 setMessage("");
                 setError("");
                 setIsWritingBackSheet(true);
-                void api("/import/camp-meeting/google-sheet/write-back-now", { method: "POST" })
+                const settingsToSave = settings;
+                const savePromise = hasUnsavedGoogleSheetsChanges
+                  ? saveGoogleSheetsSettings(settingsToSave)
+                  : Promise.resolve(settingsToSave);
+                void savePromise
+                  .then(() =>
+                    api("/import/camp-meeting/google-sheet/write-back-now", { method: "POST" }),
+                  )
                   .then(() => setMessage("Wrote back pending redemptions to Google Sheet."))
                   .catch((syncError) =>
                     setError(syncError instanceof Error ? syncError.message : "Google Sheet write-back failed."),
