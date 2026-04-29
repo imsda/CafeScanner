@@ -131,6 +131,26 @@ th { background: #f7fbff; }
 .people-actions .small { padding: 0.24rem 0.48rem; font-size: 0.76rem; }
 .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.7rem; }
 .badge { background: #fff; border: 1px solid #d8e4f4; border-radius: 8px; padding: 0.7rem; text-align: center; }
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem 1rem;
+  margin-top: 0.35rem;
+}
+.permission-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  white-space: normal;
+}
+.permission-option input {
+  width: auto;
+  flex: 0 0 auto;
+}
+.permission-option span {
+  line-height: 1.2;
+}
 
 @media (max-width: 940px) {
   .scan-layout { grid-template-columns: 1fr; }

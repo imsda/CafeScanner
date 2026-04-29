@@ -4,6 +4,13 @@ import { prisma } from '../db.js';
 
 const router = Router();
 const ALL_PAGES = ['DASHBOARD', 'SCAN', 'PEOPLE', 'IMPORT', 'BADGES', 'TRANSACTIONS', 'REPORTS', 'SETTINGS', 'USER_MANAGEMENT'] as const;
+const SCANNER_PAGES = ['SCAN'] as const;
+
+function allowedPagesFor(role: 'ADMIN' | 'SCANNER' | 'CUSTOM', customPages: string[]): string[] {
+  if (role === 'ADMIN') return [...ALL_PAGES];
+  if (role === 'SCANNER') return [...SCANNER_PAGES];
+  return customPages;
+}
 
 router.post('/login', async (req, res) => {
   const { username, password } = req.body;
@@ -14,7 +21,7 @@ router.post('/login', async (req, res) => {
   if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
   const pageAccess = await prisma.userPageAccess.findMany({ where: { adminUserId: user.id } });
-  const allowedPages = user.role === 'ADMIN' ? [...ALL_PAGES] : pageAccess.map((entry) => entry.page);
+  const allowedPages = allowedPagesFor(user.role, pageAccess.map((entry) => entry.page));
   req.session.adminUserId = user.id;
   req.session.role = user.role;
   req.session.allowedPages = allowedPages;
@@ -35,7 +42,7 @@ router.get('/me', async (req, res) => {
 
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const allowedPages = user.role === 'ADMIN' ? [...ALL_PAGES] : user.pageAccess.map((entry) => entry.page);
+  const allowedPages = allowedPagesFor(user.role, user.pageAccess.map((entry) => entry.page));
   req.session.role = user.role;
   req.session.allowedPages = allowedPages;
   res.json({ id: user.id, username: user.username, role: user.role, allowedPages });

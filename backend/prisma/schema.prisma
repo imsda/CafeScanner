@@ -28,6 +28,7 @@ enum MealDay {
 enum UserRole {
   ADMIN
   SCANNER
+  CUSTOM
 }
 
 enum AppPage {
