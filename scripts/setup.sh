@@ -331,7 +331,7 @@ resolve_sqlite_db_path() {
     return
   fi
 
-  printf '%s\n' "backend/prisma/${sqlite_target#./}"
+  printf '%s\n' "backend/${sqlite_target#./}"
 }
 
 run_prisma_status_check() {
@@ -469,8 +469,7 @@ if is_sqlite_database_url "$database_url"; then
   sqlite_db_path="$(resolve_sqlite_db_path "$database_url")"
 
   if [[ -f "$sqlite_db_path" ]]; then
-    log "Existing SQLite database detected at ${sqlite_db_path}. Preserving data and validating migration history."
-    run_prisma_status_check
+    log "Existing SQLite database detected at ${sqlite_db_path}. Preserving data and applying pending migrations."
   else
     log "No existing SQLite database found at ${sqlite_db_path}. A new database will be created."
   fi
