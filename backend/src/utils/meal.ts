@@ -4,10 +4,12 @@ function isWithinWindow(nowHHMM: string, start: string, end: string): boolean {
   return nowHHMM >= start && nowHHMM <= end;
 }
 
+function localTimeHHMM(now: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+}
+
 export function detectMealType(now = new Date(), settings: Setting): MealType | null {
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
-  const current = `${hh}:${mm}`;
+  const current = localTimeHHMM(now, settings.timezone || 'America/Chicago');
 
   if (isWithinWindow(current, settings.breakfastStart, settings.breakfastEnd)) return 'BREAKFAST';
   if (isWithinWindow(current, settings.lunchStart, settings.lunchEnd)) return 'LUNCH';

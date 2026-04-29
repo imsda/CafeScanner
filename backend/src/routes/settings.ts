@@ -9,6 +9,30 @@ import { getGoogleSheetsSchedulerStatus, runGoogleSheetsSyncSchedulerCheckNow } 
 
 const router = Router();
 const MODE_SWITCH_CONFIRMATION = 'SWITCH MODE';
+const DEFAULT_TIMEZONE = 'America/Chicago';
+const TIME_FIELDS = ['breakfastStart', 'breakfastEnd', 'lunchStart', 'lunchEnd', 'dinnerStart', 'dinnerEnd'] as const;
+
+function normalizeTimeValue(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+  if (!match) return trimmed;
+  const hour12 = Number(match[1]);
+  const minute = Number(match[2]);
+  const suffix = match[3].toUpperCase();
+  if (Number.isNaN(hour12) || Number.isNaN(minute) || hour12 < 1 || hour12 > 12 || minute < 0 || minute > 59) return trimmed;
+  const hour24 = (hour12 % 12) + (suffix === 'PM' ? 12 : 0);
+  return `${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function isValidTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const settingsSchema = z.object({
   schoolName: z.string().min(1).optional(),
@@ -57,6 +81,18 @@ router.put('/', async (req, res) => {
   const payload = settingsSchema.parse(req.body);
   if (typeof payload.googleSheetId === 'string') {
     payload.googleSheetId = payload.googleSheetId.trim();
+  }
+  if (typeof payload.timezone === 'string') {
+    payload.timezone = payload.timezone.trim() || DEFAULT_TIMEZONE;
+    if (!isValidTimezone(payload.timezone)) {
+      return res.status(400).json({ error: `Invalid timezone: ${payload.timezone}` });
+    }
+  }
+  for (const field of TIME_FIELDS) {
+    const value = payload[field];
+    if (typeof value === 'string') {
+      payload[field] = normalizeTimeValue(value);
+    }
   }
   await getSettings();
   const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload }));
