@@ -2103,12 +2103,23 @@ function SettingsPage() {
                     if (!saved.googleSheetId?.trim()) {
                       throw new Error("Save Google Sheets settings before importing.");
                     }
-                    const result = await api<{ imported: number; updated: number; skipped: number; reason?: string }>(
+                    const result = await api<{
+                      peopleCreated: number;
+                      peopleUpdated: number;
+                      entitlementsCreated: number;
+                      entitlementsUpdated: number;
+                      skippedRows: number;
+                      errors: string[];
+                    }>(
                       "/import/camp-meeting/google-sheet/import",
                       { method: "POST" },
                     );
-                    const reasonSuffix = result.reason ? ` (${result.reason})` : "";
-                    setMessage(`Import complete. Imported: ${result.imported}, Updated: ${result.updated}, Skipped: ${result.skipped}${reasonSuffix}`);
+                    const errorSuffix = result.errors.length
+                      ? ` Issues: ${result.errors.join(" | ")}`
+                      : "";
+                    setMessage(
+                      `Import complete. People created: ${result.peopleCreated}, people updated: ${result.peopleUpdated}, entitlements created: ${result.entitlementsCreated}, entitlements updated: ${result.entitlementsUpdated}, skipped rows: ${result.skippedRows}.${errorSuffix}`,
+                    );
                   })
                   .catch((syncError) => {
                     if (syncError instanceof ApiNetworkError) {
