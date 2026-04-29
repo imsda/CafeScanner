@@ -1,0 +1,2 @@
+ALTER TABLE "Setting" ALTER COLUMN "googleSheetId" DROP NOT NULL;
+ALTER TABLE "Setting" ALTER COLUMN "googleSheetId" DROP DEFAULT;

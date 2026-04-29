@@ -79,7 +79,7 @@ export async function importCampMeetingFromSheet() {
   const settings = await getSettings();
   if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
   const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
-  if (!spreadsheetId) throw new Error('Missing Google Sheet URL or Sheet ID in Settings.');
+  if (!spreadsheetId) throw new Error('Google Sheet URL/ID is not configured.');
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
   if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
   const range = `${sheetName}!A:L`;
@@ -93,12 +93,20 @@ export async function importCampMeetingFromSheet() {
   const rows = resp.data.values || [];
   const hasHeader = JSON.stringify((rows[0]||[]).map((v:string)=>v.toLowerCase())) === JSON.stringify(HEADER);
   const dataRows = hasHeader ? rows.slice(1) : rows;
+  if (!dataRows.length) {
+    return { imported: 0, updated: 0, skipped: 0, reason: 'No data rows found in the configured sheet tab.' };
+  }
   await prisma.mealEntitlement.deleteMany({});
+  let imported = 0;
+  let skipped = 0;
   for (let i=0;i<dataRows.length;i++) {
     const r = dataRows[i] as string[];
     const mealType = mealTypeFromSheet(r[3] || '');
     const mealDay = mealDayFromSheet(r[4] || '');
-    if (!mealType || !mealDay || !(r[1]||'').trim()) continue;
+    if (!mealType || !mealDay || !(r[1]||'').trim()) {
+      skipped += 1;
+      continue;
+    }
     await prisma.mealEntitlement.upsert({
       where: { sourceTicketId: (r[0]||'').trim() || `row-${i+2}` },
       update: {
@@ -110,7 +118,9 @@ export async function importCampMeetingFromSheet() {
         personId: (r[1]||'').trim().toUpperCase(), personName: (r[2]||'').trim(), mealType, mealDay, mealDate: (r[5]||'').trim(), redeemed: String(r[8]||'').toLowerCase()==='yes', notes: (r[11]||'').trim() || null
       }
     });
+    imported += 1;
   }
+  return { imported, updated: 0, skipped };
 }
 
 export async function flushCampMeetingRedemptionsToSheet(force = false) {
@@ -123,7 +133,7 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   const sheets = getSheetsClient();
   const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
-  if (!spreadsheetId) throw new Error('Missing Google Sheet URL or Sheet ID in Settings.');
+  if (!spreadsheetId) throw new Error('Google Sheet URL/ID is not configured.');
   if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
   for (const row of pending) {
     const r = row.sourceSheetRow!;

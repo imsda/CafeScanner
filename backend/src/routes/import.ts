@@ -256,8 +256,8 @@ router.post('/camp-meeting/google-sheet/import', async (_req, res) => {
   try {
     const mode = await getMode();
     if (mode !== MealTrackingMode.camp_meeting) return res.status(400).json({ error: 'Camp Meeting mode required.' });
-    await importCampMeetingFromSheet();
-    return res.json({ ok: true });
+    const result = await importCampMeetingFromSheet();
+    return res.json({ ok: true, ...result });
   } catch (error) {
     console.error('[GOOGLE_SHEETS_IMPORT]', error);
     const message = error instanceof Error ? error.message : 'Google Sheet import failed.';

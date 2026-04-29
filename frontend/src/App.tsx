@@ -1803,11 +1803,12 @@ function SettingsPage() {
   const isCampMeetingMode = settings.mealTrackingMode === "camp_meeting";
   const isGoogleSheetsSyncEnabled = settings.googleSheetsEnabled;
 
-  async function saveSettings() {
-    if (!settings) return;
+  async function saveSettings(settingsOverride?: Settings) {
+    const sourceSettings = settingsOverride ?? settings;
+    if (!sourceSettings) return null;
     setError("");
     const payload = Object.fromEntries(
-      Object.entries(settings).filter(
+      Object.entries(sourceSettings).filter(
         ([key]) =>
           ![
             "id",
@@ -1820,9 +1821,10 @@ function SettingsPage() {
           ].includes(key),
       ),
     );
-    await api("/settings", { method: "PUT", body: JSON.stringify(payload) });
+    const saved = await api<Settings>("/settings", { method: "PUT", body: JSON.stringify(payload) });
     setMessage("Settings saved.");
-    await load();
+    setSettings(saved);
+    return saved;
   }
 
   async function clearOperationalData() {
@@ -2052,7 +2054,7 @@ function SettingsPage() {
               <label>
                 Google Sheet URL or Sheet ID
                 <input
-                  value={settings.googleSheetId}
+                  value={settings.googleSheetId ?? ""}
                   onChange={(e) => setSettings({ ...settings, googleSheetId: e.target.value })}
                 />
               </label>
@@ -2093,8 +2095,19 @@ function SettingsPage() {
                 setMessage("");
                 setError("");
                 setIsSyncingSheet(true);
-                void api("/import/camp-meeting/google-sheet/import", { method: "POST" })
-                  .then(() => setMessage("Imported Camp Meeting entitlements from Google Sheet."))
+                void saveSettings()
+                  .then(async (saved) => {
+                    if (!saved) return;
+                    if (!saved.googleSheetId?.trim()) {
+                      throw new Error("Save Google Sheets settings before importing.");
+                    }
+                    const result = await api<{ imported: number; updated: number; skipped: number; reason?: string }>(
+                      "/import/camp-meeting/google-sheet/import",
+                      { method: "POST" },
+                    );
+                    const reasonSuffix = result.reason ? ` (${result.reason})` : "";
+                    setMessage(`Import complete. Imported: ${result.imported}, Updated: ${result.updated}, Skipped: ${result.skipped}${reasonSuffix}`);
+                  })
                   .catch((syncError) => {
                     if (syncError instanceof ApiNetworkError) {
                       setError(`Google Sheet import failed: could not reach backend (${syncError.message}).`);
