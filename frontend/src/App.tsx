@@ -17,6 +17,7 @@ import type {
   ScanPerson,
   ScanResponse,
   Settings,
+  GoogleSheetsSchedulerStatus,
 } from "./api/types";
 import QrScanner from "./components/QrScanner";
 import { useAuth } from "./context/AuthContext";
@@ -1785,6 +1786,8 @@ function SettingsPage() {
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const [isWritingBackSheet, setIsWritingBackSheet] = useState(false);
   const [isSavingGoogleSheetsSettings, setIsSavingGoogleSheetsSettings] = useState(false);
+  const [isRunningScheduledCheckNow, setIsRunningScheduledCheckNow] = useState(false);
+  const [schedulerStatus, setSchedulerStatus] = useState<GoogleSheetsSchedulerStatus | null>(null);
   const [savedGoogleSheetsSettings, setSavedGoogleSheetsSettings] = useState<{
     googleSheetsEnabled: boolean;
     googleSheetId: string;
@@ -1801,6 +1804,10 @@ function SettingsPage() {
       googleSheetTabName: loaded.googleSheetTabName,
       googleSyncIntervalMinutes: loaded.googleSyncIntervalMinutes,
     });
+    if (user?.role === "OWNER" || user?.role === "ADMIN") {
+      const status = await api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
+      setSchedulerStatus(status);
+    }
   };
 
   useEffect(() => {
@@ -2224,7 +2231,47 @@ function SettingsPage() {
             >
               Write Back to Google Sheet
             </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={
+                !isGoogleSheetsSyncEnabled ||
+                isRunningScheduledCheckNow ||
+                isSavingGoogleSheetsSettings ||
+                !hasGoogleSheetId
+              }
+              onClick={() => {
+                setMessage("");
+                setError("");
+                setIsRunningScheduledCheckNow(true);
+                void api<{ ran: boolean; rowsUpdated?: number; reason?: string }>("/settings/google-sheets/run-scheduled-check-now", { method: "POST" })
+                  .then((result) => {
+                    if (!result.ran) {
+                      setMessage(`Scheduled check skipped: ${result.reason ?? "unknown reason"}.`);
+                    } else {
+                      setMessage(`Scheduled check completed: ${result.rowsUpdated ?? 0} rows updated.`);
+                    }
+                    return api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
+                  })
+                  .then((status) => setSchedulerStatus(status))
+                  .catch((syncError) =>
+                    setError(syncError instanceof Error ? syncError.message : "Scheduled check failed."),
+                  )
+                  .finally(() => setIsRunningScheduledCheckNow(false));
+              }}
+            >
+              Run Scheduled Check Now
+            </button>
           </div>
+          <section className="card stack">
+            <h4>Google Sheets Sync Status</h4>
+            <p><strong>Scheduler:</strong> {schedulerStatus?.schedulerEnabled ? "Enabled" : "Disabled"}</p>
+            <p><strong>Last automatic check:</strong> {schedulerStatus?.lastAutomaticCheckTime ? new Date(schedulerStatus.lastAutomaticCheckTime).toLocaleString() : "Never"}</p>
+            <p><strong>Last automatic write-back:</strong> {schedulerStatus?.lastAutomaticWriteBackTime ? new Date(schedulerStatus.lastAutomaticWriteBackTime).toLocaleString() : "Never"}</p>
+            <p><strong>Last skip reason:</strong> {schedulerStatus?.lastSkipReason ?? "None"}</p>
+            <p><strong>Last rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
+            <p><strong>Next expected run:</strong> {schedulerStatus?.nextExpectedRunTime ? new Date(schedulerStatus.nextExpectedRunTime).toLocaleString() : "Unknown"}</p>
+          </section>
         </section>
       ) : null}
 
