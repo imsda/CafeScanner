@@ -1780,6 +1780,8 @@ function SettingsPage() {
     token: string;
     expiresAt: string;
   } | null>(null);
+  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [isWritingBackSheet, setIsWritingBackSheet] = useState(false);
 
   const load = async () => {
     const loaded = await api<Settings>("/settings");
@@ -1803,7 +1805,16 @@ function SettingsPage() {
     setError("");
     const payload = Object.fromEntries(
       Object.entries(settings).filter(
-        ([key]) => !["id", "updatedAt", "mealTrackingMode"].includes(key),
+        ([key]) =>
+          ![
+            "id",
+            "updatedAt",
+            "mealTrackingMode",
+            "fullWipeTokenHash",
+            "fullWipeTokenExpiresAt",
+            "fullWipeTokenUsedAt",
+            "fullWipeArmedByUserId",
+          ].includes(key),
       ),
     );
     await api("/settings", { method: "PUT", body: JSON.stringify(payload) });
@@ -1850,18 +1861,15 @@ function SettingsPage() {
   }
 
   return (
-    <>
-      <div className="card stack">
-        <h2>Settings</h2>
-        <div className="card stack">
-          <h3>Meal Tracking Mode</h3>
-        </div>
-      </div>
+    <div className="card stack">
+      <h2>Settings</h2>
+      {message && <p>{message}</p>}
+      {error && <p className="error">{error}</p>}
 
-      <div className="card stack">
+      <section className="card stack">
+        <h3>Meal Tracking Mode</h3>
         <p className="muted">
-          Current active mode:{" "}
-          <strong>{modeLabel(settings.mealTrackingMode)}</strong>
+          Current active mode: <strong>{modeLabel(settings.mealTrackingMode)}</strong>
         </p>
         <label>
           Meal tracking mode
@@ -1888,71 +1896,370 @@ function SettingsPage() {
           Warning: Switching mode is destructive and will clear all people,
           transaction history, import history, and meal entitlements.
         </p>
+      </section>
 
-        {showModeConfirm && pendingMode && (
-          <div className="confirm-overlay" role="dialog" aria-modal="true">
-            <div className="confirm-modal stack">
-              <h4>Confirm Mode Switch</h4>
+      <section className="card stack">
+        <h3>Scanner Settings</h3>
+        <label>
+          Scanner cooldown (seconds)
+          <input
+            type="number"
+            min={0.5}
+            max={10}
+            step={0.5}
+            value={settings.scannerCooldownSeconds}
+            onChange={(e) =>
+              setSettings({ ...settings, scannerCooldownSeconds: Number(e.target.value) })
+            }
+          />
+        </label>
+        <label>
+          Station name
+          <input
+            value={settings.stationName}
+            onChange={(e) => setSettings({ ...settings, stationName: e.target.value })}
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.scannerDiagnosticsEnabled}
+            onChange={(e) =>
+              setSettings({ ...settings, scannerDiagnosticsEnabled: e.target.checked })
+            }
+          />
+          Enable scanner diagnostics
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.enableSounds}
+            onChange={(e) => setSettings({ ...settings, enableSounds: e.target.checked })}
+          />
+          Enable scan sounds
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.allowManualMealOverride}
+            onChange={(e) =>
+              setSettings({ ...settings, allowManualMealOverride: e.target.checked })
+            }
+          />
+          Allow manual meal override
+        </label>
+      </section>
+
+      <section className="card stack">
+        <h3>General Settings</h3>
+        <label>
+          School name
+          <input
+            value={settings.schoolName}
+            onChange={(e) => setSettings({ ...settings, schoolName: e.target.value })}
+          />
+        </label>
+        <label>
+          Timezone
+          <input
+            value={settings.timezone}
+            onChange={(e) => setSettings({ ...settings, timezone: e.target.value })}
+          />
+        </label>
+        <label>
+          Breakfast start
+          <input
+            type="time"
+            value={settings.breakfastStart}
+            onChange={(e) => setSettings({ ...settings, breakfastStart: e.target.value })}
+          />
+        </label>
+        <label>
+          Breakfast end
+          <input
+            type="time"
+            value={settings.breakfastEnd}
+            onChange={(e) => setSettings({ ...settings, breakfastEnd: e.target.value })}
+          />
+        </label>
+        <label>
+          Lunch start
+          <input
+            type="time"
+            value={settings.lunchStart}
+            onChange={(e) => setSettings({ ...settings, lunchStart: e.target.value })}
+          />
+        </label>
+        <label>
+          Lunch end
+          <input
+            type="time"
+            value={settings.lunchEnd}
+            onChange={(e) => setSettings({ ...settings, lunchEnd: e.target.value })}
+          />
+        </label>
+        <label>
+          Dinner start
+          <input
+            type="time"
+            value={settings.dinnerStart}
+            onChange={(e) => setSettings({ ...settings, dinnerStart: e.target.value })}
+          />
+        </label>
+        <label>
+          Dinner end
+          <input
+            type="time"
+            value={settings.dinnerEnd}
+            onChange={(e) => setSettings({ ...settings, dinnerEnd: e.target.value })}
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.hideInactiveByDefault}
+            onChange={(e) =>
+              setSettings({ ...settings, hideInactiveByDefault: e.target.checked })
+            }
+          />
+          Hide inactive people by default
+        </label>
+        <button type="button" className="primary" onClick={() => void saveSettings()}>
+          Save Settings
+        </button>
+      </section>
+
+      <section className="card stack">
+        <h3>Camp Meeting Google Sheets Sync</h3>
+        <p className="muted">Available when using Camp Meeting mode integrations.</p>
+        <div className="button-row">
+          <button
+            type="button"
+            className="secondary"
+            disabled={isSyncingSheet}
+            onClick={() => {
+              setMessage("");
+              setError("");
+              setIsSyncingSheet(true);
+              void api("/import/camp-meeting/google-sheet/import", { method: "POST" })
+                .then(() => setMessage("Imported Camp Meeting entitlements from Google Sheet."))
+                .catch((syncError) =>
+                  setError(syncError instanceof Error ? syncError.message : "Google Sheet import failed."),
+                )
+                .finally(() => setIsSyncingSheet(false));
+            }}
+          >
+            Import from Google Sheet
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={isWritingBackSheet}
+            onClick={() => {
+              setMessage("");
+              setError("");
+              setIsWritingBackSheet(true);
+              void api("/import/camp-meeting/google-sheet/write-back-now", { method: "POST" })
+                .then(() => setMessage("Wrote back pending redemptions to Google Sheet."))
+                .catch((syncError) =>
+                  setError(syncError instanceof Error ? syncError.message : "Google Sheet write-back failed."),
+                )
+                .finally(() => setIsWritingBackSheet(false));
+            }}
+          >
+            Write Back Redemptions
+          </button>
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h3>Data Reset Tools</h3>
+        <label>
+          Reset action
+          <select
+            value={clearAction}
+            onChange={(e) =>
+              setClearAction(
+                e.target.value as
+                  | "clear-meal-data"
+                  | "clear-people-import-data"
+                  | "reset-meal-tracking-data",
+              )
+            }
+          >
+            <option value="clear-meal-data">Clear meal data only</option>
+            <option value="clear-people-import-data">Clear people/import data</option>
+            <option value="reset-meal-tracking-data">Reset all meal tracking data</option>
+          </select>
+        </label>
+        <button type="button" className="danger" onClick={() => setShowClearModal(true)}>
+          Run Reset Tool
+        </button>
+      </section>
+
+      {isOwner && (
+        <section className="card stack">
+          <h3>Full Application Wipe (OWNER only)</h3>
+          <p className="error">
+            Arms a one-time wipe token for use by protected backend wipe endpoint.
+          </p>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setFullWipeResult(null);
+              setShowFullWipeConfirm(true);
+            }}
+          >
+            Arm Full Wipe Token
+          </button>
+          {fullWipeResult && (
+            <div className="stack">
               <p>
-                You are switching from{" "}
-                <strong>{modeLabel(settings.mealTrackingMode)}</strong> to{" "}
-                <strong>{modeLabel(pendingMode)}</strong>.
+                <strong>One-time token:</strong> <code>{fullWipeResult.token}</code>
               </p>
-              <p className="error">
-                This will permanently clear operational data (people, scans,
-                imports). Accounts and settings will be preserved.
+              <p className="muted">
+                Expires at: {new Date(fullWipeResult.expiresAt).toLocaleString()}
               </p>
-              <p>
-                Type <code>SWITCH MODE</code> to continue.
-              </p>
-              <input
-                value={modePhrase}
-                onChange={(e) => setModePhrase(e.target.value)}
-                placeholder="SWITCH MODE"
-              />
-              <div className="button-row">
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => {
+            </div>
+          )}
+        </section>
+      )}
+
+      {showModeConfirm && pendingMode && (
+        <div className="confirm-overlay" role="dialog" aria-modal="true">
+          <div className="confirm-modal stack">
+            <h4>Confirm Mode Switch</h4>
+            <p>
+              You are switching from <strong>{modeLabel(settings.mealTrackingMode)}</strong> to{' '}
+              <strong>{modeLabel(pendingMode)}</strong>.
+            </p>
+            <p className="error">
+              This will permanently clear operational data (people, scans, imports).
+              Accounts and settings will be preserved.
+            </p>
+            <p>
+              Type <code>SWITCH MODE</code> to continue.
+            </p>
+            <input
+              value={modePhrase}
+              onChange={(e) => setModePhrase(e.target.value)}
+              placeholder="SWITCH MODE"
+            />
+            <div className="button-row">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  setShowModeConfirm(false);
+                  setPendingMode(null);
+                  setModePhrase("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger"
+                type="button"
+                disabled={!modeEnabled}
+                onClick={() => {
+                  void api("/settings/meal-tracking-mode", {
+                    method: "PUT",
+                    body: JSON.stringify({
+                      mealTrackingMode: pendingMode,
+                      confirmationPhrase: modePhrase,
+                    }),
+                  }).then(async () => {
+                    setMessage(
+                      `Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`,
+                    );
+                    setError("");
                     setShowModeConfirm(false);
                     setPendingMode(null);
                     setModePhrase("");
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="danger"
-                  type="button"
-                  disabled={!modeEnabled}
-                  onClick={() => {
-                    void api("/settings/meal-tracking-mode", {
-                      method: "PUT",
-                      body: JSON.stringify({
-                        mealTrackingMode: pendingMode,
-                        confirmationPhrase: modePhrase,
-                      }),
-                    }).then(async () => {
-                      setMessage(
-                        `Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`,
-                      );
-                      setError("");
-                      setShowModeConfirm(false);
-                      setPendingMode(null);
-                      setModePhrase("");
-                      await load();
-                    });
-                  }}
-                >
-                  Switch Mode + Clear Data
-                </button>
-              </div>
+                    await load();
+                  });
+                }}
+              >
+                Switch Mode + Clear Data
+              </button>
             </div>
           </div>
-        )}
-      </div>
-    </>
+        </div>
+      )}
+
+      {showClearModal && (
+        <div className="confirm-overlay" role="dialog" aria-modal="true">
+          <div className="confirm-modal stack">
+            <h4>Confirm Data Reset</h4>
+            <p>
+              Type <code>RESET MEAL TRACKING DATA</code> to continue.
+            </p>
+            <input
+              value={clearPhrase}
+              onChange={(e) => setClearPhrase(e.target.value)}
+              placeholder="RESET MEAL TRACKING DATA"
+            />
+            <div className="button-row">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  setShowClearModal(false);
+                  setClearPhrase("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger"
+                type="button"
+                disabled={!clearEnabled}
+                onClick={() => void clearOperationalData()}
+              >
+                Confirm Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFullWipeConfirm && isOwner && (
+        <div className="confirm-overlay" role="dialog" aria-modal="true">
+          <div className="confirm-modal stack">
+            <h4>Arm Full Application Wipe</h4>
+            <p>
+              Type <code>ARM FULL WIPE</code> to arm a short-lived full wipe token.
+            </p>
+            <input
+              value={fullWipePhrase}
+              onChange={(e) => setFullWipePhrase(e.target.value)}
+              placeholder="ARM FULL WIPE"
+            />
+            <div className="button-row">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  setShowFullWipeConfirm(false);
+                  setFullWipePhrase("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger"
+                type="button"
+                disabled={!fullWipeEnabled}
+                onClick={() => void armFullWipe()}
+              >
+                Arm Token
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
