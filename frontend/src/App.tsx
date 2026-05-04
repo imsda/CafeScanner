@@ -37,14 +37,22 @@ function resolveBadgeCodeType(type: BadgeCodeType, value: string): "barcode" | "
 
 function BarcodeSvg({ value, width = 150, height = 54 }: { value: string; width?: number; height?: number }) {
   const [svgMarkup, setSvgMarkup] = useState<string>("");
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      setSvgMarkup("");
+      setError("No code value available.");
+      return;
+    }
+
     const writer = new MultiFormatWriter();
     try {
       const hints = new Map();
       hints.set(EncodeHintType.MARGIN, 0);
-      const matrix = writer.encode(value, BarcodeFormat.CODE_128, width, height, hints);
-      let markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${matrix.getWidth()} ${matrix.getHeight()}" width="${width}" height="${height}" role="img" aria-label="Barcode for ${value}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="white"/>`;
+      const matrix = writer.encode(trimmedValue, BarcodeFormat.CODE_128, width, height, hints);
+      let markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${matrix.getWidth()} ${matrix.getHeight()}" width="100%" height="100%" role="img" aria-label="Barcode for ${trimmedValue}" shape-rendering="crispEdges" preserveAspectRatio="xMidYMid meet"><rect width="100%" height="100%" fill="white"/>`;
       for (let y = 0; y < matrix.getHeight(); y += 1) {
         for (let x = 0; x < matrix.getWidth(); x += 1) {
           if (matrix.get(x, y)) {
@@ -54,13 +62,16 @@ function BarcodeSvg({ value, width = 150, height = 54 }: { value: string; width?
       }
       markup += "</svg>";
       setSvgMarkup(markup);
+      setError("");
     } catch {
       setSvgMarkup("");
+      setError("Unable to render barcode.");
     }
   }, [height, value, width]);
 
-  if (!svgMarkup) return null;
-  return <div aria-hidden dangerouslySetInnerHTML={{ __html: svgMarkup }} />;
+  if (error) return <small className="error">{error}</small>;
+  if (!svgMarkup) return <small className="error">Unable to render barcode.</small>;
+  return <div dangerouslySetInnerHTML={{ __html: svgMarkup }} />;
 }
 const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
   { key: "DASHBOARD", path: "dashboard", label: "Dashboard" },
@@ -1526,21 +1537,23 @@ function BadgesPage() {
       </div>
       <div className="badge-grid">
         {people.map((p) => {
-          const codeValue = p.personId;
+          const codeValue = String((p.codeValue ?? p.personId ?? "")).trim();
           const resolvedType = resolveBadgeCodeType(codeType, codeValue);
           return (
             <div className="badge" key={p.id}>
+              <p className="badge-name">
+                {p.firstName} {p.lastName}
+              </p>
               <div className="badge-code" aria-label={`${resolvedType} code`}>
-                {resolvedType === "qr" ? (
-                  <QRCodeSVG value={codeValue} size={120} fgColor="#000000" bgColor="#ffffff" />
+                {!codeValue ? (
+                  <small className="error">No code value available.</small>
+                ) : resolvedType === "qr" ? (
+                  <QRCodeSVG value={codeValue} size={112} fgColor="#000000" bgColor="#ffffff" />
                 ) : (
                   <BarcodeSvg value={codeValue} width={150} height={54} />
                 )}
               </div>
-              <p>
-                {p.firstName} {p.lastName}
-              </p>
-              <small>{codeValue}</small>
+              <small className="badge-id">{codeValue || "No ID available"}</small>
             </div>
           );
         })}
