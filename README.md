@@ -93,6 +93,13 @@ Defaults:
 - Frontend: `http://0.0.0.0:5173`
 - Frontend proxies `/api` requests to `http://127.0.0.1:4000` in development.
 
+If the dev server reports `EADDRINUSE` (typically port `4000`), stop stale processes and restart:
+
+```bash
+pkill -f "tsx watch src/index.ts"
+pkill -f "vite"
+```
+
 ### Traefik reverse-proxy flow (same-origin API)
 
 When running behind Traefik, use same-origin browser API calls (`/api/...`) so the browser never calls `http://localhost:4000` directly.
