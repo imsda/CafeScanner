@@ -43,5 +43,13 @@ echo "[dev] Frontend local URL: ${FRONTEND_SCHEME}://localhost:${FRONTEND_PORT}"
 echo "[dev] Frontend LAN URL: ${FRONTEND_SCHEME}://${LAN_IP}:${FRONTEND_PORT}"
 echo "[dev] Frontend proxies /api -> http://127.0.0.1:4000"
 
+if command -v lsof >/dev/null 2>&1 && lsof -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "[dev] Port ${PORT} is already in use."
+  echo "[dev] If this is from a stale dev session, stop old processes and retry:"
+  echo "[dev]   pkill -f \"tsx watch src/index.ts\""
+  echo "[dev]   pkill -f \"vite\""
+  exit 1
+fi
+
 cd "$REPO_ROOT"
 npm run dev
