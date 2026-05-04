@@ -9,6 +9,7 @@ import {
 } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
+import { BarcodeFormat, EncodeHintType, MultiFormatWriter } from "@zxing/library";
 import { ApiNetworkError, api, API_BASE } from "./api/client";
 import type {
   MealTrackingMode,
@@ -23,6 +24,44 @@ import QrScanner from "./components/QrScanner";
 import { useAuth } from "./context/AuthContext";
 import type { AppPage } from "./context/AuthContext";
 
+
+
+type BadgeCodeType = "barcode" | "qr" | "auto";
+
+const BADGE_CODE_TYPE_STORAGE_KEY = "cafescanner.badgeCodeType";
+
+function resolveBadgeCodeType(type: BadgeCodeType, value: string): "barcode" | "qr" {
+  if (type !== "auto") return type;
+  return /^\d{1,20}$/.test(value.trim()) ? "barcode" : "qr";
+}
+
+function BarcodeSvg({ value, width = 150, height = 54 }: { value: string; width?: number; height?: number }) {
+  const [svgMarkup, setSvgMarkup] = useState<string>("");
+
+  useEffect(() => {
+    const writer = new MultiFormatWriter();
+    try {
+      const hints = new Map();
+      hints.set(EncodeHintType.MARGIN, 0);
+      const matrix = writer.encode(value, BarcodeFormat.CODE_128, width, height, hints);
+      let markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${matrix.getWidth()} ${matrix.getHeight()}" width="${width}" height="${height}" role="img" aria-label="Barcode for ${value}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="white"/>`;
+      for (let y = 0; y < matrix.getHeight(); y += 1) {
+        for (let x = 0; x < matrix.getWidth(); x += 1) {
+          if (matrix.get(x, y)) {
+            markup += `<rect x="${x}" y="${y}" width="1" height="1" fill="black"/>`;
+          }
+        }
+      }
+      markup += "</svg>";
+      setSvgMarkup(markup);
+    } catch {
+      setSvgMarkup("");
+    }
+  }, [height, value, width]);
+
+  if (!svgMarkup) return null;
+  return <div aria-hidden dangerouslySetInnerHTML={{ __html: svgMarkup }} />;
+}
 const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
   { key: "DASHBOARD", path: "dashboard", label: "Dashboard" },
   { key: "SCAN", path: "scan", label: "Scan Station" },
@@ -1456,25 +1495,55 @@ function ImportPage() {
 
 function BadgesPage() {
   const [people, setPeople] = useState<any[]>([]);
+  const [codeType, setCodeType] = useState<BadgeCodeType>(() => {
+    const stored = window.localStorage.getItem(BADGE_CODE_TYPE_STORAGE_KEY);
+    return stored === "barcode" || stored === "qr" || stored === "auto" ? stored : "barcode";
+  });
+
   useEffect(() => {
     void api<any[]>("/people?showInactive=true").then(setPeople);
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(BADGE_CODE_TYPE_STORAGE_KEY, codeType);
+  }, [codeType]);
+
   return (
     <div className="card">
       <h2>Printable Badges</h2>
-      <button className="secondary" onClick={() => window.print()}>
-        Print Sheet
-      </button>
+      <div className="button-row">
+        <label>
+          Code Type
+          <select value={codeType} onChange={(e) => setCodeType(e.target.value as BadgeCodeType)}>
+            <option value="barcode">Barcode (Code 128)</option>
+            <option value="qr">QR Code</option>
+            <option value="auto">Auto (recommended)</option>
+          </select>
+        </label>
+        <button className="secondary" onClick={() => window.print()}>
+          Print Sheet
+        </button>
+      </div>
       <div className="badge-grid">
-        {people.map((p) => (
-          <div className="badge" key={p.id}>
-            <QRCodeSVG value={p.personId} size={90} />
-            <p>
-              {p.firstName} {p.lastName}
-            </p>
-            <small>{p.personId}</small>
-          </div>
-        ))}
+        {people.map((p) => {
+          const codeValue = p.personId;
+          const resolvedType = resolveBadgeCodeType(codeType, codeValue);
+          return (
+            <div className="badge" key={p.id}>
+              <div className="badge-code" aria-label={`${resolvedType} code`}>
+                {resolvedType === "qr" ? (
+                  <QRCodeSVG value={codeValue} size={120} fgColor="#000000" bgColor="#ffffff" />
+                ) : (
+                  <BarcodeSvg value={codeValue} width={150} height={54} />
+                )}
+              </div>
+              <p>
+                {p.firstName} {p.lastName}
+              </p>
+              <small>{codeValue}</small>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

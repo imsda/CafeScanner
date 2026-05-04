@@ -131,6 +131,19 @@ th { background: #f7fbff; }
 .people-actions .small { padding: 0.24rem 0.48rem; font-size: 0.76rem; }
 .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.7rem; }
 .badge { background: #fff; border: 1px solid #d8e4f4; border-radius: 8px; padding: 0.7rem; text-align: center; }
+.badge-code {
+  min-height: 58px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 0.3rem;
+  overflow: hidden;
+}
+.badge-code svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
 .permission-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
