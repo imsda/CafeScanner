@@ -130,9 +130,11 @@ th { background: #f7fbff; }
 .people-actions { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
 .people-actions .small { padding: 0.24rem 0.48rem; font-size: 0.76rem; }
 .badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.7rem; }
-.badge { background: #fff; border: 1px solid #d8e4f4; border-radius: 8px; padding: 0.7rem; text-align: center; }
+.badge { background: #fff; border: 1px solid #d8e4f4; border-radius: 8px; padding: 0.7rem; text-align: center; display: flex; flex-direction: column; gap: 0.35rem; }
+.badge-name { margin: 0; font-weight: 600; line-height: 1.2; }
+.badge-id { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 .badge-code {
-  min-height: 58px;
+  min-height: 70px;
   display: flex;
   justify-content: center;
   align-items: center;
