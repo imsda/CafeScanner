@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import Barcode from "react-barcode";
 import { QRCodeSVG } from "qrcode.react";
-import { BarcodeFormat, EncodeHintType, MultiFormatWriter } from "@zxing/library";
 import { ApiNetworkError, api, API_BASE } from "./api/client";
 import type {
   MealTrackingMode,
@@ -27,41 +27,6 @@ function resolveBadgeCodeType(type: BadgeCodeType, value: string): "barcode" | "
   return /^\d{1,20}$/.test(value.trim()) ? "barcode" : "qr";
 }
 
-function BarcodeSvg({ value, width = 150, height = 54 }: { value: string; width?: number; height?: number }) {
-  const trimmedValue = value.trim();
-  if (!trimmedValue) return <small className="error">Unable to render barcode.</small>;
-
-  try {
-    const writer = new MultiFormatWriter();
-    const hints = new Map();
-    hints.set(EncodeHintType.MARGIN, 0);
-    const matrix = writer.encode(trimmedValue, BarcodeFormat.CODE_128, width, height, hints);
-    const bars: ReactNode[] = [];
-    for (let y = 0; y < matrix.getHeight(); y += 1) {
-      for (let x = 0; x < matrix.getWidth(); x += 1) {
-        if (matrix.get(x, y)) bars.push(<rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="black" />);
-      }
-    }
-
-    return (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox={`0 0 ${matrix.getWidth()} ${matrix.getHeight()}`}
-        width="100%"
-        height="100%"
-        role="img"
-        aria-label={`Barcode for ${trimmedValue}`}
-        shapeRendering="crispEdges"
-        preserveAspectRatio="xMidYMid meet"
-      >
-        <rect width="100%" height="100%" fill="white" />
-        {bars}
-      </svg>
-    );
-  } catch {
-    return null;
-  }
-}
 const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
   { key: "DASHBOARD", path: "dashboard", label: "Dashboard" },
   { key: "SCAN", path: "scan", label: "Scan Station" },
@@ -1526,23 +1491,30 @@ function BadgesPage() {
       </div>
       <div className="badge-grid">
         {people.map((p) => {
-          const codeValue = String((p.codeValue ?? p.personId ?? "")).trim();
-          const resolvedType = resolveBadgeCodeType(codeType, codeValue);
+          const scanValue = String((p.codeValue ?? p.personId ?? "")).trim();
+          const resolvedType = resolveBadgeCodeType(codeType, scanValue);
           return (
             <div className="badge" key={p.id}>
               <p className="badge-name">
                 {p.firstName} {p.lastName}
               </p>
               <div className="badge-code" aria-label={`${resolvedType} code`}>
-                {!codeValue ? (
-                  <small className="error">No code value available.</small>
+                {!scanValue ? (
+                  <small className="error">No ID available</small>
                 ) : resolvedType === "qr" ? (
-                  <QRCodeSVG value={codeValue} size={112} fgColor="#000000" bgColor="#ffffff" />
+                  <QRCodeSVG value={scanValue} size={80} />
                 ) : (
-                  <BarcodeSvg value={codeValue} width={150} height={54} />
+                  <Barcode
+                    value={scanValue}
+                    format="CODE128"
+                    width={1.5}
+                    height={45}
+                    displayValue={false}
+                    margin={0}
+                  />
                 )}
               </div>
-              <small className="badge-id">{codeValue || "No ID available"}</small>
+              <small className="badge-id">{scanValue || "No ID available"}</small>
             </div>
           );
         })}
