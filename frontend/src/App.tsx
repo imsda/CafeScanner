@@ -1,12 +1,4 @@
-import {
-  FormEvent,
-  KeyboardEvent,
-  ReactNode,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { BarcodeFormat, EncodeHintType, MultiFormatWriter } from "@zxing/library";
@@ -36,42 +28,39 @@ function resolveBadgeCodeType(type: BadgeCodeType, value: string): "barcode" | "
 }
 
 function BarcodeSvg({ value, width = 150, height = 54 }: { value: string; width?: number; height?: number }) {
-  const [svgMarkup, setSvgMarkup] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const trimmedValue = value.trim();
+  if (!trimmedValue) return <small className="error">Unable to render barcode.</small>;
 
-  useEffect(() => {
-    const trimmedValue = value.trim();
-    if (!trimmedValue) {
-      setSvgMarkup("");
-      setError("No code value available.");
-      return;
-    }
-
+  try {
     const writer = new MultiFormatWriter();
-    try {
-      const hints = new Map();
-      hints.set(EncodeHintType.MARGIN, 0);
-      const matrix = writer.encode(trimmedValue, BarcodeFormat.CODE_128, width, height, hints);
-      let markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${matrix.getWidth()} ${matrix.getHeight()}" width="100%" height="100%" role="img" aria-label="Barcode for ${trimmedValue}" shape-rendering="crispEdges" preserveAspectRatio="xMidYMid meet"><rect width="100%" height="100%" fill="white"/>`;
-      for (let y = 0; y < matrix.getHeight(); y += 1) {
-        for (let x = 0; x < matrix.getWidth(); x += 1) {
-          if (matrix.get(x, y)) {
-            markup += `<rect x="${x}" y="${y}" width="1" height="1" fill="black"/>`;
-          }
-        }
+    const hints = new Map();
+    hints.set(EncodeHintType.MARGIN, 0);
+    const matrix = writer.encode(trimmedValue, BarcodeFormat.CODE_128, width, height, hints);
+    const bars: ReactNode[] = [];
+    for (let y = 0; y < matrix.getHeight(); y += 1) {
+      for (let x = 0; x < matrix.getWidth(); x += 1) {
+        if (matrix.get(x, y)) bars.push(<rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="black" />);
       }
-      markup += "</svg>";
-      setSvgMarkup(markup);
-      setError("");
-    } catch {
-      setSvgMarkup("");
-      setError("Unable to render barcode.");
     }
-  }, [height, value, width]);
 
-  if (error) return <small className="error">{error}</small>;
-  if (!svgMarkup) return <small className="error">Unable to render barcode.</small>;
-  return <div dangerouslySetInnerHTML={{ __html: svgMarkup }} />;
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox={`0 0 ${matrix.getWidth()} ${matrix.getHeight()}`}
+        width="100%"
+        height="100%"
+        role="img"
+        aria-label={`Barcode for ${trimmedValue}`}
+        shapeRendering="crispEdges"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <rect width="100%" height="100%" fill="white" />
+        {bars}
+      </svg>
+    );
+  } catch {
+    return null;
+  }
 }
 const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
   { key: "DASHBOARD", path: "dashboard", label: "Dashboard" },
