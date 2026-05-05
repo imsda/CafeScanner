@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 
 function normalizeCampMeetingPersonId(value: string): string {
-  return value.trim().toUpperCase();
+  return value.trim();
 }
 
 function normalizePersonId(value: string): string {
@@ -248,12 +248,30 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
       if (matchingUnused.length === 0) {
         const person = await tx.person.findUnique({ where: { personId: personIdValue } });
+        const [allForId, dayMealAnyState, dayAnyMeal, mealAnyDay] = await Promise.all([
+          tx.mealEntitlement.count({ where: { personId: personIdValue } }),
+          tx.mealEntitlement.count({ where: { personId: personIdValue, mealDay: todayMealDay, mealType: detectedMeal } }),
+          tx.mealEntitlement.count({ where: { personId: personIdValue, mealDay: todayMealDay } }),
+          tx.mealEntitlement.count({ where: { personId: personIdValue, mealType: detectedMeal } })
+        ]);
+        let helpfulError = 'No entitlements for this ID.';
+        let reason = 'NO_ENTITLEMENTS_FOR_ID';
+        if (allForId > 0 && dayMealAnyState > 0) {
+          helpfulError = 'All matching entitlements are already redeemed.';
+          reason = 'ALL_MATCHING_REDEEMED';
+        } else if (allForId > 0 && dayAnyMeal > 0) {
+          helpfulError = 'Entitlements exist, but for a different meal type.';
+          reason = 'ENTITLEMENT_MEAL_MISMATCH';
+        } else if (allForId > 0 && mealAnyDay > 0) {
+          helpfulError = 'Entitlements exist, but for a different day.';
+          reason = 'ENTITLEMENT_DAY_MISMATCH';
+        }
         await tx.scanTransaction.create({
           data: {
             scannedValue: personIdValue,
             mealType: detectedMeal,
             result: ScanResult.FAILURE,
-            failureReason: 'NO_MEAL_ENTITLEMENT',
+            failureReason: reason,
             personId: person?.id,
             stationName: settings.stationName,
             adminUserId: options?.adminUserId
@@ -262,8 +280,8 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
         return {
           ok: false,
-          error: 'No unused meal entitlement remains for this ID for this meal day.',
-          reason: 'NO_MEAL_ENTITLEMENT',
+          error: helpfulError,
+          reason,
           person,
           mealType: detectedMeal
         };
