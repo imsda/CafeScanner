@@ -251,6 +251,32 @@ router.get('/camp-meeting/summary', async (_req, res) => {
   });
 });
 
+router.get('/camp-meeting/google-sheet/debug/:regId', async (req, res) => {
+  const regId = normalizeCampMeetingPersonId(req.params.regId || '');
+  const entitlements = await prisma.mealEntitlement.findMany({
+    where: { personId: regId },
+    orderBy: [{ mealDay: 'asc' }, { mealType: 'asc' }, { sourceSheetRow: 'asc' }]
+  });
+
+  const grouped: Record<string, Record<string, unknown[]>> = {};
+  for (const e of entitlements) {
+    const day = e.mealDay;
+    const meal = e.mealType;
+    if (!grouped[day]) grouped[day] = {};
+    if (!grouped[day][meal]) grouped[day][meal] = [];
+    grouped[day][meal].push({
+      entitlementId: e.id,
+      sourceTicketId: e.sourceTicketId,
+      sourceSheetRow: e.sourceSheetRow,
+      personName: e.personName,
+      mealDate: e.mealDate,
+      redeemed: e.redeemed
+    });
+  }
+
+  return res.json({ regId, count: entitlements.length, grouped });
+});
+
 router.post('/google-sheet/import', async (_req, res) => {
   try {
     const mode = await getMode();

@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
 
-const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
+const REQUIRED_HEADERS = ['ticket_id', 'reg_id', 'guest_name', 'meal_type', 'meal_day', 'meal_date', 'redeemed'] as const;
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
 type SchedulerStatus = {
@@ -33,15 +33,34 @@ function parseSpreadsheetId(input: string): string {
 
 function mealTypeFromSheet(value: string): MealType | null {
   const v = value.trim().toLowerCase();
-  if (v === 'breakfast') return MealType.BREAKFAST;
-  if (v === 'lunch') return MealType.LUNCH;
-  if (v === 'supper' || v === 'dinner') return MealType.DINNER;
+  if (v === 'breakfast' || v === 'b') return MealType.BREAKFAST;
+  if (v === 'lunch' || v === 'l') return MealType.LUNCH;
+  if (v === 'supper' || v === 'dinner' || v === 'd' || v === 's') return MealType.DINNER;
   return null;
 }
 function mealDayFromSheet(value: string): MealDay | null {
-  const v = value.trim().slice(0,3).toLowerCase();
-  const map: Record<string, MealDay> = {sun:MealDay.SUN,mon:MealDay.MON,tue:MealDay.TUE,wed:MealDay.WED,thu:MealDay.THU,fri:MealDay.FRI,sat:MealDay.SAT};
+  const v = value.trim().toLowerCase();
+  const map: Record<string, MealDay> = {
+    sun: MealDay.SUN, sunday: MealDay.SUN,
+    mon: MealDay.MON, monday: MealDay.MON,
+    tue: MealDay.TUE, tues: MealDay.TUE, tuesday: MealDay.TUE,
+    wed: MealDay.WED, wednesday: MealDay.WED,
+    thu: MealDay.THU, thur: MealDay.THU, thurs: MealDay.THU, thursday: MealDay.THU,
+    fri: MealDay.FRI, friday: MealDay.FRI,
+    sat: MealDay.SAT, saturday: MealDay.SAT
+  };
   return map[v] ?? null;
+}
+function mealDayFromDate(value: string, timezone: string): MealDay | null {
+  const raw = value.trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' }).format(parsed);
+  return mealDayFromSheet(day);
+}
+function normalizeCampMeetingRegId(value: string): string {
+  return value.trim().toUpperCase();
 }
 function parseBool(value: string): boolean {
   return ['1', 'true', 'yes', 'y'].includes(value.trim().toLowerCase());
@@ -152,16 +171,23 @@ export async function importCampMeetingFromSheet() {
 
   const rows = resp.data.values || [];
   const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
-  const hasHeader = JSON.stringify(normalizedHeader) === JSON.stringify(HEADER);
-  const missingHeaders = HEADER.filter((header) => !normalizedHeader.includes(header));
-  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const headerIndex = new Map<string, number>();
+  normalizedHeader.forEach((v: string, idx: number) => headerIndex.set(v, idx));
+  const missingHeaders = REQUIRED_HEADERS.filter((header) => !headerIndex.has(header));
+  const hasHeader = missingHeaders.length === 0;
+  const dataRows = rows.slice(1);
 
   const totalRows = dataRows.length;
   let validRows = 0;
   let skippedRows = 0;
-  let created = 0;
-  let updated = 0;
+  let peopleCreated = 0;
+  let peopleUpdated = 0;
+  let entitlementsCreated = 0;
+  let entitlementsUpdated = 0;
   const errors: string[] = [];
+  const skippedRowDetails: Array<{ rowNumber: number; reg_id: string; guest_name: string; meal_type: string; meal_day: string; meal_date: string; reason: string }> = [];
+  const uniqueRegIds = new Set<string>();
+  const mealTotalsByTypeDay: Record<string, number> = {};
 
   if (!hasHeader) {
     skippedRows = totalRows;
@@ -169,19 +195,33 @@ export async function importCampMeetingFromSheet() {
   } else if (!dataRows.length) {
     errors.push('no valid rows');
   } else {
+    const timezone = settings.timezone || 'Etc/UTC';
     for (let i = 0; i < dataRows.length; i++) {
       const r = dataRows[i] as string[];
-      const regId = (r[1] || '').trim().toUpperCase();
-      const personName = (r[2] || '').trim();
-      const mealType = mealTypeFromSheet(r[3] || '');
-      const mealDay = mealDayFromSheet(r[4] || '');
-      if (!mealType || !mealDay || !regId) {
+      const rowNumber = i + 2;
+      const col = (name: string) => String(r[headerIndex.get(name) ?? -1] || '').trim();
+      const regIdRaw = col('reg_id');
+      const regId = normalizeCampMeetingRegId(regIdRaw);
+      const personName = col('guest_name');
+      const mealTypeRaw = col('meal_type');
+      const mealDayRaw = col('meal_day');
+      const mealDate = col('meal_date');
+      const mealType = mealTypeFromSheet(mealTypeRaw);
+      const parsedMealDay = mealDayFromSheet(mealDayRaw);
+      const derivedMealDay = parsedMealDay ?? mealDayFromDate(mealDate, timezone);
+      if (!mealType || !derivedMealDay || !regId) {
         skippedRows += 1;
-        errors.push(`Row ${i + 2}: invalid reg_id, meal_type, or meal_day.`);
+        const reason = !regId ? 'missing reg_id' : !mealType ? 'invalid meal_type' : 'invalid/blank meal_day and unable to derive from meal_date';
+        errors.push(`Row ${rowNumber}: ${reason}`);
+        skippedRowDetails.push({ rowNumber, reg_id: regIdRaw, guest_name: personName, meal_type: mealTypeRaw, meal_day: mealDayRaw, meal_date: mealDate, reason });
         continue;
       }
 
       validRows += 1;
+      uniqueRegIds.add(regId);
+      if (!parsedMealDay && derivedMealDay) {
+        skippedRowDetails.push({ rowNumber, reg_id: regIdRaw, guest_name: personName, meal_type: mealTypeRaw, meal_day: mealDayRaw, meal_date: mealDate, reason: `meal_day derived from meal_date in timezone ${timezone}` });
+      }
 
       const displayName = personName || regId;
       const existingPerson = await prisma.person.findUnique({ where: { personId: regId }, select: { id: true } });
@@ -190,27 +230,31 @@ export async function importCampMeetingFromSheet() {
           where: { personId: regId },
           data: { firstName: displayName, lastName: ' ', codeValue: regId, active: true }
         });
+        peopleUpdated += 1;
       } else {
         await prisma.person.create({
           data: { personId: regId, codeValue: regId, firstName: displayName, lastName: ' ', active: true }
         });
+        peopleCreated += 1;
       }
 
-      const ticketId = (r[0] || '').trim() || `row-${i + 2}`;
+      const ticketId = col('ticket_id') || `row-${rowNumber}`;
       const existingEntitlement = await prisma.mealEntitlement.findUnique({ where: { sourceTicketId: ticketId }, select: { id: true } });
       await prisma.mealEntitlement.upsert({
         where: { sourceTicketId: ticketId },
         update: {
-          personId: regId, personName, mealType, mealDay, mealDate: (r[5] || '').trim(), redeemed: parseBool(String(r[8] || '')), notes: (r[11] || '').trim() || null, sourceSheetRow: i + 2
+          personId: regId, personName, mealType, mealDay: derivedMealDay, mealDate, redeemed: parseBool(col('redeemed')), notes: (col('notes') || '').trim() || null, sourceSheetRow: rowNumber
         },
         create: {
           sourceTicketId: ticketId,
-          sourceSheetRow: i + 2,
-          personId: regId, personName, mealType, mealDay, mealDate: (r[5] || '').trim(), redeemed: parseBool(String(r[8] || '')), notes: (r[11] || '').trim() || null
+          sourceSheetRow: rowNumber,
+          personId: regId, personName, mealType, mealDay: derivedMealDay, mealDate, redeemed: parseBool(col('redeemed')), notes: (col('notes') || '').trim() || null
         }
       });
-      if (existingEntitlement) updated += 1;
-      else created += 1;
+      if (existingEntitlement) entitlementsUpdated += 1;
+      else entitlementsCreated += 1;
+      const key = `${derivedMealDay}:${mealType}`;
+      mealTotalsByTypeDay[key] = (mealTotalsByTypeDay[key] || 0) + 1;
     }
 
     if (validRows === 0 && errors.length === 0) {
@@ -218,9 +262,9 @@ export async function importCampMeetingFromSheet() {
     }
   }
 
-  const summary = { peopleCreated: created, peopleUpdated: updated, rowsImported: validRows, rowsSkipped: skippedRows, writeBackRowsUpdated: 0, errors };
-  if (created + updated === 0 && errors.length === 0) summary.errors.push('no valid rows');
-  console.log('[SHEET_IMPORT]', { totalRows, validRows, skippedRows, created, updated, errors });
+  const summary = { totalSheetRows: totalRows, validTicketRows: validRows, peopleCreated, peopleUpdated, entitlementsCreated, entitlementsUpdated, rowsSkipped: skippedRows, skippedRowDetails, uniqueRegIdCount: uniqueRegIds.size, mealTotalsByTypeDay, writeBackRowsUpdated: 0, errors };
+  if (entitlementsCreated + entitlementsUpdated === 0 && errors.length === 0) summary.errors.push('no valid rows');
+  console.log('[SHEET_IMPORT]', summary);
   return summary;
 }
 

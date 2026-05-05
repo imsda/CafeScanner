@@ -247,6 +247,21 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       });
 
       if (matchingUnused.length === 0) {
+        const [anyForId, anyForMealType, anyForDay, anyRedeemedForMealDay] = await Promise.all([
+          tx.mealEntitlement.count({ where: { personId: personIdValue } }),
+          tx.mealEntitlement.count({ where: { personId: personIdValue, mealType: detectedMeal } }),
+          tx.mealEntitlement.count({ where: { personId: personIdValue, mealDay: todayMealDay } }),
+          tx.mealEntitlement.count({ where: { personId: personIdValue, mealType: detectedMeal, mealDay: todayMealDay, redeemed: true } })
+        ]);
+        const detailedReason = anyForId === 0
+          ? 'no entitlements for this ID'
+          : anyForDay === 0
+            ? 'entitlements exist but for different day'
+            : anyForMealType === 0
+              ? 'entitlements exist but different meal type'
+              : anyRedeemedForMealDay > 0
+                ? 'all matching entitlements already redeemed'
+                : 'no entitlements for this ID';
         const person = await tx.person.findUnique({ where: { personId: personIdValue } });
         await tx.scanTransaction.create({
           data: {
@@ -262,7 +277,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
         return {
           ok: false,
-          error: 'No unused meal entitlement remains for this ID for this meal day.',
+          error: `No unused meal entitlement remains for this ID for this meal day: ${detailedReason}.`,
           reason: 'NO_MEAL_ENTITLEMENT',
           person,
           mealType: detectedMeal
