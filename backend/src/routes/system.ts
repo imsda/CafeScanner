@@ -2,7 +2,6 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import { prisma } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
 
@@ -12,17 +11,6 @@ const dbUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }
 });
-
-const REQUIRED_TABLES = [
-  'AdminUser',
-  'UserPageAccess',
-  'Person',
-  'Setting',
-  'ScanTransaction',
-  'MealEntitlement',
-  'ImportHistory',
-  '_prisma_migrations'
-];
 
 function backupTimestamp(d = new Date()) {
   const y = d.getFullYear();
@@ -45,14 +33,17 @@ function resolveBackupsDirectory() {
 }
 
 async function validateCafeScannerDbFile(dbPath: string) {
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const stats = await fs.stat(dbPath);
+  if (!stats.isFile() || stats.size === 0) throw new Error('Backup file is empty or invalid.');
+
+  const handle = await fs.open(dbPath, 'r');
   try {
-    const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[];
-    const names = new Set(rows.map((r) => r.name));
-    const missing = REQUIRED_TABLES.filter((name) => !names.has(name));
-    if (missing.length > 0) throw new Error(`Backup file missing required tables: ${missing.join(', ')}`);
+    const header = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const signature = header.subarray(0, bytesRead).toString('utf8');
+    if (!signature.startsWith('SQLite format 3')) throw new Error('Backup file is not a valid SQLite database.');
   } finally {
-    db.close();
+    await handle.close();
   }
 }
 
