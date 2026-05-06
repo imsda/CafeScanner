@@ -11,6 +11,7 @@ type RawInputRow = Record<string, string>;
 type NormalizedCampMeetingRow = {
   rowNumber: number;
   sourceTicketId: string;
+  originalTicketId: string;
   personId: string;
   personName: string;
   mealType: MealType;
@@ -23,6 +24,7 @@ type NormalizedCampMeetingRow = {
 export type CampMeetingImportSummary = {
   totalRows: number;
   validRows: number;
+  duplicateTicketIdCount: number;
   skippedRows: number;
   skippedRowReasons: Array<{ row: number; reason: string }>;
   peopleCreated: number;
@@ -32,6 +34,15 @@ export type CampMeetingImportSummary = {
   uniqueRegIdCount: number;
   errors: string[];
 };
+
+type CampMeetingImportSource = 'csv' | 'google_sheet';
+
+type NormalizeOptions = {
+  source: CampMeetingImportSource;
+  sheetName?: string;
+};
+
+type ImportOptions = NormalizeOptions;
 
 function normalizeHeaderName(value: string): string {
   return String(value || '').trim().toLowerCase();
@@ -115,10 +126,20 @@ export function mapRowsToCampMeetingInput(rows: string[][]): { inputRows: RawInp
   return { inputRows, errors: [] };
 }
 
-export function normalizeCampMeetingRows(inputRows: RawInputRow[]): { validRows: NormalizedCampMeetingRow[]; skipped: Array<{ row: number; reason: string }>; totalRows: number; uniqueRegIds: Set<string> } {
+function buildSourceTicketId(rawTicketId: string, rowNumber: number, options: NormalizeOptions): string {
+  if (options.source === 'google_sheet') {
+    const safeSheetName = (options.sheetName || 'Sheet1').trim() || 'Sheet1';
+    return `google:${safeSheetName}:row:${rowNumber}`;
+  }
+  return rawTicketId || `sheet-row-${rowNumber}`;
+}
+
+export function normalizeCampMeetingRows(inputRows: RawInputRow[], options: NormalizeOptions = { source: 'csv' }): { validRows: NormalizedCampMeetingRow[]; skipped: Array<{ row: number; reason: string }>; totalRows: number; uniqueRegIds: Set<string>; duplicateTicketIdCount: number } {
   const validRows: NormalizedCampMeetingRow[] = [];
   const skipped: Array<{ row: number; reason: string }> = [];
   const uniqueRegIds = new Set<string>();
+  const seenTicketIds = new Set<string>();
+  const duplicateTicketIds = new Set<string>();
 
   inputRows.forEach((raw, idx) => {
     const rowNumber = idx + 2;
@@ -134,11 +155,17 @@ export function normalizeCampMeetingRows(inputRows: RawInputRow[]): { validRows:
     if (!mealDay) return skipped.push({ row: rowNumber, reason: 'invalid meal_day' });
     if (mealDate === null) return skipped.push({ row: rowNumber, reason: 'invalid meal_date' });
 
-    const sourceTicketId = String(raw.ticket_id || '').trim() || `sheet-row-${rowNumber}`;
+    const originalTicketId = String(raw.ticket_id || '').trim();
+    if (originalTicketId) {
+      if (seenTicketIds.has(originalTicketId)) duplicateTicketIds.add(originalTicketId);
+      else seenTicketIds.add(originalTicketId);
+    }
+    const sourceTicketId = buildSourceTicketId(originalTicketId, rowNumber, options);
     uniqueRegIds.add(personId);
     validRows.push({
       rowNumber,
       sourceTicketId,
+      originalTicketId,
       personId,
       personName,
       mealType,
@@ -149,14 +176,15 @@ export function normalizeCampMeetingRows(inputRows: RawInputRow[]): { validRows:
     });
   });
 
-  return { validRows, skipped, totalRows: inputRows.length, uniqueRegIds };
+  return { validRows, skipped, totalRows: inputRows.length, uniqueRegIds, duplicateTicketIdCount: duplicateTicketIds.size };
 }
 
-export async function importCampMeetingRows(inputRows: RawInputRow[]): Promise<CampMeetingImportSummary> {
-  const { validRows, skipped, totalRows, uniqueRegIds } = normalizeCampMeetingRows(inputRows);
+export async function importCampMeetingRows(inputRows: RawInputRow[], options: ImportOptions = { source: 'csv' }): Promise<CampMeetingImportSummary> {
+  const { validRows, skipped, totalRows, uniqueRegIds, duplicateTicketIdCount } = normalizeCampMeetingRows(inputRows, options);
   const summary: CampMeetingImportSummary = {
     totalRows,
     validRows: validRows.length,
+    duplicateTicketIdCount,
     skippedRows: skipped.length,
     skippedRowReasons: skipped,
     peopleCreated: 0,
@@ -166,6 +194,10 @@ export async function importCampMeetingRows(inputRows: RawInputRow[]): Promise<C
     uniqueRegIdCount: uniqueRegIds.size,
     errors: skipped.map((s) => `Row ${s.row} skipped (${s.reason})`)
   };
+
+  if (options.source === 'google_sheet' && duplicateTicketIdCount > 0) {
+    console.log('[SHEET_IMPORT] Duplicate ticket_id detected; using row-based source keys.');
+  }
 
   for (const row of validRows) {
     const existingPerson = await prisma.person.findUnique({ where: { personId: row.personId }, select: { id: true } });
@@ -193,7 +225,7 @@ export async function importCampMeetingRows(inputRows: RawInputRow[]): Promise<C
         mealDay: row.mealDay,
         mealDate: row.mealDate,
         redeemed: row.redeemed,
-        notes: row.notes,
+        notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null),
         sourceSheetRow: row.rowNumber
       },
       create: {
@@ -205,7 +237,7 @@ export async function importCampMeetingRows(inputRows: RawInputRow[]): Promise<C
         mealDay: row.mealDay,
         mealDate: row.mealDate,
         redeemed: row.redeemed,
-        notes: row.notes
+        notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null)
       }
     }));
     if (existingEntitlement) summary.entitlementsUpdated += 1;
