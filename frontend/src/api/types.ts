@@ -82,7 +82,7 @@ export interface Settings {
   googleSheetId: string | null;
   googleSheetTabName: string;
   googleSyncIntervalMinutes: number;
-  googleAutoImportEnabled: boolean;
+  googleAutoImportEnabled?: boolean | null;
   googleLastAutoImportAt?: string | null;
   googleLastAutoImportSummary?: string | null;
   updatedAt: string;
