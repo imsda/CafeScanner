@@ -137,12 +137,13 @@ function mapGoogleSheetsError(error: unknown): Error {
 }
 
 export async function importCampMeetingFromSheet() {
-  const { rows } = await readSheetRows();
+  const { sheetName, rows } = await readSheetRows();
   const { inputRows, errors } = mapRowsToCampMeetingInput(rows as string[][]);
   if (errors.length) {
     return {
       totalRows: 0,
       validRows: 0,
+      duplicateTicketIdCount: 0,
       skippedRows: 0,
       skippedRowReasons: [],
       peopleCreated: 0,
@@ -153,7 +154,7 @@ export async function importCampMeetingFromSheet() {
       errors
     };
   }
-  const summary = await importCampMeetingRows(inputRows);
+  const summary = await importCampMeetingRows(inputRows, { source: 'google_sheet', sheetName });
   console.log('[SHEET_IMPORT]', summary);
   return summary;
 }

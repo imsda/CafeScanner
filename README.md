@@ -222,7 +222,8 @@ Use this exact Google Sheet header row:
 `ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date,ticket_type,price,redeemed,redeemed_at,redeemed_by,notes`
 
 Behavior:
-- `ticket_id` is the stable unique key (stored as `sourceTicketId`).
+- CSV import: `ticket_id` is used as the stable key (stored as `sourceTicketId`).
+- Google Sheet import: each row uses a stable row key `google:<sheetName>:row:<rowNumber>` for `sourceTicketId` so duplicate `ticket_id` values do not overwrite each other.
 - `reg_id` maps to scanner `personId` / shared family ID.
 - `guest_name` is the individual name for that specific ticket row.
 - Each row imports as its own entitlement (no grouping/collapsing by `reg_id`).
