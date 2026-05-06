@@ -175,6 +175,31 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 ./scripts/start.sh
 ```
 
+## Production Service Setup
+
+```bash
+./scripts/setup.sh
+sudo ./scripts/install-service.sh
+```
+
+Check status:
+
+```bash
+./scripts/service-status.sh
+```
+
+View logs:
+
+```bash
+./scripts/service-logs.sh
+```
+
+Restart:
+
+```bash
+./scripts/service-restart.sh
+```
+
 ## Meal Tracking Modes
 
 CafeScanner uses exactly one global **meal tracking mode** at a time (`Settings → Meal tracking mode`). There is no mixed mode in normal operation.
