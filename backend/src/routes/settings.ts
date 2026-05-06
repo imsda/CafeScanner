@@ -56,7 +56,8 @@ const settingsSchema = z.object({
   googleSheetsEnabled: z.boolean().optional(),
   googleSheetId: z.string().optional(),
   googleSheetTabName: z.string().min(1).optional(),
-  googleSyncIntervalMinutes: z.number().int().min(1).max(1440).optional()
+  googleSyncIntervalMinutes: z.number().int().min(1).max(1440).optional(),
+  googleAutoImportEnabled: z.boolean().optional()
 });
 
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });
@@ -72,7 +73,7 @@ router.get('/', async (_req, res) => {
 });
 
 router.get('/google-sheets/scheduler-status', async (_req, res) => {
-  res.json(getGoogleSheetsSchedulerStatus());
+  res.json(await getGoogleSheetsSchedulerStatus());
 });
 
 router.post('/google-sheets/run-scheduled-check-now', async (req, res) => {
@@ -85,6 +86,9 @@ router.put('/', async (req, res) => {
   const payload = settingsSchema.parse(req.body);
   if (typeof payload.googleSheetId === 'string') {
     payload.googleSheetId = payload.googleSheetId.trim();
+  }
+  if (payload.googleSheetsEnabled === true && typeof payload.googleAutoImportEnabled === 'undefined') {
+    payload.googleAutoImportEnabled = true;
   }
   if (typeof payload.timezone === 'string') {
     payload.timezone = payload.timezone.trim() || DEFAULT_TIMEZONE;

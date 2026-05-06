@@ -82,6 +82,9 @@ export interface Settings {
   googleSheetId: string | null;
   googleSheetTabName: string;
   googleSyncIntervalMinutes: number;
+  googleAutoImportEnabled: boolean;
+  googleLastAutoImportAt?: string | null;
+  googleLastAutoImportSummary?: string | null;
   updatedAt: string;
 }
 
@@ -89,6 +92,8 @@ export interface GoogleSheetsSchedulerStatus {
   schedulerEnabled: boolean;
   lastAutomaticCheckTime: string | null;
   lastAutomaticWriteBackTime: string | null;
+  lastAutomaticImportTime: string | null;
+  lastAutomaticImportSummary: string | null;
   lastSkipReason: string | null;
   lastRowsUpdated: number;
   nextExpectedRunTime: string | null;

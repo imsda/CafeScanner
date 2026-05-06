@@ -1879,6 +1879,7 @@ function SettingsPage() {
     googleSheetId: string;
     googleSheetTabName: string;
     googleSyncIntervalMinutes: number;
+    googleAutoImportEnabled: boolean;
   } | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<
     "general" | "meal-tracking" | "scanner" | "google-sheets-sync" | "data-reset-tools" | "danger-zone"
@@ -1896,6 +1897,7 @@ function SettingsPage() {
       googleSheetId: loaded.googleSheetId ?? "",
       googleSheetTabName: loaded.googleSheetTabName,
       googleSyncIntervalMinutes: loaded.googleSyncIntervalMinutes,
+      googleAutoImportEnabled: loaded.googleAutoImportEnabled,
     });
     if (user?.role === "OWNER" || user?.role === "ADMIN") {
       const status = await api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
@@ -1924,7 +1926,8 @@ function SettingsPage() {
     (settings.googleSheetsEnabled !== savedGoogleSheetsSettings.googleSheetsEnabled ||
       (settings.googleSheetId ?? "") !== savedGoogleSheetsSettings.googleSheetId ||
       settings.googleSheetTabName !== savedGoogleSheetsSettings.googleSheetTabName ||
-      settings.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes);
+      settings.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes ||
+      settings.googleAutoImportEnabled !== savedGoogleSheetsSettings.googleAutoImportEnabled);
 
   async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
     const sourceSettings = settingsOverride ?? settings;
@@ -1955,6 +1958,7 @@ function SettingsPage() {
       googleSheetId: saved.googleSheetId ?? "",
       googleSheetTabName: saved.googleSheetTabName,
       googleSyncIntervalMinutes: saved.googleSyncIntervalMinutes,
+      googleAutoImportEnabled: saved.googleAutoImportEnabled,
     });
     return saved;
   }
@@ -2238,6 +2242,16 @@ function SettingsPage() {
                 />
               </label>
               <label>
+                <input
+                  type="checkbox"
+                  checked={settings.googleAutoImportEnabled}
+                  onChange={(e) =>
+                    setSettings({ ...settings, googleAutoImportEnabled: e.target.checked })
+                  }
+                />
+                Automatically pull new rows from Google Sheet
+              </label>
+              <label>
                 Sync interval (minutes)
                 <input
                   type="number"
@@ -2391,6 +2405,8 @@ function SettingsPage() {
             <p><strong>Scheduler:</strong> {schedulerStatus?.schedulerEnabled ? "Enabled" : "Disabled"}</p>
             <p><strong>Last automatic check:</strong> {schedulerStatus?.lastAutomaticCheckTime ? new Date(schedulerStatus.lastAutomaticCheckTime).toLocaleString() : "Never"}</p>
             <p><strong>Last automatic write-back:</strong> {schedulerStatus?.lastAutomaticWriteBackTime ? new Date(schedulerStatus.lastAutomaticWriteBackTime).toLocaleString() : "Never"}</p>
+            <p><strong>Last auto-import:</strong> {schedulerStatus?.lastAutomaticImportTime ? new Date(schedulerStatus.lastAutomaticImportTime).toLocaleString() : "Never"}</p>
+            <p><strong>Last auto-import summary:</strong> {schedulerStatus?.lastAutomaticImportSummary ?? "None"}</p>
             <p><strong>Last skip reason:</strong> {schedulerStatus?.lastSkipReason ?? "None"}</p>
             <p><strong>Last rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
             <p><strong>Next expected run:</strong> {schedulerStatus?.nextExpectedRunTime ? new Date(schedulerStatus.nextExpectedRunTime).toLocaleString() : "Unknown"}</p>

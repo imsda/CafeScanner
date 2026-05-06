@@ -12,6 +12,8 @@ type SchedulerStatus = {
   schedulerEnabled: boolean;
   lastAutomaticCheckTime: string | null;
   lastAutomaticWriteBackTime: string | null;
+  lastAutomaticImportTime: string | null;
+  lastAutomaticImportSummary: string | null;
   lastSkipReason: string | null;
   lastRowsUpdated: number;
   nextExpectedRunTime: string | null;
@@ -21,6 +23,8 @@ const schedulerStatus: SchedulerStatus = {
   schedulerEnabled: false,
   lastAutomaticCheckTime: null,
   lastAutomaticWriteBackTime: null,
+  lastAutomaticImportTime: null,
+  lastAutomaticImportSummary: null,
   lastSkipReason: null,
   lastRowsUpdated: 0,
   nextExpectedRunTime: null
@@ -169,7 +173,7 @@ export async function importTallyFromSheet() {
   void spreadsheetId; void sheetName;
   const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
   const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
-  return importPeopleFromRows(dataRows, false);
+  return importPeopleFromRows(dataRows, { includeBalances: false, overwriteExistingBalances: false, overwriteExistingCounts: true });
 }
 
 export async function importCountdownFromSheet() {
@@ -177,7 +181,7 @@ export async function importCountdownFromSheet() {
   const { rows } = await readSheetRows();
   const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
   const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
-  return importPeopleFromRows(dataRows, true);
+  return importPeopleFromRows(dataRows, { includeBalances: true, overwriteExistingBalances: true, overwriteExistingCounts: true });
 }
 
 async function readSheetRows() {
@@ -191,7 +195,7 @@ async function readSheetRows() {
   return { spreadsheetId, sheetName, rows: resp.data.values || [] };
 }
 
-async function importPeopleFromRows(dataRows: string[][], includeBalances: boolean) {
+async function importPeopleFromRows(dataRows: string[][], options: { includeBalances: boolean; overwriteExistingBalances: boolean; overwriteExistingCounts: boolean }) {
   let peopleCreated = 0; let peopleUpdated = 0; let rowsImported = 0; let rowsSkipped = 0;
   const errors: string[] = [];
   for (let i = 0; i < dataRows.length; i++) {
@@ -203,12 +207,51 @@ async function importPeopleFromRows(dataRows: string[][], includeBalances: boole
     const breakfast = Number(r[2] || 0); const lunch = Number(r[3] || 0); const dinner = Number(r[4] || 0);
     const total = breakfast + lunch + dinner;
     const data: any = { personId: id, codeValue: id, firstName: name || id, lastName: ' ', active: true };
-    if (includeBalances) Object.assign(data, { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner, totalMealsCount: total });
-    if (existing) { await prisma.person.update({ where: { id: existing.id }, data }); peopleUpdated += 1; }
+    if (options.includeBalances) Object.assign(data, { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner, totalMealsCount: total });
+    if (existing) {
+      if (!options.overwriteExistingBalances) {
+        delete data.breakfastRemaining;
+        delete data.lunchRemaining;
+        delete data.dinnerRemaining;
+      }
+      if (!options.overwriteExistingCounts) {
+        delete data.breakfastCount;
+        delete data.lunchCount;
+        delete data.dinnerCount;
+        delete data.totalMealsCount;
+      }
+      await prisma.person.update({ where: { id: existing.id }, data }); peopleUpdated += 1;
+    }
     else { await prisma.person.create({ data }); peopleCreated += 1; }
     rowsImported += 1;
   }
   return { peopleCreated, peopleUpdated, rowsImported, rowsSkipped, writeBackRowsUpdated: 0, errors };
+}
+async function runAutoImportForMode(settings: Awaited<ReturnType<typeof getSettings>>) {
+  if (!settings.googleSheetsEnabled || !settings.googleAutoImportEnabled || !parseSpreadsheetId(settings.googleSheetId || '') || isResetInProgress()) {
+    return null;
+  }
+  if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) {
+    const summary = await importCampMeetingFromSheet();
+    const text = `[SHEET_SYNC] Auto import completed: ${summary.peopleCreated} people created, ${summary.peopleUpdated} updated, ${summary.entitlementsCreated + summary.entitlementsUpdated} entitlements created/updated, ${summary.skippedRows} skipped`;
+    console.log(text);
+    await prisma.setting.update({ where: { id: 1 }, data: { googleLastAutoImportAt: new Date(), googleLastAutoImportSummary: text } });
+    schedulerStatus.lastAutomaticImportTime = new Date().toISOString();
+    schedulerStatus.lastAutomaticImportSummary = text;
+    return text;
+  }
+  const { rows } = await readSheetRows();
+  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
+  const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
+  const result = settings.mealTrackingMode === MealTrackingMode.tally
+    ? await importPeopleFromRows(dataRows as string[][], { includeBalances: false, overwriteExistingBalances: false, overwriteExistingCounts: false })
+    : await importPeopleFromRows(dataRows as string[][], { includeBalances: true, overwriteExistingBalances: false, overwriteExistingCounts: false });
+  const text = `[SHEET_SYNC] Auto import completed: ${result.peopleCreated} people created, ${result.peopleUpdated} updated, 0 entitlements created/updated, ${result.rowsSkipped} skipped`;
+  console.log(text);
+  await prisma.setting.update({ where: { id: 1 }, data: { googleLastAutoImportAt: new Date(), googleLastAutoImportSummary: text } });
+  schedulerStatus.lastAutomaticImportTime = new Date().toISOString();
+  schedulerStatus.lastAutomaticImportSummary = text;
+  return text;
 }
 
 export async function writeBackTallyCounts(force = false) { return writeBackPeopleRows(false, force); }
@@ -280,6 +323,7 @@ export function startCampMeetingSheetSyncScheduler() {
         schedulerStatus.lastSkipReason = skipReason;
         schedulerStatus.lastRowsUpdated = 0;
       } else {
+        await runAutoImportForMode(settings);
         console.log('[SHEET_SYNC] Running scheduled write-back');
         let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
         if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
@@ -327,6 +371,7 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
     schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
     return { ran: false, reason: skipReason, mode: settings.mealTrackingMode };
   }
+  await runAutoImportForMode(settings);
   console.log('[SHEET_SYNC] Running scheduled write-back');
   let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
   if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
@@ -345,6 +390,11 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
   return { ran: true, rowsUpdated, mode: settings.mealTrackingMode };
 }
 
-export function getGoogleSheetsSchedulerStatus() {
-  return { ...schedulerStatus };
+export async function getGoogleSheetsSchedulerStatus() {
+  const settings = await getSettings().catch(() => null);
+  return {
+    ...schedulerStatus,
+    lastAutomaticImportTime: schedulerStatus.lastAutomaticImportTime ?? settings?.googleLastAutoImportAt?.toISOString() ?? null,
+    lastAutomaticImportSummary: schedulerStatus.lastAutomaticImportSummary ?? settings?.googleLastAutoImportSummary ?? null
+  };
 }
