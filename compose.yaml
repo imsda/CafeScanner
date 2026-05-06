@@ -6,4 +6,5 @@ services:
       - "5173:5173"
     volumes:
       - ./backend/prisma:/app/backend/prisma
+      - ./backend/backups:/app/backend/backups
       - ./.env:/app/.env

@@ -77,6 +77,13 @@ Use the Users/Admin flows to:
 - `PORT` (default `4000`)
 - `BACKEND_HOST` (default `0.0.0.0`)
 - `CLIENT_ORIGIN`
+- `BACKUP_DIR` (optional, default `backend/backups`)
+
+### Backup/Restore storage
+
+- OWNER/ADMIN users can create and restore SQLite backups from **Settings → Backups**.
+- Backup files are stored on disk in `BACKUP_DIR` (default `backend/backups`).
+- In Docker/Compose, mount this directory to persistent storage so backup files survive container recreation.
 
 ### Frontend env values
 
@@ -173,6 +180,16 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 ```bash
 ./scripts/build.sh
 ./scripts/start.sh
+```
+
+### Docker Compose persistence recommendation
+
+If you use `compose.yaml`, persist both SQLite data and backups:
+
+```yaml
+volumes:
+  - ./backend/prisma:/app/backend/prisma
+  - ./backend/backups:/app/backend/backups
 ```
 
 ## Production Service Setup
