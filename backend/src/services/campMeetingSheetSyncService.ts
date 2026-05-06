@@ -2,6 +2,7 @@ import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
 import { google } from 'googleapis';
 import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
+import { importCampMeetingRows, mapRowsToCampMeetingInput } from './campMeetingImportService.js';
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
@@ -136,144 +137,27 @@ function mapGoogleSheetsError(error: unknown): Error {
 }
 
 export async function importCampMeetingFromSheet() {
-  const settings = await getSettings();
-  if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
-
-  const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
-  if (!spreadsheetId) {
-    const summary = { totalRows: 0, validRows: 0, skippedRows: 0, created: 0, updated: 0, errors: ['missing sheet ID'] };
-    console.log('[SHEET_IMPORT]', summary);
-    return summary;
+  const { rows } = await readSheetRows();
+  const { inputRows, errors } = mapRowsToCampMeetingInput(rows as string[][]);
+  if (errors.length) {
+    return {
+      totalRows: 0,
+      validRows: 0,
+      skippedRows: 0,
+      skippedRowReasons: [],
+      peopleCreated: 0,
+      peopleUpdated: 0,
+      entitlementsCreated: 0,
+      entitlementsUpdated: 0,
+      uniqueRegIdCount: 0,
+      errors
+    };
   }
-
-  const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
-  if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
-
-  const range = `${sheetName}!A:L`;
-  const sheets = getSheetsClient();
-  let resp;
-  try {
-    resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  } catch (error) {
-    const mapped = mapGoogleSheetsError(error);
-    const summary = { totalRows: 0, validRows: 0, skippedRows: 0, created: 0, updated: 0, errors: [`parsing failed: ${mapped.message}`] };
-    console.log('[SHEET_IMPORT]', summary);
-    throw mapped;
-  }
-
-  const rows = resp.data.values || [];
-  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
-  const headerIndexByName = new Map<string, number>();
-  normalizedHeader.forEach((name: string, idx: number) => { if (name) headerIndexByName.set(name, idx); });
-  const missingHeaders = HEADER.filter((header) => !headerIndexByName.has(header));
-  const hasHeader = missingHeaders.length === 0;
-  const dataRows = hasHeader ? rows.slice(1) : [];
-
-  const totalRows = dataRows.length;
-  let validRows = 0;
-  let skippedRows = 0;
-  let entitlementsCreated = 0;
-  let entitlementsUpdated = 0;
-  let peopleCreated = 0;
-  let peopleUpdated = 0;
-  const errors: string[] = [];
-  const skippedRowDetails: Array<Record<string, string | number>> = [];
-  const uniqueRegIds = new Set<string>();
-  const mealTotalsByTypeDay: Record<string, number> = {};
-  const timezone = settings.timezone || 'Etc/UTC';
-
-  if (!hasHeader) {
-    errors.push(`Invalid header row. Missing required headers: ${missingHeaders.join(', ') || 'unknown'}`);
-  } else if (!dataRows.length) {
-    errors.push('no valid rows');
-  } else {
-    for (let i = 0; i < dataRows.length; i++) {
-      const r = dataRows[i] as string[];
-      const rowNum = i + 2;
-      const ticketIdRaw = String(r[headerIndexByName.get('ticket_id') ?? -1] || '').trim();
-      const regIdRaw = String(r[headerIndexByName.get('reg_id') ?? -1] || '');
-      const regId = regIdRaw.trim();
-      const personName = String(r[headerIndexByName.get('guest_name') ?? -1] || '').trim();
-      const mealTypeRaw = String(r[headerIndexByName.get('meal_type') ?? -1] || '');
-      const mealDayRaw = String(r[headerIndexByName.get('meal_day') ?? -1] || '');
-      const mealDateRaw = String(r[headerIndexByName.get('meal_date') ?? -1] || '').trim();
-      const redeemedRaw = String(r[headerIndexByName.get('redeemed') ?? -1] || '');
-      const notesRaw = String(r[headerIndexByName.get('notes') ?? -1] || '').trim();
-      const mealType = mealTypeFromSheet(mealTypeRaw);
-      let mealDay = mealDayFromSheet(mealDayRaw);
-      let derivedDay = false;
-      if (!mealDay) {
-        mealDay = mealDayFromDate(mealDateRaw, timezone);
-        derivedDay = Boolean(mealDay);
-      }
-      if (!mealType || !mealDay || !regId) {
-        skippedRows += 1;
-        const reason = !regId ? 'missing reg_id' : !mealType ? 'invalid meal_type' : 'invalid meal_day and meal_date';
-        const detail = { row: rowNum, reg_id: regIdRaw, guest_name: personName, meal_type: mealTypeRaw, meal_day: mealDayRaw, meal_date: mealDateRaw, reason_skipped: reason };
-        skippedRowDetails.push(detail);
-        errors.push(`Row ${rowNum} skipped (${reason})`);
-        continue;
-      }
-      validRows += 1;
-      uniqueRegIds.add(regId);
-      const bucketKey = `${mealDay}:${mealType}`;
-      mealTotalsByTypeDay[bucketKey] = (mealTotalsByTypeDay[bucketKey] ?? 0) + 1;
-      if (derivedDay) errors.push(`Row ${rowNum}: meal_day derived from meal_date (${mealDateRaw} => ${mealDay}).`);
-      const displayName = personName || regId;
-      const existingPerson = await prisma.person.findUnique({ where: { personId: regId }, select: { id: true } });
-      if (existingPerson) {
-        peopleUpdated += 1;
-        await prisma.person.update({
-          where: { personId: regId },
-          data: { firstName: displayName, lastName: ' ', codeValue: regId, active: true }
-        });
-      } else {
-        peopleCreated += 1;
-        await prisma.person.create({
-          data: { personId: regId, codeValue: regId, firstName: displayName, lastName: ' ', active: true }
-        });
-      }
-
-      const ticketId = ticketIdRaw || `sheet-row-${rowNum}`;
-      const existingEntitlement = await prisma.mealEntitlement.findUnique({ where: { sourceTicketId: ticketId }, select: { id: true } });
-      await prisma.mealEntitlement.upsert({
-        where: { sourceTicketId: ticketId },
-        update: {
-          personId: regId, personName, mealType, mealDay, mealDate: mealDateRaw, redeemed: parseBool(redeemedRaw), notes: notesRaw || null, sourceSheetRow: rowNum
-        },
-        create: {
-          sourceTicketId: ticketId,
-          sourceSheetRow: rowNum,
-          personId: regId, personName, mealType, mealDay, mealDate: mealDateRaw, redeemed: parseBool(redeemedRaw), notes: notesRaw || null
-        }
-      });
-      if (existingEntitlement) entitlementsUpdated += 1;
-      else entitlementsCreated += 1;
-    }
-
-    if (validRows === 0 && errors.length === 0) {
-      errors.push('no valid rows');
-    }
-  }
-
-  const summary = {
-    totalSheetRows: totalRows,
-    validTicketRows: validRows,
-    peopleCreated,
-    peopleUpdated,
-    entitlementsCreated,
-    entitlementsUpdated,
-    rowsImported: validRows,
-    rowsSkipped: skippedRows,
-    skippedRowDetails,
-    uniqueRegIdCount: uniqueRegIds.size,
-    mealTotalsByTypeDay,
-    writeBackRowsUpdated: 0,
-    errors
-  };
+  const summary = await importCampMeetingRows(inputRows);
   console.log('[SHEET_IMPORT]', summary);
   return summary;
 }
+
 
 export async function importTallyFromSheet() {
   const { spreadsheetId, sheetName, rows } = await readSheetRows();
