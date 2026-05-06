@@ -1880,6 +1880,11 @@ function SettingsPage() {
     googleSheetTabName: string;
     googleSyncIntervalMinutes: number;
   } | null>(null);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<
+    "general" | "meal-tracking" | "scanner" | "google-sheets-sync" | "data-reset-tools" | "danger-zone"
+  >("general");
+  const [resetSuccessMessage, setResetSuccessMessage] = useState("");
+  const [showResetSuccessModal, setShowResetSuccessModal] = useState(false);
 
   const load = async () => {
     const loaded = await api<Settings>("/settings");
@@ -1968,7 +1973,14 @@ function SettingsPage() {
     setMessage("");
     try {
       await api(`/system/${clearAction}`, { method: "POST" });
+      const resetSummaryByAction: Record<typeof clearAction, string> = {
+        "clear-meal-data": "Meal data was cleared.",
+        "clear-people-import-data": "People and import data were cleared.",
+        "reset-meal-tracking-data": "All meal tracking data was reset.",
+      };
       setMessage("Operation completed successfully.");
+      setResetSuccessMessage(resetSummaryByAction[clearAction]);
+      setShowResetSuccessModal(true);
       setShowClearModal(false);
       setClearPhrase("");
       await load();
@@ -2046,9 +2058,55 @@ function SettingsPage() {
       <h2>Settings</h2>
       {message && <p>{message}</p>}
       {error && <p className="error">{error}</p>}
+      <div className="settings-tabs">
+        <button type="button" className={activeSettingsSection === "general" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("general")}>General</button>
+        <button type="button" className={activeSettingsSection === "meal-tracking" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("meal-tracking")}>Meal Tracking</button>
+        <button type="button" className={activeSettingsSection === "scanner" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("scanner")}>Scanner</button>
+        <button type="button" className={activeSettingsSection === "google-sheets-sync" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("google-sheets-sync")}>Google Sheets Sync</button>
+        <button type="button" className={activeSettingsSection === "data-reset-tools" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("data-reset-tools")}>Data Reset Tools</button>
+        <button type="button" className={activeSettingsSection === "danger-zone" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("danger-zone")}>Danger Zone</button>
+      </div>
 
-      <section className="card stack">
-        <h3>Meal Tracking Mode</h3>
+      {activeSettingsSection === "general" && (
+      <section className="card stack compact-card">
+        <h3>General</h3>
+        <label>
+          School name
+          <input
+            value={settings.schoolName}
+            onChange={(e) => setSettings({ ...settings, schoolName: e.target.value })}
+          />
+        </label>
+        <label>
+          Timezone
+          <select
+            value={settings.timezone}
+            onChange={(e) => setSettings({ ...settings, timezone: e.target.value })}
+          >
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.hideInactiveByDefault}
+            onChange={(e) =>
+              setSettings({ ...settings, hideInactiveByDefault: e.target.checked })
+            }
+          />
+          Hide inactive people by default
+        </label>
+        <button type="button" className="primary" onClick={() => void saveSettings()}>
+          Save General Settings
+        </button>
+      </section>)}
+
+      {activeSettingsSection === "meal-tracking" && (<section className="card stack compact-card">
+        <h3>Meal Tracking</h3>
         <p className="muted">
           Current active mode: <strong>{modeLabel(settings.mealTrackingMode)}</strong>
         </p>
@@ -2077,10 +2135,20 @@ function SettingsPage() {
           Warning: Switching mode is destructive and will clear all people,
           transaction history, import history, and meal entitlements.
         </p>
-      </section>
+        <p className="muted">
+          Your browser may display AM/PM, but values are saved as 24-hour HH:mm.
+        </p>
+        <label>Breakfast start<input type="time" value={settings.breakfastStart} onChange={(e) => setSettings({ ...settings, breakfastStart: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.breakfastStart)}</small></label>
+        <label>Breakfast end<input type="time" value={settings.breakfastEnd} onChange={(e) => setSettings({ ...settings, breakfastEnd: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.breakfastEnd)}</small></label>
+        <label>Lunch start<input type="time" value={settings.lunchStart} onChange={(e) => setSettings({ ...settings, lunchStart: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.lunchStart)}</small></label>
+        <label>Lunch end<input type="time" value={settings.lunchEnd} onChange={(e) => setSettings({ ...settings, lunchEnd: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.lunchEnd)}</small></label>
+        <label>Dinner start<input type="time" value={settings.dinnerStart} onChange={(e) => setSettings({ ...settings, dinnerStart: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerStart)}</small></label>
+        <label>Dinner end<input type="time" value={settings.dinnerEnd} onChange={(e) => setSettings({ ...settings, dinnerEnd: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerEnd)}</small></label>
+        <button type="button" className="primary" onClick={() => void saveSettings()}>Save Meal Tracking Settings</button>
+      </section>)}
 
-      <section className="card stack">
-        <h3>Scanner Settings</h3>
+      {activeSettingsSection === "scanner" && (<section className="card stack compact-card">
+        <h3>Scanner</h3>
         <label>
           Scanner cooldown (seconds)
           <input
@@ -2129,104 +2197,11 @@ function SettingsPage() {
           />
           Allow manual meal override
         </label>
-      </section>
+        <button type="button" className="primary" onClick={() => void saveSettings()}>Save Scanner Settings</button>
+      </section>)}
 
-      <section className="card stack">
-        <h3>General Settings</h3>
-        <label>
-          School name
-          <input
-            value={settings.schoolName}
-            onChange={(e) => setSettings({ ...settings, schoolName: e.target.value })}
-          />
-        </label>
-        <label>
-          Timezone
-          <select
-            value={settings.timezone}
-            onChange={(e) => setSettings({ ...settings, timezone: e.target.value })}
-          >
-            {TIMEZONE_OPTIONS.map((tz) => (
-              <option key={tz} value={tz}>
-                {tz}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="muted">
-          Your browser may display AM/PM, but values are saved as 24-hour HH:mm.
-        </p>
-        <label>
-          Breakfast start
-          <input
-            type="time"
-            value={settings.breakfastStart}
-            onChange={(e) => setSettings({ ...settings, breakfastStart: e.target.value })}
-          />
-          <small className="muted">Stored value: {renderStoredTimeValue(settings.breakfastStart)}</small>
-        </label>
-        <label>
-          Breakfast end
-          <input
-            type="time"
-            value={settings.breakfastEnd}
-            onChange={(e) => setSettings({ ...settings, breakfastEnd: e.target.value })}
-          />
-          <small className="muted">Stored value: {renderStoredTimeValue(settings.breakfastEnd)}</small>
-        </label>
-        <label>
-          Lunch start
-          <input
-            type="time"
-            value={settings.lunchStart}
-            onChange={(e) => setSettings({ ...settings, lunchStart: e.target.value })}
-          />
-          <small className="muted">Stored value: {renderStoredTimeValue(settings.lunchStart)}</small>
-        </label>
-        <label>
-          Lunch end
-          <input
-            type="time"
-            value={settings.lunchEnd}
-            onChange={(e) => setSettings({ ...settings, lunchEnd: e.target.value })}
-          />
-          <small className="muted">Stored value: {renderStoredTimeValue(settings.lunchEnd)}</small>
-        </label>
-        <label>
-          Dinner start
-          <input
-            type="time"
-            value={settings.dinnerStart}
-            onChange={(e) => setSettings({ ...settings, dinnerStart: e.target.value })}
-          />
-          <small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerStart)}</small>
-        </label>
-        <label>
-          Dinner end
-          <input
-            type="time"
-            value={settings.dinnerEnd}
-            onChange={(e) => setSettings({ ...settings, dinnerEnd: e.target.value })}
-          />
-          <small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerEnd)}</small>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={settings.hideInactiveByDefault}
-            onChange={(e) =>
-              setSettings({ ...settings, hideInactiveByDefault: e.target.checked })
-            }
-          />
-          Hide inactive people by default
-        </label>
-        <button type="button" className="primary" onClick={() => void saveSettings()}>
-          Save Settings
-        </button>
-      </section>
-
-      {canManageGoogleSheets ? (
-        <section className="card stack">
+      {canManageGoogleSheets && activeSettingsSection === "google-sheets-sync" ? (
+        <section className="card stack compact-card">
           <h3>Google Sheets Sync</h3>
           <>
               <label>
@@ -2421,42 +2396,7 @@ function SettingsPage() {
           </section>
         </section>
       ) : null}
-      {canManageBackups ? (
-        <section className="card stack">
-          <h3>Backups (OWNER/ADMIN)</h3>
-          <p className="error">
-            Warning: Restoring a backup replaces current database data.
-          </p>
-          <div className="button-row">
-            <button type="button" className="secondary" onClick={downloadBackup}>
-              Download Backup
-            </button>
-          </div>
-          <label>
-            Restore backup (.db)
-            <input
-              type="file"
-              accept=".db,application/x-sqlite3"
-              onChange={(e) => setBackupFile(e.target.files?.[0] ?? null)}
-            />
-          </label>
-          <div className="button-row">
-            <button
-              type="button"
-              className="danger"
-              disabled={!backupFile || isRestoringBackup}
-              onClick={() => void restoreBackup()}
-            >
-              {isRestoringBackup ? "Restoring..." : "Restore Backup"}
-            </button>
-          </div>
-          <p className="muted">
-            After a successful restore, the app may need to reload to refresh all state.
-          </p>
-        </section>
-      ) : null}
-
-      <section className="card stack">
+      {activeSettingsSection === "data-reset-tools" && (<section className="card stack compact-card">
         <h3>Data Reset Tools</h3>
         <label>
           Reset action
@@ -2479,10 +2419,34 @@ function SettingsPage() {
         <button type="button" className="danger" onClick={() => setShowClearModal(true)}>
           Run Reset Tool
         </button>
-      </section>
+      </section>)}
 
+      {activeSettingsSection === "danger-zone" && (
+        <>
+      {canManageBackups ? (
+        <section className="card stack compact-card">
+          <h3>Backups (OWNER/ADMIN)</h3>
+          <p className="error">
+            Warning: Restoring a backup replaces current database data.
+          </p>
+          <div className="button-row">
+            <button type="button" className="secondary" onClick={downloadBackup}>
+              Download Backup
+            </button>
+          </div>
+          <label>
+            Restore backup (.db)
+            <input type="file" accept=".db,application/x-sqlite3" onChange={(e) => setBackupFile(e.target.files?.[0] ?? null)} />
+          </label>
+          <div className="button-row">
+            <button type="button" className="danger" disabled={!backupFile || isRestoringBackup} onClick={() => void restoreBackup()}>
+              {isRestoringBackup ? "Restoring..." : "Restore Backup"}
+            </button>
+          </div>
+        </section>
+      ) : null}
       {isOwner && (
-        <section className="card stack">
+        <section className="card stack compact-card">
           <h3>Full Application Wipe (OWNER only)</h3>
           <p className="error">
             Arms a one-time wipe token for use by protected backend wipe endpoint.
@@ -2508,6 +2472,7 @@ function SettingsPage() {
             </div>
           )}
         </section>
+      )}</>
       )}
 
       {showModeConfirm && pendingMode && (
@@ -2638,6 +2603,19 @@ function SettingsPage() {
                 onClick={() => void armFullWipe()}
               >
                 Arm Token
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showResetSuccessModal && (
+        <div className="confirm-overlay" role="dialog" aria-modal="true">
+          <div className="confirm-modal stack">
+            <h4>Reset Complete</h4>
+            <p>{resetSuccessMessage}</p>
+            <div className="button-row">
+              <button type="button" className="primary" onClick={() => setShowResetSuccessModal(false)}>
+                OK
               </button>
             </div>
           </div>

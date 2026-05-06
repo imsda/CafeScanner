@@ -199,3 +199,13 @@ select {
   border-radius: 12px;
   padding: 1rem;
 }
+
+.settings-tabs {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.compact-card {
+  max-width: 900px;
+}
