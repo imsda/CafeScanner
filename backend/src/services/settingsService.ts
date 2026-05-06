@@ -86,6 +86,9 @@ export async function getSettings() {
       googleSheetId: true,
       googleSheetTabName: true,
       googleSyncIntervalMinutes: true,
+      googleAutoImportEnabled: true,
+      googleLastAutoImportAt: true,
+      googleLastAutoImportSummary: true,
       updatedAt: true
     }
   });

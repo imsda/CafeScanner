@@ -125,6 +125,9 @@ model Setting {
   googleSheetId            String           @default("")
   googleSheetTabName       String           @default("Sheet1")
   googleSyncIntervalMinutes Int             @default(5)
+  googleAutoImportEnabled  Boolean          @default(true)
+  googleLastAutoImportAt   DateTime?
+  googleLastAutoImportSummary String?
   fullWipeTokenHash        String?
   fullWipeTokenExpiresAt   DateTime?
   fullWipeTokenUsedAt      DateTime?
