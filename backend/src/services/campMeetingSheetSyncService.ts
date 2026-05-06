@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from './campMeetingImportService.js';
+import { isResetInProgress } from './resetState.js';
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
@@ -93,6 +94,7 @@ function calculateActiveWindow(d: Date, tz: string, settings: any): string | nul
 function getSchedulerSkipReason(settings: any): string | null {
   if (!settings.googleSheetsEnabled) return 'sync disabled';
   if (!parseSpreadsheetId(settings.googleSheetId || '')) return 'missing sheet ID';
+  if (isResetInProgress()) return 'reset in progress';
   if (!isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return 'outside meal window';
   return null;
 }
@@ -137,6 +139,7 @@ function mapGoogleSheetsError(error: unknown): Error {
 }
 
 export async function importCampMeetingFromSheet() {
+  if (isResetInProgress()) throw new Error('Reset in progress. Try again after reset completes.');
   const { sheetName, rows } = await readSheetRows();
   const { inputRows, errors } = mapRowsToCampMeetingInput(rows as string[][]);
   if (errors.length) {
@@ -161,6 +164,7 @@ export async function importCampMeetingFromSheet() {
 
 
 export async function importTallyFromSheet() {
+  if (isResetInProgress()) throw new Error('Reset in progress. Try again after reset completes.');
   const { spreadsheetId, sheetName, rows } = await readSheetRows();
   void spreadsheetId; void sheetName;
   const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
@@ -169,6 +173,7 @@ export async function importTallyFromSheet() {
 }
 
 export async function importCountdownFromSheet() {
+  if (isResetInProgress()) throw new Error('Reset in progress. Try again after reset completes.');
   const { rows } = await readSheetRows();
   const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
   const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];

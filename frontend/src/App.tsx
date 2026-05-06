@@ -1885,6 +1885,8 @@ function SettingsPage() {
   >("general");
   const [resetSuccessMessage, setResetSuccessMessage] = useState("");
   const [showResetSuccessModal, setShowResetSuccessModal] = useState(false);
+  const [resetErrorMessage, setResetErrorMessage] = useState('');
+  const [showResetErrorModal, setShowResetErrorModal] = useState(false);
 
   const load = async () => {
     const loaded = await api<Settings>("/settings");
@@ -1985,11 +1987,10 @@ function SettingsPage() {
       setClearPhrase("");
       await load();
     } catch (clearError) {
-      setError(
-        clearError instanceof Error
-          ? clearError.message
-          : "Unable to clear data.",
-      );
+      const message = clearError instanceof Error ? clearError.message : 'Unable to clear data.';
+      setError(message);
+      setResetErrorMessage(message);
+      setShowResetErrorModal(true);
     } finally {
       setIsClearingDatabase(false);
     }
@@ -2603,6 +2604,20 @@ function SettingsPage() {
                 onClick={() => void armFullWipe()}
               >
                 Arm Token
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetErrorModal && (
+        <div className="confirm-overlay" role="dialog" aria-modal="true">
+          <div className="confirm-modal stack">
+            <h4>Reset Failed</h4>
+            <p className="error">{resetErrorMessage}</p>
+            <div className="button-row">
+              <button type="button" className="primary" onClick={() => setShowResetErrorModal(false)}>
+                OK
               </button>
             </div>
           </div>

@@ -28,7 +28,7 @@ export async function withSqliteTimeoutRetry<T>(label: string, fn: () => Promise
 
 export async function configureSqlitePragmas() {
   try {
-    await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL;');
+    await prisma.$queryRaw`PRAGMA journal_mode = WAL;`;
     await prisma.$executeRawUnsafe('PRAGMA busy_timeout = 5000;');
     console.log('[DB] SQLite PRAGMAs set: journal_mode=WAL, busy_timeout=5000ms.');
   } catch (error) {

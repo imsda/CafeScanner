@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { prisma } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { endReset, startReset } from '../services/resetState.js';
 
 const router = Router();
 const backupRouter = Router();
@@ -49,61 +50,78 @@ async function validateCafeScannerDbFile(dbPath: string) {
 
 // Safeguard: reset operations in this module must never touch admin/auth tables
 // (adminUser, userPageAccess) so user accounts, roles, password hashes, and page access survive data clears.
-async function clearOperationalMealData() {
-  await prisma.$transaction(async (tx) => {
-    await tx.scanTransaction.deleteMany({});
-    await tx.importHistory.deleteMany({});
-    await tx.mealEntitlement.deleteMany({});
-    await tx.person.deleteMany({});
-  });
+async function clearOperationalMealData(clearPeople: boolean) {
+  const transactions = await prisma.scanTransaction.deleteMany({});
+  const importRows = await prisma.importHistory.deleteMany({});
+  const mealEntitlements = await prisma.mealEntitlement.deleteMany({});
+  const people = clearPeople ? await prisma.person.deleteMany({}) : { count: 0 };
+
+  return {
+    transactions: transactions.count,
+    importRows: importRows.count,
+    mealEntitlements: mealEntitlements.count,
+    people: people.count
+  };
 }
 
 router.post('/clear-database', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
-  await clearOperationalMealData();
-
-  console.log(`[ADMIN_ACTION] clear-database (legacy route) executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-
-  res.json({ ok: true, message: 'Meal tracking operational data cleared. Users, credentials, roles, account status, and page permissions were preserved.' });
+  try {
+    const deleted = await clearOperationalMealData(true);
+    console.log(`[ADMIN_ACTION] clear-database (legacy route) executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
+    return res.json({ ok: true, action: 'clear-database', deleted, message: 'Meal tracking operational data cleared. Users, credentials, roles, account status, and page permissions were preserved.' });
+  } catch (error) {
+    console.error('[SYSTEM] clear-database failed', error);
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to clear database data.' });
+  }
 });
 
 router.post('/clear-meal-data', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.scanTransaction.deleteMany({});
-    await tx.mealEntitlement.deleteMany({});
-  });
-
-  console.log(`[ADMIN_ACTION] clear-meal-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-
-  res.json({ ok: true, message: 'Meal data cleared (transactions + meal entitlements). Users and permissions were preserved.' });
+  try {
+    const transactions = await prisma.scanTransaction.deleteMany({});
+    const mealEntitlements = await prisma.mealEntitlement.deleteMany({});
+    const deleted = { transactions: transactions.count, mealEntitlements: mealEntitlements.count, people: 0, importRows: 0 };
+    console.log(`[ADMIN_ACTION] clear-meal-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
+    return res.json({ ok: true, action: 'clear-meal-data', deleted, message: 'Meal data cleared (transactions + meal entitlements). Users and permissions were preserved.' });
+  } catch (error) {
+    console.error('[SYSTEM] clear-meal-data failed', error);
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to clear meal data.' });
+  }
 });
 
 router.post('/clear-people-import-data', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.importHistory.deleteMany({});
-    await tx.mealEntitlement.deleteMany({});
-    await tx.person.deleteMany({});
-    await tx.scanTransaction.deleteMany({});
-  });
-
-  console.log(`[ADMIN_ACTION] clear-people-import-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-
-  res.json({ ok: true, message: 'People/import data cleared (people + imports + dependent meal data). Users and permissions were preserved.' });
+  try {
+    const deleted = await clearOperationalMealData(true);
+    console.log(`[ADMIN_ACTION] clear-people-import-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
+    return res.json({ ok: true, action: 'clear-people-import-data', deleted, message: 'People/import data cleared (people + imports + dependent meal data). Users and permissions were preserved.' });
+  } catch (error) {
+    console.error('[SYSTEM] clear-people-import-data failed', error);
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to clear people/import data.' });
+  }
 });
 
 router.post('/reset-meal-tracking-data', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
-  await clearOperationalMealData();
+  if (!startReset()) {
+    return res.status(409).json({ ok: false, error: 'Reset already in progress.' });
+  }
 
-  console.log(`[ADMIN_ACTION] reset-meal-tracking-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-
-  res.json({ ok: true, message: 'Meal tracking data reset. Users, credentials, roles, account status, and page permissions were preserved.' });
+  try {
+    const deleted = await clearOperationalMealData(true);
+    console.log(`[ADMIN_ACTION] reset-meal-tracking-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
+    return res.json({ ok: true, action: 'reset-meal-tracking-data', deleted, message: 'Meal tracking data reset. Users, credentials, roles, account status, and page permissions were preserved.' });
+  } catch (error) {
+    console.error('[SYSTEM] reset-meal-tracking-data failed', error);
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to reset meal tracking data.' });
+  } finally {
+    endReset();
+  }
 });
 
 backupRouter.get('/download', async (_req, res) => {
