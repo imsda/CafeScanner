@@ -1,7 +1,60 @@
 import { Router } from 'express';
+import multer from 'multer';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { prisma } from '../db.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
+const backupRouter = Router();
+const dbUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }
+});
+
+const REQUIRED_TABLES = [
+  'AdminUser',
+  'UserPageAccess',
+  'Person',
+  'Setting',
+  'ScanTransaction',
+  'MealEntitlement',
+  'ImportHistory',
+  '_prisma_migrations'
+];
+
+function backupTimestamp(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day}-${hh}-${mm}`;
+}
+
+function resolveSqliteDbPath() {
+  const dbUrl = process.env.DATABASE_URL || '';
+  if (!dbUrl.startsWith('file:')) throw new Error('DATABASE_URL must use sqlite file: path');
+  const rawPath = dbUrl.slice('file:'.length).split('?')[0];
+  return path.resolve(process.cwd(), rawPath);
+}
+
+function resolveBackupsDirectory() {
+  return path.resolve(process.cwd(), process.env.BACKUP_DIR || 'backend/backups');
+}
+
+async function validateCafeScannerDbFile(dbPath: string) {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[];
+    const names = new Set(rows.map((r) => r.name));
+    const missing = REQUIRED_TABLES.filter((name) => !names.has(name));
+    if (missing.length > 0) throw new Error(`Backup file missing required tables: ${missing.join(', ')}`);
+  } finally {
+    db.close();
+  }
+}
 
 // Safeguard: reset operations in this module must never touch admin/auth tables
 // (adminUser, userPageAccess) so user accounts, roles, password hashes, and page access survive data clears.
@@ -61,5 +114,49 @@ router.post('/reset-meal-tracking-data', async (req, res) => {
 
   res.json({ ok: true, message: 'Meal tracking data reset. Users, credentials, roles, account status, and page permissions were preserved.' });
 });
+
+backupRouter.get('/download', async (_req, res) => {
+  const dbPath = resolveSqliteDbPath();
+  const backupsDir = resolveBackupsDirectory();
+  await fs.mkdir(backupsDir, { recursive: true });
+  const filename = `cafescanner-backup-${backupTimestamp()}.db`;
+  const backupPath = path.join(backupsDir, filename);
+
+  await fs.copyFile(dbPath, backupPath);
+  res.download(backupPath, filename);
+});
+
+backupRouter.post('/restore', dbUpload.single('backup'), async (req, res) => {
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: 'Backup file is required.' });
+  if (!file.originalname.toLowerCase().endsWith('.db')) return res.status(400).json({ error: 'Only .db backup files are accepted.' });
+
+  const dbPath = resolveSqliteDbPath();
+  const backupsDir = resolveBackupsDirectory();
+  await fs.mkdir(backupsDir, { recursive: true });
+
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const uploadPath = path.join(backupsDir, `restore-upload-${token}.db`);
+  const preRestorePath = path.join(backupsDir, `cafescanner-pre-restore-${backupTimestamp()}.db`);
+  const tempRestorePath = `${dbPath}.restore-${token}.tmp`;
+
+  try {
+    await fs.writeFile(uploadPath, file.buffer, { flag: 'wx' });
+    await validateCafeScannerDbFile(uploadPath);
+    await fs.copyFile(dbPath, preRestorePath);
+    await fs.copyFile(uploadPath, tempRestorePath);
+    await fs.rename(tempRestorePath, dbPath);
+    console.log(`[ADMIN_ACTION] restore-backup executed by userId=${req.session.adminUserId ?? 'unknown'} at ${new Date().toISOString()}`);
+    return res.json({ ok: true, message: 'Backup restored successfully. The app may need to be reloaded.', preRestoreBackup: path.basename(preRestorePath) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Backup restore failed.';
+    return res.status(400).json({ error: message });
+  } finally {
+    await fs.rm(uploadPath, { force: true }).catch(() => undefined);
+    await fs.rm(tempRestorePath, { force: true }).catch(() => undefined);
+  }
+});
+
+router.use('/backups', requireAdmin, backupRouter);
 
 export default router;

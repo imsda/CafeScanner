@@ -1870,6 +1870,8 @@ function SettingsPage() {
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const [isWritingBackSheet, setIsWritingBackSheet] = useState(false);
   const [isSavingGoogleSheetsSettings, setIsSavingGoogleSheetsSettings] = useState(false);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const [isRestoringBackup, setIsRestoringBackup] = useState(false);
   const [isRunningScheduledCheckNow, setIsRunningScheduledCheckNow] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<GoogleSheetsSchedulerStatus | null>(null);
   const [savedGoogleSheetsSettings, setSavedGoogleSheetsSettings] = useState<{
@@ -1906,6 +1908,7 @@ function SettingsPage() {
   const fullWipeEnabled = fullWipePhrase === "ARM FULL WIPE";
   const isOwner = user?.role === "OWNER";
   const canManageGoogleSheets = user?.role === "OWNER" || user?.role === "ADMIN";
+  const canManageBackups = user?.role === "OWNER" || user?.role === "ADMIN";
   const isCampMeetingMode = settings.mealTrackingMode === "camp_meeting";
   const isGoogleSheetsSyncEnabled = settings.googleSheetsEnabled;
   const hasGoogleSheetId = Boolean(settings.googleSheetId?.trim());
@@ -1994,6 +1997,48 @@ function SettingsPage() {
     setFullWipeResult(response);
     setShowFullWipeConfirm(false);
     setFullWipePhrase("");
+  }
+
+  function downloadBackup() {
+    setMessage("");
+    setError("");
+    window.open(`${API_BASE}/system/backups/download`, "_blank");
+  }
+
+  async function restoreBackup() {
+    if (!backupFile) return;
+    if (!backupFile.name.toLowerCase().endsWith(".db")) {
+      setError("Please select a valid .db backup file.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Restoring a backup will replace the current database. Continue?",
+    );
+    if (!confirmed) return;
+
+    setMessage("");
+    setError("");
+    setIsRestoringBackup(true);
+    const formData = new FormData();
+    formData.append("backup", backupFile);
+    try {
+      const response = await fetch(`${API_BASE}/system/backups/restore`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.error || "Backup restore failed.");
+      }
+      setMessage(`${payload?.message || "Backup restored successfully."} Please reload if data looks stale.`);
+      setBackupFile(null);
+      await load();
+    } catch (restoreError) {
+      setError(restoreError instanceof Error ? restoreError.message : "Backup restore failed.");
+    } finally {
+      setIsRestoringBackup(false);
+    }
   }
 
   return (
@@ -2374,6 +2419,40 @@ function SettingsPage() {
             <p><strong>Last rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
             <p><strong>Next expected run:</strong> {schedulerStatus?.nextExpectedRunTime ? new Date(schedulerStatus.nextExpectedRunTime).toLocaleString() : "Unknown"}</p>
           </section>
+        </section>
+      ) : null}
+      {canManageBackups ? (
+        <section className="card stack">
+          <h3>Backups (OWNER/ADMIN)</h3>
+          <p className="error">
+            Warning: Restoring a backup replaces current database data.
+          </p>
+          <div className="button-row">
+            <button type="button" className="secondary" onClick={downloadBackup}>
+              Download Backup
+            </button>
+          </div>
+          <label>
+            Restore backup (.db)
+            <input
+              type="file"
+              accept=".db,application/x-sqlite3"
+              onChange={(e) => setBackupFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+          <div className="button-row">
+            <button
+              type="button"
+              className="danger"
+              disabled={!backupFile || isRestoringBackup}
+              onClick={() => void restoreBackup()}
+            >
+              {isRestoringBackup ? "Restoring..." : "Restore Backup"}
+            </button>
+          </div>
+          <p className="muted">
+            After a successful restore, the app may need to reload to refresh all state.
+          </p>
         </section>
       ) : null}
 
