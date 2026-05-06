@@ -37,7 +37,8 @@ async function createSettingsIfMissing() {
         lunchStart: '11:00',
         lunchEnd: '14:00',
         dinnerStart: '15:00',
-        dinnerEnd: '19:00'
+        dinnerEnd: '19:00',
+        googleAutoImportEnabled: true
       }
     });
     console.log('[SETTINGS] Created default Setting(id=1).');

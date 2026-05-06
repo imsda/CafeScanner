@@ -1888,6 +1888,11 @@ function SettingsPage() {
   const [showResetSuccessModal, setShowResetSuccessModal] = useState(false);
   const [resetErrorMessage, setResetErrorMessage] = useState('');
   const [showResetErrorModal, setShowResetErrorModal] = useState(false);
+  const formatDateTimeSafe = (value?: string | null, fallback = "Never") => {
+    if (!value) return fallback;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed.toLocaleString();
+  };
 
   const load = async () => {
     const loaded = await api<Settings>("/settings");
@@ -1897,7 +1902,7 @@ function SettingsPage() {
       googleSheetId: loaded.googleSheetId ?? "",
       googleSheetTabName: loaded.googleSheetTabName,
       googleSyncIntervalMinutes: loaded.googleSyncIntervalMinutes,
-      googleAutoImportEnabled: loaded.googleAutoImportEnabled,
+      googleAutoImportEnabled: loaded.googleAutoImportEnabled ?? true,
     });
     if (user?.role === "OWNER" || user?.role === "ADMIN") {
       const status = await api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
@@ -1927,7 +1932,7 @@ function SettingsPage() {
       (settings.googleSheetId ?? "") !== savedGoogleSheetsSettings.googleSheetId ||
       settings.googleSheetTabName !== savedGoogleSheetsSettings.googleSheetTabName ||
       settings.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes ||
-      settings.googleAutoImportEnabled !== savedGoogleSheetsSettings.googleAutoImportEnabled);
+      (settings.googleAutoImportEnabled ?? true) !== savedGoogleSheetsSettings.googleAutoImportEnabled);
 
   async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
     const sourceSettings = settingsOverride ?? settings;
@@ -1958,7 +1963,7 @@ function SettingsPage() {
       googleSheetId: saved.googleSheetId ?? "",
       googleSheetTabName: saved.googleSheetTabName,
       googleSyncIntervalMinutes: saved.googleSyncIntervalMinutes,
-      googleAutoImportEnabled: saved.googleAutoImportEnabled,
+      googleAutoImportEnabled: saved.googleAutoImportEnabled ?? true,
     });
     return saved;
   }
@@ -2244,7 +2249,7 @@ function SettingsPage() {
               <label>
                 <input
                   type="checkbox"
-                  checked={settings.googleAutoImportEnabled}
+                  checked={settings.googleAutoImportEnabled ?? true}
                   onChange={(e) =>
                     setSettings({ ...settings, googleAutoImportEnabled: e.target.checked })
                   }
@@ -2403,13 +2408,13 @@ function SettingsPage() {
           <section className="card stack">
             <h4>Google Sheets Sync Status</h4>
             <p><strong>Scheduler:</strong> {schedulerStatus?.schedulerEnabled ? "Enabled" : "Disabled"}</p>
-            <p><strong>Last automatic check:</strong> {schedulerStatus?.lastAutomaticCheckTime ? new Date(schedulerStatus.lastAutomaticCheckTime).toLocaleString() : "Never"}</p>
-            <p><strong>Last automatic write-back:</strong> {schedulerStatus?.lastAutomaticWriteBackTime ? new Date(schedulerStatus.lastAutomaticWriteBackTime).toLocaleString() : "Never"}</p>
-            <p><strong>Last auto-import:</strong> {schedulerStatus?.lastAutomaticImportTime ? new Date(schedulerStatus.lastAutomaticImportTime).toLocaleString() : "Never"}</p>
+            <p><strong>Last automatic check:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticCheckTime, "Never")}</p>
+            <p><strong>Last automatic write-back:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticWriteBackTime, "Never")}</p>
+            <p><strong>Last auto-import:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticImportTime, "Never")}</p>
             <p><strong>Last auto-import summary:</strong> {schedulerStatus?.lastAutomaticImportSummary ?? "None"}</p>
             <p><strong>Last skip reason:</strong> {schedulerStatus?.lastSkipReason ?? "None"}</p>
             <p><strong>Last rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
-            <p><strong>Next expected run:</strong> {schedulerStatus?.nextExpectedRunTime ? new Date(schedulerStatus.nextExpectedRunTime).toLocaleString() : "Unknown"}</p>
+            <p><strong>Next expected run:</strong> {formatDateTimeSafe(schedulerStatus?.nextExpectedRunTime, "Unknown")}</p>
           </section>
         </section>
       ) : null}

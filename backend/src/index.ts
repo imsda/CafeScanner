@@ -85,9 +85,13 @@ app.listen(port, host, () => {
   console.log(`Backend listening on http://${host}:${port}`);
 
   void (async () => {
-    await configureSqlitePragmas();
-    await ensureSettingsInitialized();
-    startCampMeetingSheetSyncScheduler();
-    console.log('[SETTINGS] Initialization check completed at startup.');
+    try {
+      await configureSqlitePragmas();
+      await ensureSettingsInitialized();
+      startCampMeetingSheetSyncScheduler();
+      console.log('[SETTINGS] Initialization check completed at startup.');
+    } catch (error) {
+      console.error('[STARTUP] Scheduler/settings initialization failed; backend will continue running.', error);
+    }
   })();
 });
