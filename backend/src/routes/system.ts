@@ -259,9 +259,12 @@ router.post('/update', requireOwner, async (req, res) => {
 
   const diagnostics = await getUpdateScriptDiagnostics();
   if (!diagnostics.exists || !diagnostics.executable) {
+    const reason = !diagnostics.exists
+      ? 'Update script is missing.'
+      : 'Update script is not executable by the backend process.';
     return res.status(500).json({
       ok: false,
-      error: 'Update script check failed.',
+      error: reason,
       diagnostics
     });
   }

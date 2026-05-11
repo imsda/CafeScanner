@@ -363,7 +363,7 @@ async function writeBackWeeklyTally(force: boolean) {
     if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
-    const tabName = (settings.tallyWeeklySheetTabName || 'Weekly Tally').trim();
+    const tabName = (settings.tallyWeeklySheetTabName || '').trim() || 'Weekly Tally';
     const weekStartsOn = settings.tallyWeekStartsOn === 'SUNDAY' ? 'SUNDAY' : 'MONDAY';
     const timezone = settings.timezone || 'Etc/UTC';
     const { weekStart, weekEnd } = getCurrentWeekRange(timezone, weekStartsOn);
@@ -432,7 +432,8 @@ async function writeBackWeeklyTally(force: boolean) {
       await sheets.spreadsheets.values.append({ spreadsheetId, range: `${tabName}!A:H`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
       rowsAppended = appendValues.length;
     }
-    return { writeBackRowsUpdated: rowsUpdated, rowsAppended, tabName };
+    const rowsWritten = rowsUpdated + rowsAppended;
+    return { writeBackRowsUpdated: rowsUpdated, rowsUpdated, rowsAppended, rowsWritten, totalRows: grouped.size, tabName };
   } finally {
     releaseOperationLock('writeback');
   }

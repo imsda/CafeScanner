@@ -93,6 +93,9 @@ router.put('/', async (req, res) => {
   if (payload.googleSheetsEnabled === true && typeof payload.googleAutoImportEnabled === 'undefined') {
     payload.googleAutoImportEnabled = true;
   }
+  if (typeof payload.tallyWeeklySheetTabName === 'string') {
+    payload.tallyWeeklySheetTabName = payload.tallyWeeklySheetTabName.trim() || 'Weekly Tally';
+  }
   if (typeof payload.timezone === 'string') {
     payload.timezone = payload.timezone.trim() || DEFAULT_TIMEZONE;
     if (!isValidTimezone(payload.timezone)) {
