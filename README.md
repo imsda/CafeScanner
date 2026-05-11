@@ -99,6 +99,7 @@ Defaults:
 - Backend: `http://0.0.0.0:4000`
 - Frontend: `http://0.0.0.0:5173`
 - Frontend proxies `/api` requests to `http://127.0.0.1:4000` in development.
+- Frontend in development mode runs on **port 5173**.
 
 If the dev server reports `EADDRINUSE` (typically port `4000`), stop stale processes and restart:
 
@@ -198,6 +199,11 @@ volumes:
 ./scripts/setup.sh
 sudo ./scripts/install-service.sh
 ```
+
+After service install/start:
+- Frontend is served by the backend process on **port 4000** (no Vite dev server in production).
+- API remains available under `/api` on the same origin (for example `http://SERVER-IP:4000/api/health`).
+- Open the app at `http://SERVER-IP:4000`.
 
 Check status:
 

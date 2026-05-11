@@ -11,8 +11,8 @@ fi
 echo "Using project root: ${PROJECT_ROOT}"
 echo "Using service user: ${SERVICE_USER}"
 
-echo "Building backend for production..."
-npm run build -w backend
+echo "Building full app for production (frontend + backend)..."
+npm run build
 
 SERVICE_FILE="/etc/systemd/system/cafescanner.service"
 
@@ -46,3 +46,4 @@ echo "Restarting cafescanner service..."
 sudo systemctl restart cafescanner
 
 echo "CafeScanner service installed and started successfully."
+echo "Production app is served from the backend on port 4000 (frontend + API)."

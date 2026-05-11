@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import session from 'express-session';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import peopleRoutes from './routes/people.js';
 import settingsRoutes from './routes/settings.js';
@@ -28,6 +31,11 @@ const configuredOrigins = (process.env.CLIENT_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const currentFilePath = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFilePath);
+const frontendDistDir = path.resolve(currentDir, '../../frontend/dist');
+const frontendIndexPath = path.join(frontendDistDir, 'index.html');
 
 app.use(
   cors({
@@ -75,14 +83,39 @@ app.use('/api/reports', requireAuth, requirePageAccess('REPORTS'), reportRoutes)
 app.use('/api/system', requireAuth, requirePageAccess('SETTINGS'), systemRoutes);
 app.use('/api/users', requireAuth, requireAdmin, usersRoutes);
 
+if (isProduction) {
+  if (fs.existsSync(frontendDistDir)) {
+    app.use(express.static(frontendDistDir));
+    console.log(`[FRONTEND] Serving static frontend from ${frontendDistDir}`);
+  } else {
+    console.warn(`[FRONTEND] Build output not found at ${frontendDistDir}. Run: npm run build`);
+  }
+}
+
 app.use('/api', (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = error instanceof Error && error.message ? error.message : 'Internal server error';
   console.error('[API] Unhandled error.', error);
   res.status(500).json({ error: message });
 });
 
+if (isProduction) {
+  app.get('*', (_req, res) => {
+    if (!fs.existsSync(frontendIndexPath)) {
+      res.status(503).send('Frontend build is missing. Please run: npm run build');
+      return;
+    }
+
+    res.sendFile(frontendIndexPath);
+  });
+}
+
 app.listen(port, host, () => {
   console.log(`Backend listening on http://${host}:${port}`);
+  if (!isProduction) {
+    console.log('Development frontend is available via Vite on port 5173.');
+  } else {
+    console.log('Production frontend is served by backend on port 4000.');
+  }
 
   void (async () => {
     try {
