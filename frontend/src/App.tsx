@@ -2068,7 +2068,14 @@ function SettingsPage() {
       setMessage(result.ok ? "Update completed successfully." : "Update failed.");
       await checkForUpdates();
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "Unable to install update.");
+      const fallbackMessage = updateError instanceof Error ? updateError.message : "Unable to install update.";
+      const diagnostics = updateStatus?.updateScriptDiagnostics;
+      const scriptCheckPassed = Boolean(diagnostics?.exists && diagnostics?.executable);
+      if (scriptCheckPassed && fallbackMessage.toLowerCase().includes("missing or not executable")) {
+        setError("Unable to install update. The script exists and is executable; review diagnostics/output for the root cause.");
+      } else {
+        setError(fallbackMessage);
+      }
     } finally {
       setIsInstallingUpdate(false);
     }
@@ -2467,6 +2474,14 @@ function SettingsPage() {
                 onClick={() => {
                   setMessage("");
                   setError("");
+                  if (!isGoogleSheetsSyncEnabled) {
+                    setError("Enable Google Sheets Sync before writing weekly tally data.");
+                    return;
+                  }
+                  if (!hasGoogleSheetId) {
+                    setError("Save a Google Sheet URL or Sheet ID before writing weekly tally data.");
+                    return;
+                  }
                   const weeklyTabName = (settings.tallyWeeklySheetTabName ?? '').trim() || 'Weekly Tally';
                   const settingsToSave = {
                     ...settings,
@@ -2482,10 +2497,21 @@ function SettingsPage() {
                         setError('Weekly tally write-back failed.');
                         return;
                       }
-                      const tabName = result.tabName || weeklyTabName;
-                      setMessage(`Weekly tally written to "${tabName}" (${result.rowsUpdated} updated, ${result.rowsAppended} appended, ${result.rowsWritten ?? (result.rowsUpdated + result.rowsAppended)} written).`);
+                      const tabName = (result.tabName ?? '').trim() || 'Weekly Tally';
+                      const rowsUpdated = Number.isFinite(result.rowsUpdated) ? result.rowsUpdated : 0;
+                      const rowsAppended = Number.isFinite(result.rowsAppended) ? result.rowsAppended : 0;
+                      const rowsWritten = Number.isFinite(result.rowsWritten)
+                        ? result.rowsWritten
+                        : (rowsUpdated + rowsAppended);
+                      const totalsSuffix = Number.isFinite(result.totalRows)
+                        ? `, ${result.totalRows} total rows`
+                        : '';
+                      setMessage(`Weekly tally written to "${tabName}" (${rowsUpdated} updated, ${rowsAppended} appended, ${rowsWritten} written${totalsSuffix}).`);
                     })
-                    .catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Weekly tally write-back failed."));
+                    .catch((syncError) => {
+                      const message = syncError instanceof Error ? syncError.message : "Weekly tally write-back failed.";
+                      setError(message || "Weekly tally write-back failed.");
+                    });
                 }}
               >
                 Write Weekly Tally Now
