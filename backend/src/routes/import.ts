@@ -4,8 +4,8 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
 import { nanoid } from 'nanoid';
-import { getMealTrackingMode } from '../services/settingsService.js';
-import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts } from '../services/campMeetingSheetSyncService.js';
+import { getMealTrackingMode, getSettings } from '../services/settingsService.js';
+import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts, writeBackWeeklyTallyNow } from '../services/campMeetingSheetSyncService.js';
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from '../services/campMeetingImportService.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -295,7 +295,25 @@ router.post('/google-sheet/import', async (_req, res) => {
 router.post('/google-sheet/write-back-now', async (req, res) => {
   if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
   const mode = await getMode();
-  const result = mode === MealTrackingMode.camp_meeting ? await writeBackCampMeetingRedemptions(true) : mode === MealTrackingMode.tally ? await writeBackTallyCounts(true) : await writeBackCountdownBalances(true);
+  let result;
+  if (mode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(true);
+  else if (mode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(true);
+  else {
+    const settings = await getSettings();
+    const tallyMode = (settings.tallyWriteBackMode || 'lifetime').toLowerCase();
+    if (tallyMode === 'weekly') result = await writeBackWeeklyTallyNow(true);
+    else if (tallyMode === 'both') {
+      const lifetime = await writeBackTallyCounts(true);
+      const weekly = await writeBackWeeklyTallyNow(true);
+      result = { ...lifetime, weekly };
+    } else result = await writeBackTallyCounts(true);
+  }
+  return res.json({ ok: true, ...result });
+});
+
+router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
+  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+  const result = await writeBackWeeklyTallyNow(true);
   return res.json({ ok: true, ...result });
 });
 

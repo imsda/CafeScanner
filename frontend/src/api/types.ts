@@ -83,6 +83,9 @@ export interface Settings {
   googleSheetTabName: string;
   googleSyncIntervalMinutes: number;
   googleAutoImportEnabled?: boolean | null;
+  tallyWriteBackMode?: 'lifetime' | 'weekly' | 'both';
+  tallyWeeklySheetTabName?: string;
+  tallyWeekStartsOn?: 'SUNDAY' | 'MONDAY';
   googleLastAutoImportAt?: string | null;
   googleLastAutoImportSummary?: string | null;
   updatedAt: string;
