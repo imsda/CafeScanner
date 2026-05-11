@@ -9,8 +9,42 @@ import { requireAdmin } from '../middleware/auth.js';
 import { acquireOperationLock, pauseScheduler, releaseOperationLock, resumeScheduler, waitForOperationsToFinish } from '../services/operationLockService.js';
 
 const router = Router();
-const UPDATE_SCRIPT_PATH = path.resolve(process.cwd(), 'scripts/update-service.sh');
 let activeUpdatePromise: Promise<{ ok: boolean; output: string; startedAt: string; finishedAt: string; error?: string }> | null = null;
+
+type UpdateScriptDiagnostics = {
+  cwd: string;
+  resolvedScriptPath: string;
+  exists: boolean;
+  executable: boolean;
+  statMode: string | null;
+};
+
+async function getUpdateScriptDiagnostics(): Promise<UpdateScriptDiagnostics> {
+  const cwd = process.cwd();
+  const resolvedScriptPath = path.resolve(cwd, 'scripts/update-service.sh');
+  let exists = false;
+  let executable = false;
+  let statMode: string | null = null;
+
+  try {
+    const stats = await fs.stat(resolvedScriptPath);
+    exists = stats.isFile();
+    statMode = `0o${(stats.mode & 0o777).toString(8).padStart(3, '0')}`;
+  } catch {
+    exists = false;
+  }
+
+  if (exists) {
+    try {
+      await fs.access(resolvedScriptPath, fsConstants.X_OK);
+      executable = true;
+    } catch {
+      executable = false;
+    }
+  }
+
+  return { cwd, resolvedScriptPath, exists, executable, statMode };
+}
 
 function requireOwner(req: any, res: any, next: any) {
   if (req.session?.role !== 'OWNER') return res.status(403).json({ error: 'Owner access required' });
@@ -199,6 +233,8 @@ router.use('/backups', requireAdmin, backupRouter);
 
 
 router.get('/update-status', requireAdmin, async (_req, res) => {
+  const diagnostics = await getUpdateScriptDiagnostics();
+  console.log('[SYSTEM] update-status diagnostics', { cwd: diagnostics.cwd, resolvedScriptPath: diagnostics.resolvedScriptPath });
   const branch = await readGitRef(['git', 'rev-parse', '--abbrev-ref', 'HEAD']);
   const localCommit = await readGitRef(['git', 'rev-parse', 'HEAD']);
   await readGitRef(['git', 'fetch', '--quiet', 'origin']);
@@ -210,7 +246,8 @@ router.get('/update-status', requireAdmin, async (_req, res) => {
     localCommit,
     remoteCommit,
     updatesAvailable,
-    updateInProgress: Boolean(activeUpdatePromise)
+    updateInProgress: Boolean(activeUpdatePromise),
+    updateScriptDiagnostics: diagnostics
   });
 });
 
@@ -220,17 +257,20 @@ router.post('/update', requireOwner, async (req, res) => {
     return res.status(409).json({ ok: false, error: 'An update is already running.' });
   }
 
-  try {
-    await fs.access(UPDATE_SCRIPT_PATH, fsConstants.F_OK | fsConstants.X_OK);
-  } catch {
-    return res.status(500).json({ ok: false, error: 'Update script is missing or not executable.' });
+  const diagnostics = await getUpdateScriptDiagnostics();
+  if (!diagnostics.exists || !diagnostics.executable) {
+    return res.status(500).json({
+      ok: false,
+      error: 'Update script check failed.',
+      diagnostics
+    });
   }
 
   const startedAt = new Date().toISOString();
   console.log(`[ADMIN_ACTION] update install requested by userId=${actedBy ?? 'unknown'} at ${startedAt}`);
 
   activeUpdatePromise = new Promise((resolve) => {
-    const child = spawn(UPDATE_SCRIPT_PATH, [], { cwd: process.cwd(), shell: false });
+    const child = spawn(diagnostics.resolvedScriptPath, [], { cwd: diagnostics.cwd, shell: false });
     let output = '';
 
     child.stdout.on('data', (chunk) => { output += String(chunk); });

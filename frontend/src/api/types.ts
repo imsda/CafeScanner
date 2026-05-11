@@ -169,6 +169,13 @@ export interface SystemUpdateStatus {
   remoteCommit: string | null;
   updatesAvailable: boolean;
   updateInProgress: boolean;
+  updateScriptDiagnostics: {
+    cwd: string;
+    resolvedScriptPath: string;
+    exists: boolean;
+    executable: boolean;
+    statMode: string | null;
+  };
 }
 
 export interface SystemUpdateResult {
