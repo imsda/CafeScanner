@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { prisma } from '../db.js';
@@ -11,8 +12,37 @@ import { acquireOperationLock, pauseScheduler, releaseOperationLock, resumeSched
 const router = Router();
 let activeUpdatePromise: Promise<{ ok: boolean; output: string; startedAt: string; finishedAt: string; error?: string }> | null = null;
 
+const backendRouteDir = path.dirname(fileURLToPath(import.meta.url));
+
+async function resolveRepoRoot(): Promise<string> {
+  let current = backendRouteDir;
+  const filesystemRoot = path.parse(current).root;
+
+  while (true) {
+    const packageJsonPath = path.join(current, 'package.json');
+    const updateScriptPath = path.join(current, 'scripts', 'update-service.sh');
+
+    try {
+      const [packageStats, scriptStats] = await Promise.all([
+        fs.stat(packageJsonPath),
+        fs.stat(updateScriptPath)
+      ]);
+      if (packageStats.isFile() && scriptStats.isFile()) return current;
+    } catch {
+      // Continue walking upward until we either find the repo root or hit filesystem root.
+    }
+
+    if (current === filesystemRoot) break;
+    current = path.dirname(current);
+  }
+
+  throw new Error(`Unable to locate repository root from ${backendRouteDir}`);
+}
+
+
 type UpdateScriptDiagnostics = {
   cwd: string;
+  repoRoot: string | null;
   resolvedScriptPath: string;
   exists: boolean;
   executable: boolean;
@@ -21,7 +51,17 @@ type UpdateScriptDiagnostics = {
 
 async function getUpdateScriptDiagnostics(): Promise<UpdateScriptDiagnostics> {
   const cwd = process.cwd();
-  const resolvedScriptPath = path.resolve(cwd, 'scripts/update-service.sh');
+  let repoRoot: string | null = null;
+
+  try {
+    repoRoot = await resolveRepoRoot();
+  } catch {
+    repoRoot = null;
+  }
+
+  const resolvedScriptPath = repoRoot
+    ? path.join(repoRoot, 'scripts', 'update-service.sh')
+    : path.resolve(cwd, 'scripts/update-service.sh');
   let exists = false;
   let executable = false;
   let statMode: string | null = null;
@@ -43,7 +83,7 @@ async function getUpdateScriptDiagnostics(): Promise<UpdateScriptDiagnostics> {
     }
   }
 
-  return { cwd, resolvedScriptPath, exists, executable, statMode };
+  return { cwd, repoRoot, resolvedScriptPath, exists, executable, statMode };
 }
 
 function requireOwner(req: any, res: any, next: any) {
@@ -52,8 +92,9 @@ function requireOwner(req: any, res: any, next: any) {
 }
 
 async function readGitRef(command: string[]) {
+  const repoRoot = await resolveRepoRoot();
   return new Promise<string | null>((resolve) => {
-    const proc = spawn(command[0], command.slice(1), { cwd: process.cwd() });
+    const proc = spawn(command[0], command.slice(1), { cwd: repoRoot });
     let output = '';
     proc.stdout.on('data', (chunk) => { output += String(chunk); });
     proc.on('close', (code) => resolve(code === 0 ? output.trim() || null : null));
@@ -75,15 +116,17 @@ function backupTimestamp(d = new Date()) {
   return `${y}-${m}-${day}-${hh}-${mm}`;
 }
 
-function resolveSqliteDbPath() {
+async function resolveSqliteDbPath() {
   const dbUrl = process.env.DATABASE_URL || '';
   if (!dbUrl.startsWith('file:')) throw new Error('DATABASE_URL must use sqlite file: path');
   const rawPath = dbUrl.slice('file:'.length).split('?')[0];
-  return path.resolve(process.cwd(), rawPath);
+  const repoRoot = await resolveRepoRoot();
+  return path.resolve(repoRoot, rawPath);
 }
 
-function resolveBackupsDirectory() {
-  return path.resolve(process.cwd(), process.env.BACKUP_DIR || 'backend/backups');
+async function resolveBackupsDirectory() {
+  const repoRoot = await resolveRepoRoot();
+  return path.resolve(repoRoot, process.env.BACKUP_DIR || 'backend/backups');
 }
 
 async function validateCafeScannerDbFile(dbPath: string) {
@@ -188,8 +231,8 @@ router.post('/reset-meal-tracking-data', async (req, res) => {
 });
 
 backupRouter.get('/download', async (_req, res) => {
-  const dbPath = resolveSqliteDbPath();
-  const backupsDir = resolveBackupsDirectory();
+  const dbPath = await resolveSqliteDbPath();
+  const backupsDir = await resolveBackupsDirectory();
   await fs.mkdir(backupsDir, { recursive: true });
   const filename = `cafescanner-backup-${backupTimestamp()}.db`;
   const backupPath = path.join(backupsDir, filename);
@@ -203,8 +246,8 @@ backupRouter.post('/restore', dbUpload.single('backup'), async (req, res) => {
   if (!file) return res.status(400).json({ error: 'Backup file is required.' });
   if (!file.originalname.toLowerCase().endsWith('.db')) return res.status(400).json({ error: 'Only .db backup files are accepted.' });
 
-  const dbPath = resolveSqliteDbPath();
-  const backupsDir = resolveBackupsDirectory();
+  const dbPath = await resolveSqliteDbPath();
+  const backupsDir = await resolveBackupsDirectory();
   await fs.mkdir(backupsDir, { recursive: true });
 
   const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -234,7 +277,7 @@ router.use('/backups', requireAdmin, backupRouter);
 
 router.get('/update-status', requireAdmin, async (_req, res) => {
   const diagnostics = await getUpdateScriptDiagnostics();
-  console.log('[SYSTEM] update-status diagnostics', { cwd: diagnostics.cwd, resolvedScriptPath: diagnostics.resolvedScriptPath });
+  console.log('[SYSTEM] update-status diagnostics', { cwd: diagnostics.cwd, repoRoot: diagnostics.repoRoot, resolvedScriptPath: diagnostics.resolvedScriptPath });
   const branch = await readGitRef(['git', 'rev-parse', '--abbrev-ref', 'HEAD']);
   const localCommit = await readGitRef(['git', 'rev-parse', 'HEAD']);
   await readGitRef(['git', 'fetch', '--quiet', 'origin']);
@@ -273,7 +316,7 @@ router.post('/update', requireOwner, async (req, res) => {
   console.log(`[ADMIN_ACTION] update install requested by userId=${actedBy ?? 'unknown'} at ${startedAt}`);
 
   activeUpdatePromise = new Promise((resolve) => {
-    const child = spawn(diagnostics.resolvedScriptPath, [], { cwd: diagnostics.cwd, shell: false });
+    const child = spawn(diagnostics.resolvedScriptPath, [], { cwd: diagnostics.repoRoot ?? diagnostics.cwd, shell: false });
     let output = '';
 
     child.stdout.on('data', (chunk) => { output += String(chunk); });
