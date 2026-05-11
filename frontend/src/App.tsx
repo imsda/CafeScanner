@@ -2467,8 +2467,24 @@ function SettingsPage() {
                 onClick={() => {
                   setMessage("");
                   setError("");
-                  void api<{ rowsUpdated: number; rowsAppended: number; tabName: string }>("/import/google-sheet/write-weekly-tally-now", { method: "POST" })
-                    .then((result) => setMessage(`Weekly tally written to "${result.tabName}" (${result.rowsUpdated} updated, ${result.rowsAppended} appended).`))
+                  const weeklyTabName = (settings.tallyWeeklySheetTabName ?? '').trim() || 'Weekly Tally';
+                  const settingsToSave = {
+                    ...settings,
+                    tallyWeeklySheetTabName: weeklyTabName,
+                  };
+                  const savePromise = hasUnsavedGoogleSheetsChanges
+                    ? saveGoogleSheetsSettings(settingsToSave)
+                    : Promise.resolve(settingsToSave);
+                  void savePromise
+                    .then(() => api<{ ok: boolean; tabName: string; rowsUpdated: number; rowsAppended: number; rowsWritten?: number; totalRows?: number }>("/import/google-sheet/write-weekly-tally-now", { method: "POST" }))
+                    .then((result) => {
+                      if (!result.ok) {
+                        setError('Weekly tally write-back failed.');
+                        return;
+                      }
+                      const tabName = result.tabName || weeklyTabName;
+                      setMessage(`Weekly tally written to "${tabName}" (${result.rowsUpdated} updated, ${result.rowsAppended} appended, ${result.rowsWritten ?? (result.rowsUpdated + result.rowsAppended)} written).`);
+                    })
                     .catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Weekly tally write-back failed."));
                 }}
               >

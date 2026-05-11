@@ -314,7 +314,14 @@ router.post('/google-sheet/write-back-now', async (req, res) => {
 router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
   const result = await writeBackWeeklyTallyNow(true);
-  return res.json({ ok: true, ...result });
+  return res.json({
+    ok: true,
+    tabName: result.tabName ?? 'Weekly Tally',
+    rowsUpdated: result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0,
+    rowsAppended: result.rowsAppended ?? 0,
+    rowsWritten: result.rowsWritten ?? ((result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0) + (result.rowsAppended ?? 0)),
+    totalRows: result.totalRows ?? undefined
+  });
 });
 
 router.post('/preview', upload.single('file'), async (req, res) => {
