@@ -316,9 +316,9 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   const settings = await getSettings();
   if (!settings.googleSheetsEnabled) return res.status(400).json({ error: 'Google Sheets sync is disabled.' });
   if (!settings.googleSheetId?.trim()) return res.status(400).json({ error: 'Google Sheet ID is required.' });
-  const weeklyTabName = settings.tallyWeeklySheetTabName?.trim() || 'Weekly Tally';
-  if (!settings.tallyWeeklySheetTabName?.trim()) {
-    await prisma.setting.update({ where: { id: settings.id }, data: { tallyWeeklySheetTabName: weeklyTabName } });
+  const weeklyTabName = settings.tallyWeeklyRawTabName?.trim() || 'Weekly Tally Raw';
+  if (!settings.tallyWeeklyRawTabName?.trim()) {
+    await prisma.setting.update({ where: { id: settings.id }, data: { tallyWeeklyRawTabName: weeklyTabName } });
   }
   const result = await writeBackWeeklyTallyNow(true);
   return res.json({

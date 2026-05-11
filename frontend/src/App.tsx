@@ -1883,7 +1883,8 @@ function SettingsPage() {
     googleSyncIntervalMinutes: number;
     googleAutoImportEnabled: boolean;
     tallyWriteBackMode: 'lifetime' | 'weekly' | 'both';
-    tallyWeeklySheetTabName: string;
+    tallyWeeklyRawTabName: string;
+    tallyWeeklyViewTabName?: string | null;
     tallyWeekStartsOn: 'SUNDAY' | 'MONDAY';
   } | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<
@@ -1913,7 +1914,8 @@ function SettingsPage() {
       googleSyncIntervalMinutes: loaded.googleSyncIntervalMinutes,
       googleAutoImportEnabled: loaded.googleAutoImportEnabled ?? true,
       tallyWriteBackMode: loaded.tallyWriteBackMode ?? 'lifetime',
-      tallyWeeklySheetTabName: loaded.tallyWeeklySheetTabName ?? 'Weekly Tally',
+      tallyWeeklyRawTabName: loaded.tallyWeeklyRawTabName ?? 'Weekly Tally Raw',
+      tallyWeeklyViewTabName: loaded.tallyWeeklyViewTabName ?? '',
       tallyWeekStartsOn: loaded.tallyWeekStartsOn ?? 'MONDAY',
     });
     if (user?.role === "OWNER" || user?.role === "ADMIN") {
@@ -1947,7 +1949,8 @@ function SettingsPage() {
       settings?.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes ||
       (settings?.googleAutoImportEnabled ?? true) !== savedGoogleSheetsSettings.googleAutoImportEnabled ||
       (settings?.tallyWriteBackMode ?? 'lifetime') !== savedGoogleSheetsSettings.tallyWriteBackMode ||
-      (settings?.tallyWeeklySheetTabName ?? 'Weekly Tally') !== savedGoogleSheetsSettings.tallyWeeklySheetTabName ||
+      (settings?.tallyWeeklyRawTabName ?? 'Weekly Tally Raw') !== savedGoogleSheetsSettings.tallyWeeklyRawTabName ||
+      (settings?.tallyWeeklyViewTabName ?? '') !== (savedGoogleSheetsSettings.tallyWeeklyViewTabName ?? '') ||
       (settings?.tallyWeekStartsOn ?? 'MONDAY') !== savedGoogleSheetsSettings.tallyWeekStartsOn);
 
   async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
@@ -1981,7 +1984,8 @@ function SettingsPage() {
       googleSyncIntervalMinutes: saved.googleSyncIntervalMinutes,
       googleAutoImportEnabled: saved.googleAutoImportEnabled ?? true,
       tallyWriteBackMode: saved.tallyWriteBackMode ?? 'lifetime',
-      tallyWeeklySheetTabName: saved.tallyWeeklySheetTabName ?? 'Weekly Tally',
+      tallyWeeklyRawTabName: saved.tallyWeeklyRawTabName ?? 'Weekly Tally Raw',
+      tallyWeeklyViewTabName: saved.tallyWeeklyViewTabName ?? '',
       tallyWeekStartsOn: saved.tallyWeekStartsOn ?? 'MONDAY',
     });
     return saved;
@@ -2345,12 +2349,22 @@ function SettingsPage() {
                     </select>
                   </label>
                   <label>
-                    Weekly tally tab name
+                    Weekly tally raw tab name
                     <input
-                      value={settings.tallyWeeklySheetTabName ?? "Weekly Tally"}
-                      onChange={(e) => setSettings({ ...settings, tallyWeeklySheetTabName: e.target.value || "Weekly Tally" })}
+                      value={settings.tallyWeeklyRawTabName ?? "Weekly Tally Raw"}
+                      onChange={(e) => setSettings({ ...settings, tallyWeeklyRawTabName: e.target.value || "Weekly Tally Raw" })}
                     />
                   </label>
+                  <label>
+                    Weekly tally view tab name (optional)
+                    <input
+                      value={settings.tallyWeeklyViewTabName ?? ""}
+                      onChange={(e) => setSettings({ ...settings, tallyWeeklyViewTabName: e.target.value })}
+                    />
+                  </label>
+                  <p className="muted">
+                    Do not convert the write-back tab to a Google Sheets table. Use a separate view/pivot/filter tab for sorting.
+                  </p>
                   <label>
                     Week starts on
                     <select
@@ -2482,10 +2496,10 @@ function SettingsPage() {
                     setError("Save a Google Sheet URL or Sheet ID before writing weekly tally data.");
                     return;
                   }
-                  const weeklyTabName = (settings.tallyWeeklySheetTabName ?? '').trim() || 'Weekly Tally';
+                  const weeklyTabName = (settings.tallyWeeklyRawTabName ?? '').trim() || 'Weekly Tally Raw';
                   const settingsToSave = {
                     ...settings,
-                    tallyWeeklySheetTabName: weeklyTabName,
+                    tallyWeeklyRawTabName: weeklyTabName,
                   };
                   const savePromise = hasUnsavedGoogleSheetsChanges
                     ? saveGoogleSheetsSettings(settingsToSave)
@@ -2497,7 +2511,7 @@ function SettingsPage() {
                         setError('Weekly tally write-back failed.');
                         return;
                       }
-                      const tabName = (result.tabName ?? '').trim() || 'Weekly Tally';
+                      const tabName = (result.tabName ?? '').trim() || 'Weekly Tally Raw';
                       const rowsUpdated = Number.isFinite(result.rowsUpdated) ? result.rowsUpdated : 0;
                       const rowsAppended = Number.isFinite(result.rowsAppended) ? result.rowsAppended : 0;
                       const rowsWritten = Number.isFinite(result.rowsWritten)
