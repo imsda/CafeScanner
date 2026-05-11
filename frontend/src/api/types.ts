@@ -159,3 +159,19 @@ export interface ReportsSummaryResponse {
     };
   }>;
 }
+
+export interface SystemUpdateStatus {
+  branch: string | null;
+  localCommit: string | null;
+  remoteCommit: string | null;
+  updatesAvailable: boolean;
+  updateInProgress: boolean;
+}
+
+export interface SystemUpdateResult {
+  ok: boolean;
+  output: string;
+  startedAt: string;
+  finishedAt: string;
+  error?: string;
+}

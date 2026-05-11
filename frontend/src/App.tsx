@@ -11,6 +11,8 @@ import type {
   ScanResponse,
   Settings,
   GoogleSheetsSchedulerStatus,
+  SystemUpdateResult,
+  SystemUpdateStatus,
 } from "./api/types";
 import QrScanner from "./components/QrScanner";
 import { useAuth } from "./context/AuthContext";
@@ -435,7 +437,7 @@ function ScanPage() {
     useState<PendingCampMeetingSelection | null>(null);
   const [manual, setManual] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [mode, setMode] = useState<"camera" | "usb">("camera");
+  const [mode, setMode] = useState<"camera" | "usb">("usb");
   const [mealTrackingMode, setMealTrackingMode] =
     useState<MealTrackingMode>("camp_meeting");
   const [scanCooldownSeconds, setScanCooldownSeconds] = useState(1);
@@ -1882,8 +1884,12 @@ function SettingsPage() {
     googleAutoImportEnabled: boolean;
   } | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<
-    "general" | "meal-tracking" | "scanner" | "google-sheets-sync" | "data-reset-tools" | "danger-zone"
+    "general" | "meal-tracking" | "scanner" | "google-sheets-sync" | "updates" | "data-reset-tools" | "danger-zone"
   >("general");
+  const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null);
+  const [updateOutput, setUpdateOutput] = useState("");
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [resetSuccessMessage, setResetSuccessMessage] = useState("");
   const [showResetSuccessModal, setShowResetSuccessModal] = useState(false);
   const [resetErrorMessage, setResetErrorMessage] = useState('');
@@ -1907,14 +1913,14 @@ function SettingsPage() {
     if (user?.role === "OWNER" || user?.role === "ADMIN") {
       const status = await api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
       setSchedulerStatus(status);
+      const updateStatusResponse = await api<SystemUpdateStatus>("/system/update-status");
+      setUpdateStatus(updateStatusResponse);
     }
   };
 
   useEffect(() => {
     void load();
   }, []);
-
-  if (!settings) return <p>Loading...</p>;
 
   const clearEnabled =
     clearPhrase === "RESET MEAL TRACKING DATA" && !isClearingDatabase;
@@ -1923,16 +1929,17 @@ function SettingsPage() {
   const isOwner = user?.role === "OWNER";
   const canManageGoogleSheets = user?.role === "OWNER" || user?.role === "ADMIN";
   const canManageBackups = user?.role === "OWNER" || user?.role === "ADMIN";
-  const isCampMeetingMode = settings.mealTrackingMode === "camp_meeting";
-  const isGoogleSheetsSyncEnabled = settings.googleSheetsEnabled;
-  const hasGoogleSheetId = Boolean(settings.googleSheetId?.trim());
+  const canManageUpdates = user?.role === "OWNER" || user?.role === "ADMIN";
+  const isCampMeetingMode = settings?.mealTrackingMode === "camp_meeting";
+  const isGoogleSheetsSyncEnabled = Boolean(settings?.googleSheetsEnabled);
+  const hasGoogleSheetId = Boolean(settings?.googleSheetId?.trim());
   const hasUnsavedGoogleSheetsChanges =
     !!savedGoogleSheetsSettings &&
-    (settings.googleSheetsEnabled !== savedGoogleSheetsSettings.googleSheetsEnabled ||
-      (settings.googleSheetId ?? "") !== savedGoogleSheetsSettings.googleSheetId ||
-      settings.googleSheetTabName !== savedGoogleSheetsSettings.googleSheetTabName ||
-      settings.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes ||
-      (settings.googleAutoImportEnabled ?? true) !== savedGoogleSheetsSettings.googleAutoImportEnabled);
+    (settings?.googleSheetsEnabled !== savedGoogleSheetsSettings.googleSheetsEnabled ||
+      (settings?.googleSheetId ?? "") !== savedGoogleSheetsSettings.googleSheetId ||
+      settings?.googleSheetTabName !== savedGoogleSheetsSettings.googleSheetTabName ||
+      settings?.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes ||
+      (settings?.googleAutoImportEnabled ?? true) !== savedGoogleSheetsSettings.googleAutoImportEnabled);
 
   async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
     const sourceSettings = settingsOverride ?? settings;
@@ -1977,6 +1984,8 @@ function SettingsPage() {
     }
   }
 
+  if (!settings) return <p>Loading...</p>;
+
   async function clearOperationalData() {
     if (!clearEnabled) return;
     setIsClearingDatabase(true);
@@ -2019,6 +2028,38 @@ function SettingsPage() {
     setFullWipeResult(response);
     setShowFullWipeConfirm(false);
     setFullWipePhrase("");
+  }
+
+  async function checkForUpdates() {
+    if (!canManageUpdates) return;
+    setIsCheckingUpdates(true);
+    setError("");
+    try {
+      const status = await api<SystemUpdateStatus>("/system/update-status");
+      setUpdateStatus(status);
+      setMessage("Update status refreshed.");
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to check for updates.");
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  }
+
+  async function installUpdate() {
+    if (!isOwner) return;
+    setIsInstallingUpdate(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api<SystemUpdateResult>("/system/update", { method: "POST" });
+      setUpdateOutput(result.output || "No update output returned.");
+      setMessage(result.ok ? "Update completed successfully." : "Update failed.");
+      await checkForUpdates();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to install update.");
+    } finally {
+      setIsInstallingUpdate(false);
+    }
   }
 
   function downloadBackup() {
@@ -2073,6 +2114,7 @@ function SettingsPage() {
         <button type="button" className={activeSettingsSection === "meal-tracking" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("meal-tracking")}>Meal Tracking</button>
         <button type="button" className={activeSettingsSection === "scanner" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("scanner")}>Scanner</button>
         <button type="button" className={activeSettingsSection === "google-sheets-sync" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("google-sheets-sync")}>Google Sheets Sync</button>
+        {canManageUpdates && <button type="button" className={activeSettingsSection === "updates" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("updates")}>Updates</button>}
         <button type="button" className={activeSettingsSection === "data-reset-tools" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("data-reset-tools")}>Data Reset Tools</button>
         <button type="button" className={activeSettingsSection === "danger-zone" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("danger-zone")}>Danger Zone</button>
       </div>
@@ -2418,6 +2460,33 @@ function SettingsPage() {
           </section>
         </section>
       ) : null}
+      {canManageUpdates && activeSettingsSection === "updates" && (
+        <section className="card stack compact-card">
+          <h3>Updates</h3>
+          <p className="muted">Installing updates may restart the application service.</p>
+          <p>Branch: <strong>{updateStatus?.branch ?? "Unknown"}</strong></p>
+          <p>Local commit: <strong>{updateStatus?.localCommit ?? "Unknown"}</strong></p>
+          <p>Remote commit: <strong>{updateStatus?.remoteCommit ?? "Unavailable"}</strong></p>
+          <p>Update available: <strong>{updateStatus ? (updateStatus.updatesAvailable ? "Yes" : "No") : "Unknown"}</strong></p>
+          <div className="button-row">
+            <button type="button" className="secondary" onClick={() => void checkForUpdates()} disabled={isCheckingUpdates || isInstallingUpdate}>
+              {isCheckingUpdates ? "Checking..." : "Check for updates"}
+            </button>
+            {isOwner && (
+              <button type="button" className="primary" onClick={() => void installUpdate()} disabled={isInstallingUpdate || isCheckingUpdates || updateStatus?.updateInProgress}>
+                {isInstallingUpdate ? "Installing update..." : "Install update"}
+              </button>
+            )}
+          </div>
+          {updateOutput && (
+            <label>
+              Update output
+              <textarea value={updateOutput} readOnly rows={8} />
+            </label>
+          )}
+        </section>
+      )}
+
       {activeSettingsSection === "data-reset-tools" && (<section className="card stack compact-card">
         <h3>Data Reset Tools</h3>
         <label>
