@@ -388,3 +388,21 @@ Destructive reset flows are admin-initiated app actions only (for explicit maint
 - Normal setup does not reset users.
 - Full wipe is the only script that deletes everything.
 - Full wipe requires OWNER web authorization plus terminal token.
+
+
+## Production Workflow
+- Run `scripts/setup.sh` for first-time setup; it preserves existing DB/users and avoids destructive resets.
+- Production serves `frontend/dist` from backend on port 4000 (`/api/*` unchanged).
+- Use reverse proxy (Traefik) with HTTPS and forward to `http://127.0.0.1:4000`.
+
+## Update Workflow
+- Use `scripts/update-service.sh` only. It creates a pre-update SQLite backup, pulls fast-forward changes, installs deps, builds, runs migrations (if present), and restarts `cafescanner`.
+
+## Backup/Restore Workflow
+- Use System backup download/restore routes. Restore now validates SQLite file headers before replacement.
+- Recommended: scheduled filesystem backups of `backend/backups`, DB file, and `-wal`/`-shm` files.
+
+## Service Management
+- `sudo systemctl status cafescanner`
+- `sudo systemctl restart cafescanner`
+- `journalctl -u cafescanner -f`

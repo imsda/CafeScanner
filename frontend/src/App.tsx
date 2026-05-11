@@ -2795,7 +2795,7 @@ function UserManagementPage() {
           />
         </label>
         <label>
-          Password
+          Password {role === "SCANNER" ? "(min 4)" : "(min 12)"}
           <input
             type="password"
             value={password}
@@ -2814,7 +2814,7 @@ function UserManagementPage() {
           >
             {user?.role === "OWNER" && <option value="OWNER">OWNER</option>}
             <option value="ADMIN">ADMIN</option>
-            <option value="SCANNER">SCANNER</option>
+            <option value="SCANNER">Scanner / Kiosk User (Limited access account)</option>
             <option value="CUSTOM">CUSTOM</option>
           </select>
         </label>
@@ -2852,7 +2852,7 @@ function UserManagementPage() {
           {users.map((u) => (
             <tr key={u.id}>
               <td>{u.username}</td>
-              <td>{u.role}</td>
+              <td>{u.role === "SCANNER" ? "Scanner / Kiosk User (Limited access account)" : u.role}</td>
               <td>{formatPages((u.allowedPages || []) as AppPage[])}</td>
               <td>
                 <button

@@ -20,9 +20,15 @@ router.get('/', async (_req, res) => { const users = await prisma.adminUser.find
 
 router.post('/', async (req, res) => {
   const { username, password, role, allowedPages } = req.body as any;
-  if (!username || !password || password.length < 4) return res.status(400).json({ error: 'Username and password (min 4 chars) are required' });
+  if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
   const requestedRole: UserRole = role === 'OWNER' ? 'OWNER' : role === 'SCANNER' ? 'SCANNER' : role === 'CUSTOM' ? 'CUSTOM' : 'ADMIN';
   if (requestedRole === 'OWNER' && !isOwnerSession(req)) return res.status(403).json({ error: 'Only OWNER can create OWNER users' });
+
+  const minPassword = requestedRole === 'SCANNER' ? 4 : 12;
+  if (password.length < minPassword) {
+    return res.status(400).json({ error: `Password must be at least ${minPassword} characters for ${requestedRole} accounts` });
+  }
+
   const safeRole: UserRole = requestedRole;
   const safePages = normalizePages(allowedPages);
   const passwordHash = await bcrypt.hash(password, 10);
@@ -43,13 +49,21 @@ router.patch('/:id', async (req, res) => {
     if (ownerCount <= 1) return res.status(400).json({ error: 'Cannot demote the last OWNER' });
   }
   const safePages = normalizePages(allowedPages);
+  try {
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.adminUser.update({ where: { id }, data: { role: requestedRole, passwordHash: password && password.length >= 4 ? await bcrypt.hash(password, 10) : undefined } });
+    const minPassword = requestedRole === 'SCANNER' ? 4 : 12;
+    if (password && password.length < minPassword) {
+      throw new Error(`Password must be at least ${minPassword} characters for ${requestedRole} accounts`);
+    }
+    await tx.adminUser.update({ where: { id }, data: { role: requestedRole, passwordHash: password ? await bcrypt.hash(password, 10) : undefined } });
     await tx.userPageAccess.deleteMany({ where: { adminUserId: id } });
     if (requestedRole === 'CUSTOM' && safePages.length > 0) await tx.userPageAccess.createMany({ data: safePages.map((page) => ({ adminUserId: id, page })) });
     return tx.adminUser.findUnique({ where: { id }, include: { pageAccess: true } });
   });
   res.json({ id: updated!.id, username: updated!.username, role: updated!.role, allowedPages: getAllowedPages(updated!.role, updated!.pageAccess.map((entry) => entry.page)) });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to update user' });
+  }
 });
 
 router.delete('/:id', async (req, res) => {
