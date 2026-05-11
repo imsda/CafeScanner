@@ -9,6 +9,10 @@ const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_d
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const WEEKLY_TALLY_HEADER = ['Week Starting', 'Week Ending', 'ID', 'Name', 'Breakfast', 'Lunch', 'Dinner', 'Total'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
+const TALLY_COUNT_COLUMNS = ['breakfast', 'lunch', 'dinner', 'total'] as const;
+
+type ColumnKey = 'id' | 'name' | 'breakfast' | 'lunch' | 'dinner' | 'total' | 'week_starting' | 'week_ending';
+type HeaderMap = Record<ColumnKey, number | undefined>;
 type SchedulerStatus = {
   schedulerEnabled: boolean;
   lastAutomaticCheckTime: string | null;
@@ -312,6 +316,46 @@ function getCurrentWeekRange(timezone: string, weekStartsOn: 'SUNDAY' | 'MONDAY'
   return { weekStart: isoFromParts(s), weekEnd: isoFromParts(e) };
 }
 
+function normalizeHeaderName(value: string): string {
+  return (value || '').trim().toLowerCase().replace(/[\s_]+/g, ' ');
+}
+
+function findHeaderIndex(headers: string[], aliases: string[]): number | undefined {
+  const normalizedAliases = aliases.map((a) => normalizeHeaderName(a));
+  return headers.findIndex((header) => normalizedAliases.includes(normalizeHeaderName(header)));
+}
+
+function getTallyHeaderMap(headerRow: string[]): HeaderMap {
+  const headers = headerRow || [];
+  const id = findHeaderIndex(headers, ['id', 'student id', 'person id']);
+  const name = findHeaderIndex(headers, ['name', 'student name']);
+  const breakfast = findHeaderIndex(headers, ['breakfast']);
+  const lunch = findHeaderIndex(headers, ['lunch']);
+  const dinner = findHeaderIndex(headers, ['dinner']);
+  const total = findHeaderIndex(headers, ['total']);
+  const week_starting = findHeaderIndex(headers, ['week starting']);
+  const week_ending = findHeaderIndex(headers, ['week ending']);
+  return { id, name, breakfast, lunch, dinner, total, week_starting, week_ending };
+}
+
+function assertRequiredHeaders(map: HeaderMap, required: Array<ColumnKey>, label: string) {
+  const missing = required.filter((key) => map[key] === undefined);
+  if (missing.length) {
+    throw new Error(`Missing required ${label} columns: ${missing.join(', ')}.`);
+  }
+}
+
+function columnNumberToLetter(columnNumber: number): string {
+  let n = columnNumber;
+  let result = '';
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
 async function writeBackWeeklyTally(force: boolean) {
   if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
   try {
@@ -329,7 +373,14 @@ async function writeBackWeeklyTally(force: boolean) {
     if (!existingTab) {
       await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] } });
     }
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
+    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:ZZ` });
+    const existingRows = existingRowsResp.data.values || [];
+    if (existingRows.length === 0) {
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
+      existingRows.push([...WEEKLY_TALLY_HEADER]);
+    }
+    const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
+    assertRequiredHeaders(headerMap, ['week_starting', 'id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'weekly tally write-back');
     const txns = await prisma.scanTransaction.findMany({
       where: { result: 'SUCCESS', mealType: { in: [MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER] }, personId: { not: null } },
       include: { person: true }
@@ -347,12 +398,13 @@ async function writeBackWeeklyTally(force: boolean) {
       if (t.mealType === MealType.DINNER) current.dinner += 1;
       grouped.set(key, current);
     }
-    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:H` });
-    const existingRows = existingRowsResp.data.values || [];
     const rowByWeekAndId = new Map<string, number>();
     for (let i = 1; i < existingRows.length; i++) {
       const row = existingRows[i] || [];
-      rowByWeekAndId.set(`${row[0] || ''}::${row[2] || ''}`, i + 1);
+      const weekValue = String(row[headerMap.week_starting!] || '').trim();
+      const idValue = String(row[headerMap.id!] || '').trim();
+      if (!weekValue || !idValue) continue;
+      rowByWeekAndId.set(`${weekValue}::${idValue}`, i + 1);
     }
     let rowsUpdated = 0; let rowsAppended = 0;
     const appendValues: Array<Array<string | number>> = [];
@@ -360,7 +412,17 @@ async function writeBackWeeklyTally(force: boolean) {
       const row = [weekStart, weekEnd, item.id, item.name, item.breakfast, item.lunch, item.dinner, item.breakfast + item.lunch + item.dinner];
       const existingRowNumber = rowByWeekAndId.get(`${weekStart}::${item.id}`);
       if (existingRowNumber) {
-        await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A${existingRowNumber}:H${existingRowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [row] } });
+        const updates = [
+          { key: 'breakfast' as const, value: item.breakfast },
+          { key: 'lunch' as const, value: item.lunch },
+          { key: 'dinner' as const, value: item.dinner },
+          { key: 'total' as const, value: item.breakfast + item.lunch + item.dinner }
+        ];
+        for (const update of updates) {
+          const col = headerMap[update.key]!;
+          const colLetter = columnNumberToLetter(col + 1);
+          await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!${colLetter}${existingRowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[update.value]] } });
+        }
         rowsUpdated += 1;
       } else {
         appendValues.push(row);
@@ -386,14 +448,44 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
   const sheets = getSheetsClient();
   const people = await prisma.person.findMany({ where: { active: true }, orderBy: { personId: 'asc' } });
-  const values = [TALLY_HEADER, ...people.map((p) => {
+  const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!A:ZZ` });
+  const existingRows = existingRowsResp.data.values || [];
+  if (existingRows.length === 0) {
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!A1:F1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [TALLY_HEADER] } });
+    existingRows.push([...TALLY_HEADER]);
+  }
+  const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
+  assertRequiredHeaders(headerMap, ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'tally write-back');
+  const peopleById = new Map(people.map((p) => {
     const b = useBalances ? p.breakfastRemaining : p.breakfastCount;
     const l = useBalances ? p.lunchRemaining : p.lunchCount;
     const d = useBalances ? p.dinnerRemaining : p.dinnerCount;
-    return [p.personId, `${p.firstName} ${p.lastName}`.trim(), b, l, d, b + l + d];
-  })];
-  await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!A1:F${values.length}`, valueInputOption: 'USER_ENTERED', requestBody: { values } });
-  return { writeBackRowsUpdated: people.length };
+    return [p.personId, { id: p.personId, name: `${p.firstName} ${p.lastName}`.trim(), breakfast: b, lunch: l, dinner: d, total: b + l + d }];
+  }));
+  const rowById = new Map<string, number>();
+  for (let i = 1; i < existingRows.length; i++) {
+    const id = String((existingRows[i] || [])[headerMap.id!] || '').trim();
+    if (id) rowById.set(id, i + 1);
+  }
+  let rowsUpdated = 0;
+  const appendValues: Array<Array<string | number>> = [];
+  for (const [id, tally] of peopleById.entries()) {
+    const rowNum = rowById.get(id);
+    if (!rowNum) {
+      appendValues.push([tally.id, tally.name, tally.breakfast, tally.lunch, tally.dinner, tally.total]);
+      continue;
+    }
+    for (const key of TALLY_COUNT_COLUMNS) {
+      const colIndex = headerMap[key]!;
+      const colLetter = columnNumberToLetter(colIndex + 1);
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!${colLetter}${rowNum}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[tally[key]]] } });
+    }
+    rowsUpdated += 1;
+  }
+  if (appendValues.length > 0) {
+    await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetName}!A:F`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
+  }
+  return { writeBackRowsUpdated: rowsUpdated + appendValues.length, rowsAppended: appendValues.length };
   } finally {
     releaseOperationLock('writeback');
   }
