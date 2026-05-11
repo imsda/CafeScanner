@@ -313,10 +313,17 @@ router.post('/google-sheet/write-back-now', async (req, res) => {
 
 router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+  const settings = await getSettings();
+  if (!settings.googleSheetsEnabled) return res.status(400).json({ error: 'Google Sheets sync is disabled.' });
+  if (!settings.googleSheetId?.trim()) return res.status(400).json({ error: 'Google Sheet ID is required.' });
+  const weeklyTabName = settings.tallyWeeklySheetTabName?.trim() || 'Weekly Tally';
+  if (!settings.tallyWeeklySheetTabName?.trim()) {
+    await prisma.setting.update({ where: { id: settings.id }, data: { tallyWeeklySheetTabName: weeklyTabName } });
+  }
   const result = await writeBackWeeklyTallyNow(true);
   return res.json({
     ok: true,
-    tabName: result.tabName ?? 'Weekly Tally',
+    tabName: result.tabName ?? weeklyTabName,
     rowsUpdated: result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0,
     rowsAppended: result.rowsAppended ?? 0,
     rowsWritten: result.rowsWritten ?? ((result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0) + (result.rowsAppended ?? 0)),
