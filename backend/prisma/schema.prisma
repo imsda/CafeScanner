@@ -126,6 +126,9 @@ model Setting {
   googleSheetTabName       String           @default("Sheet1")
   googleSyncIntervalMinutes Int             @default(5)
   googleAutoImportEnabled  Boolean          @default(true)
+  tallyWriteBackMode       String           @default("lifetime")
+  tallyWeeklySheetTabName  String           @default("Weekly Tally")
+  tallyWeekStartsOn        String           @default("MONDAY")
   googleLastAutoImportAt   DateTime?
   googleLastAutoImportSummary String?
   fullWipeTokenHash        String?

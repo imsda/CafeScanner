@@ -261,7 +261,10 @@ Tally Up / Count Down sheet format:
 `ID,Name,Breakfast,Lunch,Dinner,Total`
 
 - **Tally Up import**: imports `ID` + `Name` only and updates/creates `Person` by stable `ID` (`personId` / `codeValue`).
-- **Tally Up write-back**: writes current local `Breakfast/Lunch/Dinner/Total` tally counts (`Total = Breakfast + Lunch + Dinner`).
+- **Tally Up write-back (lifetime)**: writes current local `Breakfast/Lunch/Dinner/Total` tally counts (`Total = Breakfast + Lunch + Dinner`) to the main configured tab.
+- **Tally Up write-back (weekly)**: writes current-week successful scan totals from local `ScanTransaction` records into a separate weekly tab (default tab: `Weekly Tally`) using columns: `Week Starting, Week Ending, ID, Name, Breakfast, Lunch, Dinner, Total`.
+- **Tally Up write-back (both)**: performs both lifetime write-back (main tab) and weekly write-back (weekly tab).
+- Weekly tab behavior: auto-creates the weekly tab and header if missing, updates/appends only current-week rows, and preserves historical rows.
 - **Count Down import**: imports `ID`, `Name`, and remaining `Breakfast/Lunch/Dinner` balances; if `Total` conflicts, per-meal columns are preferred.
 - **Count Down write-back**: writes current local remaining balances and recomputed `Total`.
 - Re-imports update existing people instead of duplicating.

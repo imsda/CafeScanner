@@ -1882,6 +1882,9 @@ function SettingsPage() {
     googleSheetTabName: string;
     googleSyncIntervalMinutes: number;
     googleAutoImportEnabled: boolean;
+    tallyWriteBackMode: 'lifetime' | 'weekly' | 'both';
+    tallyWeeklySheetTabName: string;
+    tallyWeekStartsOn: 'SUNDAY' | 'MONDAY';
   } | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<
     "general" | "meal-tracking" | "scanner" | "google-sheets-sync" | "updates" | "data-reset-tools" | "danger-zone"
@@ -1909,6 +1912,9 @@ function SettingsPage() {
       googleSheetTabName: loaded.googleSheetTabName,
       googleSyncIntervalMinutes: loaded.googleSyncIntervalMinutes,
       googleAutoImportEnabled: loaded.googleAutoImportEnabled ?? true,
+      tallyWriteBackMode: loaded.tallyWriteBackMode ?? 'lifetime',
+      tallyWeeklySheetTabName: loaded.tallyWeeklySheetTabName ?? 'Weekly Tally',
+      tallyWeekStartsOn: loaded.tallyWeekStartsOn ?? 'MONDAY',
     });
     if (user?.role === "OWNER" || user?.role === "ADMIN") {
       const status = await api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
@@ -1939,7 +1945,10 @@ function SettingsPage() {
       (settings?.googleSheetId ?? "") !== savedGoogleSheetsSettings.googleSheetId ||
       settings?.googleSheetTabName !== savedGoogleSheetsSettings.googleSheetTabName ||
       settings?.googleSyncIntervalMinutes !== savedGoogleSheetsSettings.googleSyncIntervalMinutes ||
-      (settings?.googleAutoImportEnabled ?? true) !== savedGoogleSheetsSettings.googleAutoImportEnabled);
+      (settings?.googleAutoImportEnabled ?? true) !== savedGoogleSheetsSettings.googleAutoImportEnabled ||
+      (settings?.tallyWriteBackMode ?? 'lifetime') !== savedGoogleSheetsSettings.tallyWriteBackMode ||
+      (settings?.tallyWeeklySheetTabName ?? 'Weekly Tally') !== savedGoogleSheetsSettings.tallyWeeklySheetTabName ||
+      (settings?.tallyWeekStartsOn ?? 'MONDAY') !== savedGoogleSheetsSettings.tallyWeekStartsOn);
 
   async function saveSettings(settingsOverride?: Settings, successMessage = "Settings saved.") {
     const sourceSettings = settingsOverride ?? settings;
@@ -1971,6 +1980,9 @@ function SettingsPage() {
       googleSheetTabName: saved.googleSheetTabName,
       googleSyncIntervalMinutes: saved.googleSyncIntervalMinutes,
       googleAutoImportEnabled: saved.googleAutoImportEnabled ?? true,
+      tallyWriteBackMode: saved.tallyWriteBackMode ?? 'lifetime',
+      tallyWeeklySheetTabName: saved.tallyWeeklySheetTabName ?? 'Weekly Tally',
+      tallyWeekStartsOn: saved.tallyWeekStartsOn ?? 'MONDAY',
     });
     return saved;
   }
@@ -2312,6 +2324,38 @@ function SettingsPage() {
                   }
                 />
               </label>
+              {settings.mealTrackingMode === "tally" && (
+                <>
+                  <label>
+                    Tally write-back mode
+                    <select
+                      value={settings.tallyWriteBackMode ?? "lifetime"}
+                      onChange={(e) => setSettings({ ...settings, tallyWriteBackMode: e.target.value as "lifetime" | "weekly" | "both" })}
+                    >
+                      <option value="lifetime">Lifetime</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="both">Both</option>
+                    </select>
+                  </label>
+                  <label>
+                    Weekly tally tab name
+                    <input
+                      value={settings.tallyWeeklySheetTabName ?? "Weekly Tally"}
+                      onChange={(e) => setSettings({ ...settings, tallyWeeklySheetTabName: e.target.value || "Weekly Tally" })}
+                    />
+                  </label>
+                  <label>
+                    Week starts on
+                    <select
+                      value={settings.tallyWeekStartsOn ?? "MONDAY"}
+                      onChange={(e) => setSettings({ ...settings, tallyWeekStartsOn: e.target.value as "SUNDAY" | "MONDAY" })}
+                    >
+                      <option value="MONDAY">Monday</option>
+                      <option value="SUNDAY">Sunday</option>
+                    </select>
+                  </label>
+                </>
+              )}
               <button
                 type="button"
                 className="primary"
@@ -2415,6 +2459,22 @@ function SettingsPage() {
             >
               Write Back to Google Sheet
             </button>
+            {settings.mealTrackingMode === "tally" && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!isGoogleSheetsSyncEnabled || isSavingGoogleSheetsSettings || !hasGoogleSheetId}
+                onClick={() => {
+                  setMessage("");
+                  setError("");
+                  void api<{ rowsUpdated: number; rowsAppended: number; tabName: string }>("/import/google-sheet/write-weekly-tally-now", { method: "POST" })
+                    .then((result) => setMessage(`Weekly tally written to "${result.tabName}" (${result.rowsUpdated} updated, ${result.rowsAppended} appended).`))
+                    .catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Weekly tally write-back failed."));
+                }}
+              >
+                Write Weekly Tally Now
+              </button>
+            )}
             <button
               type="button"
               className="secondary"

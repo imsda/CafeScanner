@@ -57,7 +57,10 @@ const settingsSchema = z.object({
   googleSheetId: z.string().optional(),
   googleSheetTabName: z.string().min(1).optional(),
   googleSyncIntervalMinutes: z.number().int().min(1).max(1440).optional(),
-  googleAutoImportEnabled: z.boolean().optional()
+  googleAutoImportEnabled: z.boolean().optional(),
+  tallyWriteBackMode: z.enum(['lifetime', 'weekly', 'both']).optional(),
+  tallyWeeklySheetTabName: z.string().min(1).optional(),
+  tallyWeekStartsOn: z.enum(['SUNDAY', 'MONDAY']).optional()
 });
 
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });

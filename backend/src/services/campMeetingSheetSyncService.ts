@@ -7,6 +7,7 @@ import { acquireOperationLock, isImportInProgress, isResetInProgress, isSchedule
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
+const WEEKLY_TALLY_HEADER = ['Week Starting', 'Week Ending', 'ID', 'Name', 'Breakfast', 'Lunch', 'Dinner', 'Total'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
 type SchedulerStatus = {
   schedulerEnabled: boolean;
@@ -267,9 +268,113 @@ async function runAutoImportForMode(settings: Awaited<ReturnType<typeof getSetti
   return text;
 }
 
-export async function writeBackTallyCounts(force = false) { return writeBackPeopleRows(false, force); }
+export async function writeBackTallyCounts(force = false) {
+  const settings = await getSettings();
+  const mode = getTallyWriteBackMode(settings);
+  if (mode === 'weekly') return { writeBackRowsUpdated: 0 };
+  return writeBackPeopleRows(false, force);
+}
 export async function writeBackCountdownBalances(force = false) { return writeBackPeopleRows(true, force); }
 export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
+export async function writeBackWeeklyTallyNow(force = true) { return writeBackWeeklyTally(force); }
+
+function getTallyWriteBackMode(settings: Awaited<ReturnType<typeof getSettings>>): 'lifetime' | 'weekly' | 'both' {
+  const mode = (settings.tallyWriteBackMode || 'lifetime').toLowerCase();
+  if (mode === 'weekly' || mode === 'both') return mode;
+  return 'lifetime';
+}
+
+function getDateInTimezoneParts(date: Date, timezone: string) {
+  const dtf = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const parts = dtf.formatToParts(date);
+  const year = Number(parts.find((p) => p.type === 'year')?.value || 0);
+  const month = Number(parts.find((p) => p.type === 'month')?.value || 0);
+  const day = Number(parts.find((p) => p.type === 'day')?.value || 0);
+  return { year, month, day };
+}
+
+function isoFromParts(p: { year: number; month: number; day: number }) {
+  return `${String(p.year).padStart(4, '0')}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+function getCurrentWeekRange(timezone: string, weekStartsOn: 'SUNDAY' | 'MONDAY') {
+  const todayParts = getDateInTimezoneParts(new Date(), timezone);
+  const d = new Date(Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day));
+  const day = d.getUTCDay();
+  const weekStartIndex = weekStartsOn === 'SUNDAY' ? 0 : 1;
+  const diffToStart = (day - weekStartIndex + 7) % 7;
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() - diffToStart);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  const s = getDateInTimezoneParts(start, 'UTC');
+  const e = getDateInTimezoneParts(end, 'UTC');
+  return { weekStart: isoFromParts(s), weekEnd: isoFromParts(e) };
+}
+
+async function writeBackWeeklyTally(force: boolean) {
+  if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
+  try {
+    const settings = await getSettings();
+    if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
+    if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
+    const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
+    const tabName = (settings.tallyWeeklySheetTabName || 'Weekly Tally').trim();
+    const weekStartsOn = settings.tallyWeekStartsOn === 'SUNDAY' ? 'SUNDAY' : 'MONDAY';
+    const timezone = settings.timezone || 'Etc/UTC';
+    const { weekStart, weekEnd } = getCurrentWeekRange(timezone, weekStartsOn);
+    const sheets = getSheetsClient();
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const existingTab = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+    if (!existingTab) {
+      await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] } });
+    }
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
+    const txns = await prisma.scanTransaction.findMany({
+      where: { result: 'SUCCESS', mealType: { in: [MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER] }, personId: { not: null } },
+      include: { person: true }
+    });
+    const grouped = new Map<string, { id: string; name: string; breakfast: number; lunch: number; dinner: number }>();
+    for (const t of txns) {
+      const d = getDateInTimezoneParts(t.timestamp, timezone);
+      const txnDate = isoFromParts(d);
+      if (txnDate < weekStart || txnDate > weekEnd) continue;
+      if (!t.person?.personId) continue;
+      const key = `${t.person.personId}`;
+      const current = grouped.get(key) ?? { id: t.person.personId, name: `${t.person.firstName} ${t.person.lastName}`.trim(), breakfast: 0, lunch: 0, dinner: 0 };
+      if (t.mealType === MealType.BREAKFAST) current.breakfast += 1;
+      if (t.mealType === MealType.LUNCH) current.lunch += 1;
+      if (t.mealType === MealType.DINNER) current.dinner += 1;
+      grouped.set(key, current);
+    }
+    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:H` });
+    const existingRows = existingRowsResp.data.values || [];
+    const rowByWeekAndId = new Map<string, number>();
+    for (let i = 1; i < existingRows.length; i++) {
+      const row = existingRows[i] || [];
+      rowByWeekAndId.set(`${row[0] || ''}::${row[2] || ''}`, i + 1);
+    }
+    let rowsUpdated = 0; let rowsAppended = 0;
+    const appendValues: Array<Array<string | number>> = [];
+    for (const item of grouped.values()) {
+      const row = [weekStart, weekEnd, item.id, item.name, item.breakfast, item.lunch, item.dinner, item.breakfast + item.lunch + item.dinner];
+      const existingRowNumber = rowByWeekAndId.get(`${weekStart}::${item.id}`);
+      if (existingRowNumber) {
+        await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A${existingRowNumber}:H${existingRowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [row] } });
+        rowsUpdated += 1;
+      } else {
+        appendValues.push(row);
+      }
+    }
+    if (appendValues.length > 0) {
+      await sheets.spreadsheets.values.append({ spreadsheetId, range: `${tabName}!A:H`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
+      rowsAppended = appendValues.length;
+    }
+    return { writeBackRowsUpdated: rowsUpdated, rowsAppended, tabName };
+  } finally {
+    releaseOperationLock('writeback');
+  }
+}
 
 async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0 };
@@ -352,7 +457,11 @@ export function startCampMeetingSheetSyncScheduler() {
         console.log('[SHEET_SYNC] Running scheduled write-back');
         let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
         if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
-        if (settings.mealTrackingMode === MealTrackingMode.tally) result = await writeBackTallyCounts(false);
+        if (settings.mealTrackingMode === MealTrackingMode.tally) {
+          const tallyMode = getTallyWriteBackMode(settings);
+          if (tallyMode === 'weekly' || tallyMode === 'both') await writeBackWeeklyTally(false);
+          if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
+        }
         if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
         const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
         if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
@@ -400,7 +509,11 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
   console.log('[SHEET_SYNC] Running scheduled write-back');
   let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
   if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
-  if (settings.mealTrackingMode === MealTrackingMode.tally) result = await writeBackTallyCounts(false);
+  if (settings.mealTrackingMode === MealTrackingMode.tally) {
+    const tallyMode = getTallyWriteBackMode(settings);
+    if (tallyMode === 'weekly' || tallyMode === 'both') await writeBackWeeklyTally(false);
+    if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
+  }
   if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
   const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
   if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {

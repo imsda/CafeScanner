@@ -39,6 +39,10 @@ async function createSettingsIfMissing() {
         dinnerStart: '15:00',
         dinnerEnd: '19:00',
         googleAutoImportEnabled: true
+        ,
+        tallyWriteBackMode: 'lifetime',
+        tallyWeeklySheetTabName: 'Weekly Tally',
+        tallyWeekStartsOn: 'MONDAY'
       }
     });
     console.log('[SETTINGS] Created default Setting(id=1).');
@@ -88,6 +92,9 @@ export async function getSettings() {
       googleSheetTabName: true,
       googleSyncIntervalMinutes: true,
       googleAutoImportEnabled: true,
+      tallyWriteBackMode: true,
+      tallyWeeklySheetTabName: true,
+      tallyWeekStartsOn: true,
       googleLastAutoImportAt: true,
       googleLastAutoImportSummary: true,
       updatedAt: true
