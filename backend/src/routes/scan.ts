@@ -16,6 +16,7 @@ const scanRequestSchema = z.object({
 });
 
 router.post('/', async (req, res) => {
+  const startedAt = Date.now();
   try {
     const payload = scanRequestSchema.parse(req.body);
     const personId = (payload.personId ?? payload.scannedValue ?? '').trim();
@@ -25,6 +26,7 @@ router.post('/', async (req, res) => {
       adminUserId: req.session.adminUserId
     });
     if (!result.ok && !('pendingSelection' in result && result.pendingSelection)) return res.status(400).json(result);
+    console.log(`[SCAN] processed in ${Date.now() - startedAt} ms`);
     return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -38,6 +40,7 @@ router.post('/', async (req, res) => {
       ? error.message
       : 'Unable to process scan right now.';
     console.error('[SCAN] Failed to process scan request.', error);
+    console.log(`[SCAN] processed in ${Date.now() - startedAt} ms`);
     return res.status(500).json({ ok: false, error: message });
   }
 });

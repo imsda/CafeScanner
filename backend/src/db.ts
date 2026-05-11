@@ -29,7 +29,7 @@ export async function withSqliteTimeoutRetry<T>(label: string, fn: () => Promise
 export async function configureSqlitePragmas() {
   try {
     await prisma.$queryRaw`PRAGMA journal_mode = WAL;`;
-    await prisma.$executeRaw`PRAGMA busy_timeout = 5000;`;
+    await prisma.$queryRaw`PRAGMA busy_timeout = 5000;`;
     console.log('[DB] SQLite PRAGMAs set: journal_mode=WAL, busy_timeout=5000ms.');
   } catch (error) {
     console.warn('[DB] Unable to set SQLite PRAGMAs at startup.', error);

@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from './campMeetingImportService.js';
-import { isResetInProgress } from './resetState.js';
+import { acquireOperationLock, isImportInProgress, isResetInProgress, isSchedulerPaused, isWritebackInProgress, releaseOperationLock } from './operationLockService.js';
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
@@ -99,6 +99,9 @@ function getSchedulerSkipReason(settings: any): string | null {
   if (!settings.googleSheetsEnabled) return 'sync disabled';
   if (!parseSpreadsheetId(settings.googleSheetId || '')) return 'missing sheet ID';
   if (isResetInProgress()) return 'reset in progress';
+  if (isImportInProgress()) return 'import already running';
+  if (isWritebackInProgress()) return 'writeback already running';
+  if (isSchedulerPaused()) return 'scheduler paused';
   if (!isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return 'outside meal window';
   return null;
 }
@@ -144,6 +147,8 @@ function mapGoogleSheetsError(error: unknown): Error {
 
 export async function importCampMeetingFromSheet() {
   if (isResetInProgress()) throw new Error('Reset in progress. Try again after reset completes.');
+  if (!acquireOperationLock('import')) throw new Error('Import already in progress.');
+  try {
   const { sheetName, rows } = await readSheetRows();
   const { inputRows, errors } = mapRowsToCampMeetingInput(rows as string[][]);
   if (errors.length) {
@@ -161,9 +166,12 @@ export async function importCampMeetingFromSheet() {
       errors
     };
   }
-  const summary = await importCampMeetingRows(inputRows, { source: 'google_sheet', sheetName });
+  const summary = await importCampMeetingRows(inputRows, { source: 'google_sheet', sheetName, batchSize: 50 });
   console.log('[SHEET_IMPORT]', summary);
   return summary;
+  } finally {
+    releaseOperationLock('import');
+  }
 }
 
 
@@ -196,6 +204,8 @@ async function readSheetRows() {
 }
 
 async function importPeopleFromRows(dataRows: string[][], options: { includeBalances: boolean; overwriteExistingBalances: boolean; overwriteExistingCounts: boolean }) {
+  if (!acquireOperationLock('import')) throw new Error('Import already in progress.');
+  try {
   let peopleCreated = 0; let peopleUpdated = 0; let rowsImported = 0; let rowsSkipped = 0;
   const errors: string[] = [];
   for (let i = 0; i < dataRows.length; i++) {
@@ -226,6 +236,9 @@ async function importPeopleFromRows(dataRows: string[][], options: { includeBala
     rowsImported += 1;
   }
   return { peopleCreated, peopleUpdated, rowsImported, rowsSkipped, writeBackRowsUpdated: 0, errors };
+  } finally {
+    releaseOperationLock('import');
+  }
 }
 async function runAutoImportForMode(settings: Awaited<ReturnType<typeof getSettings>>) {
   if (!settings.googleSheetsEnabled || !settings.googleAutoImportEnabled || !parseSpreadsheetId(settings.googleSheetId || '') || isResetInProgress()) {
@@ -259,6 +272,8 @@ export async function writeBackCountdownBalances(force = false) { return writeBa
 export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
 
 async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
+  if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0 };
+  try {
   const settings = await getSettings();
   if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
   if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
@@ -274,9 +289,14 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   })];
   await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!A1:F${values.length}`, valueInputOption: 'USER_ENTERED', requestBody: { values } });
   return { writeBackRowsUpdated: people.length };
+  } finally {
+    releaseOperationLock('writeback');
+  }
 }
 
 export async function flushCampMeetingRedemptionsToSheet(force = false) {
+  if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0 };
+  try {
   const settings = await getSettings();
   if (settings.mealTrackingMode !== MealTrackingMode.camp_meeting) return { writeBackRowsUpdated: 0 };
   if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
@@ -301,6 +321,9 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
     await prisma.mealEntitlement.update({ where: { id: row.id }, data: { sheetSyncedAt: new Date() } });
   }
   return { writeBackRowsUpdated: pending.length };
+  } finally {
+    releaseOperationLock('writeback');
+  }
 }
 
 export function startCampMeetingSheetSyncScheduler() {
@@ -319,7 +342,9 @@ export function startCampMeetingSheetSyncScheduler() {
         `[SHEET_SYNC] cycle ts=${now.toISOString()} intervalMin=${intervalMinutes} mode=${settings.mealTrackingMode} enabled=${settings.googleSheetsEnabled} sheetIdPresent=${Boolean(parseSpreadsheetId(settings.googleSheetId || ''))} localTime=${getLocalTimeHHMM(now, timezone)} tz=${timezone} activeMealWindow=${Boolean(activeWindow)} activeWindow=${activeWindow ?? 'none'} skipReason=${skipReason ?? 'none'}`
       );
       if (skipReason) {
-        console.log(`[SHEET_SYNC] Skipped: ${skipReason}`);
+        if (skipReason === 'import already running') console.log('[SHEET_SYNC] skipped: import already running');
+        if (skipReason === 'reset in progress') console.log('[SHEET_SYNC] skipped: reset in progress');
+        console.log(`[SHEET_SYNC] skipped: ${skipReason}`);
         schedulerStatus.lastSkipReason = skipReason;
         schedulerStatus.lastRowsUpdated = 0;
       } else {
@@ -365,7 +390,7 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
     `[SHEET_SYNC] manual-cycle ts=${now.toISOString()} intervalMin=${intervalMinutes} mode=${settings.mealTrackingMode} enabled=${settings.googleSheetsEnabled} sheetIdPresent=${Boolean(parseSpreadsheetId(settings.googleSheetId || ''))} localTime=${getLocalTimeHHMM(now, timezone)} tz=${timezone} activeMealWindow=${Boolean(activeWindow)} activeWindow=${activeWindow ?? 'none'} skipReason=${skipReason ?? 'none'}`
   );
   if (skipReason) {
-    console.log(`[SHEET_SYNC] Skipped: ${skipReason}`);
+    console.log(`[SHEET_SYNC] skipped: ${skipReason}`);
     schedulerStatus.lastSkipReason = skipReason;
     schedulerStatus.lastRowsUpdated = 0;
     schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();

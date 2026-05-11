@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { prisma } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
-import { endReset, startReset } from '../services/resetState.js';
+import { acquireOperationLock, pauseScheduler, releaseOperationLock, resumeScheduler, waitForOperationsToFinish } from '../services/operationLockService.js';
 
 const router = Router();
 const backupRouter = Router();
@@ -68,6 +68,9 @@ router.post('/clear-database', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
   try {
+    pauseScheduler();
+    console.log('[RESET] waiting for import to finish');
+    await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
     const deleted = await clearOperationalMealData(true);
     console.log(`[ADMIN_ACTION] clear-database (legacy route) executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
     return res.json({ ok: true, action: 'clear-database', deleted, message: 'Meal tracking operational data cleared. Users, credentials, roles, account status, and page permissions were preserved.' });
@@ -96,6 +99,9 @@ router.post('/clear-people-import-data', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
   try {
+    pauseScheduler();
+    console.log('[RESET] waiting for import to finish');
+    await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
     const deleted = await clearOperationalMealData(true);
     console.log(`[ADMIN_ACTION] clear-people-import-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
     return res.json({ ok: true, action: 'clear-people-import-data', deleted, message: 'People/import data cleared (people + imports + dependent meal data). Users and permissions were preserved.' });
@@ -108,11 +114,14 @@ router.post('/clear-people-import-data', async (req, res) => {
 router.post('/reset-meal-tracking-data', async (req, res) => {
   const actedBy = req.session.adminUserId;
 
-  if (!startReset()) {
+  if (!acquireOperationLock('reset')) {
     return res.status(409).json({ ok: false, error: 'Reset already in progress.' });
   }
 
   try {
+    pauseScheduler();
+    console.log('[RESET] waiting for import to finish');
+    await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
     const deleted = await clearOperationalMealData(true);
     console.log(`[ADMIN_ACTION] reset-meal-tracking-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
     return res.json({ ok: true, action: 'reset-meal-tracking-data', deleted, message: 'Meal tracking data reset. Users, credentials, roles, account status, and page permissions were preserved.' });
@@ -120,7 +129,8 @@ router.post('/reset-meal-tracking-data', async (req, res) => {
     console.error('[SYSTEM] reset-meal-tracking-data failed', error);
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to reset meal tracking data.' });
   } finally {
-    endReset();
+    releaseOperationLock('reset');
+    resumeScheduler();
   }
 });
 

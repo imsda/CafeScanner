@@ -43,6 +43,7 @@ type NormalizeOptions = {
 };
 
 type ImportOptions = NormalizeOptions;
+type ImportRunOptions = ImportOptions & { batchSize?: number };
 
 function normalizeHeaderName(value: string): string {
   return String(value || '').trim().toLowerCase();
@@ -179,7 +180,7 @@ export function normalizeCampMeetingRows(inputRows: RawInputRow[], options: Norm
   return { validRows, skipped, totalRows: inputRows.length, uniqueRegIds, duplicateTicketIdCount: duplicateTicketIds.size };
 }
 
-export async function importCampMeetingRows(inputRows: RawInputRow[], options: ImportOptions = { source: 'csv' }): Promise<CampMeetingImportSummary> {
+export async function importCampMeetingRows(inputRows: RawInputRow[], options: ImportRunOptions = { source: 'csv' }): Promise<CampMeetingImportSummary> {
   const { validRows, skipped, totalRows, uniqueRegIds, duplicateTicketIdCount } = normalizeCampMeetingRows(inputRows, options);
   const summary: CampMeetingImportSummary = {
     totalRows,
@@ -199,7 +200,9 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
     console.log('[SHEET_IMPORT] Duplicate ticket_id detected; using row-based source keys.');
   }
 
-  for (const row of validRows) {
+  const batchSize = Math.max(1, options.batchSize ?? 50);
+  for (let i = 0; i < validRows.length; i++) {
+    const row = validRows[i];
     const existingPerson = await prisma.person.findUnique({ where: { personId: row.personId }, select: { id: true } });
     const nameParts = splitName(row.personName);
     if (existingPerson) {
@@ -242,6 +245,10 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
     }));
     if (existingEntitlement) summary.entitlementsUpdated += 1;
     else summary.entitlementsCreated += 1;
+
+    if ((i + 1) % batchSize === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
   }
 
   return summary;
