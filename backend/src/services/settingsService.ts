@@ -41,7 +41,8 @@ async function createSettingsIfMissing() {
         googleAutoImportEnabled: true
         ,
         tallyWriteBackMode: 'lifetime',
-        tallyWeeklySheetTabName: 'Weekly Tally',
+        tallyWeeklyRawTabName: 'Weekly Tally Raw',
+        tallyWeeklyViewTabName: null,
         tallyWeekStartsOn: 'MONDAY'
       }
     });
@@ -93,7 +94,8 @@ export async function getSettings() {
       googleSyncIntervalMinutes: true,
       googleAutoImportEnabled: true,
       tallyWriteBackMode: true,
-      tallyWeeklySheetTabName: true,
+      tallyWeeklyRawTabName: true,
+      tallyWeeklyViewTabName: true,
       tallyWeekStartsOn: true,
       googleLastAutoImportAt: true,
       googleLastAutoImportSummary: true,

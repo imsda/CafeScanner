@@ -363,7 +363,7 @@ async function writeBackWeeklyTally(force: boolean) {
     if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
-    const tabName = (settings.tallyWeeklySheetTabName || '').trim() || 'Weekly Tally';
+    const tabName = (settings.tallyWeeklyRawTabName || '').trim() || 'Weekly Tally Raw';
     const weekStartsOn = settings.tallyWeekStartsOn === 'SUNDAY' ? 'SUNDAY' : 'MONDAY';
     const timezone = settings.timezone || 'Etc/UTC';
     const { weekStart, weekEnd } = getCurrentWeekRange(timezone, weekStartsOn);
@@ -373,8 +373,8 @@ async function writeBackWeeklyTally(force: boolean) {
     if (!existingTab) {
       await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] } });
     }
-    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:ZZ` });
-    const existingRows = existingRowsResp.data.values || [];
+    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:H` });
+    const existingRows = (existingRowsResp.data.values || []).map((row) => (row || []).slice(0, 8));
     if (existingRows.length === 0) {
       await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
       existingRows.push([...WEEKLY_TALLY_HEADER]);
@@ -433,6 +433,25 @@ async function writeBackWeeklyTally(force: boolean) {
       rowsAppended = appendValues.length;
     }
     const rowsWritten = rowsUpdated + rowsAppended;
+    const viewTabName = (settings.tallyWeeklyViewTabName || '').trim();
+    if (viewTabName) {
+      const viewTab = meta.data.sheets?.find((sh) => sh.properties?.title === viewTabName);
+      if (!viewTab) {
+        await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: viewTabName } } }] } });
+      }
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${viewTabName}!A1:H1`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [WEEKLY_TALLY_HEADER] }
+      });
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${viewTabName}!A2`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[`=IFERROR(FILTER('${tabName}'!A:H,LEN('${tabName}'!A:A)),)`]] }
+      });
+    }
     return { writeBackRowsUpdated: rowsUpdated, rowsUpdated, rowsAppended, rowsWritten, totalRows: grouped.size, tabName };
   } finally {
     releaseOperationLock('writeback');

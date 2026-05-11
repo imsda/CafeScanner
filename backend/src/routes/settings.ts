@@ -59,7 +59,8 @@ const settingsSchema = z.object({
   googleSyncIntervalMinutes: z.number().int().min(1).max(1440).optional(),
   googleAutoImportEnabled: z.boolean().optional(),
   tallyWriteBackMode: z.enum(['lifetime', 'weekly', 'both']).optional(),
-  tallyWeeklySheetTabName: z.string().min(1).optional(),
+  tallyWeeklyRawTabName: z.string().min(1).optional(),
+  tallyWeeklyViewTabName: z.string().nullable().optional(),
   tallyWeekStartsOn: z.enum(['SUNDAY', 'MONDAY']).optional()
 });
 
@@ -93,8 +94,11 @@ router.put('/', async (req, res) => {
   if (payload.googleSheetsEnabled === true && typeof payload.googleAutoImportEnabled === 'undefined') {
     payload.googleAutoImportEnabled = true;
   }
-  if (typeof payload.tallyWeeklySheetTabName === 'string') {
-    payload.tallyWeeklySheetTabName = payload.tallyWeeklySheetTabName.trim() || 'Weekly Tally';
+  if (typeof payload.tallyWeeklyRawTabName === 'string') {
+    payload.tallyWeeklyRawTabName = payload.tallyWeeklyRawTabName.trim() || 'Weekly Tally Raw';
+  }
+  if (typeof payload.tallyWeeklyViewTabName === 'string') {
+    payload.tallyWeeklyViewTabName = payload.tallyWeeklyViewTabName.trim() || null;
   }
   if (typeof payload.timezone === 'string') {
     payload.timezone = payload.timezone.trim() || DEFAULT_TIMEZONE;
