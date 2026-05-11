@@ -2,11 +2,30 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
 import { prisma } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { acquireOperationLock, pauseScheduler, releaseOperationLock, resumeScheduler, waitForOperationsToFinish } from '../services/operationLockService.js';
 
 const router = Router();
+const UPDATE_SCRIPT_PATH = path.resolve(process.cwd(), 'scripts/update-service.sh');
+let activeUpdatePromise: Promise<{ ok: boolean; output: string; startedAt: string; finishedAt: string; error?: string }> | null = null;
+
+function requireOwner(req: any, res: any, next: any) {
+  if (req.session?.role !== 'OWNER') return res.status(403).json({ error: 'Owner access required' });
+  next();
+}
+
+async function readGitRef(command: string[]) {
+  return new Promise<string | null>((resolve) => {
+    const proc = spawn(command[0], command.slice(1), { cwd: process.cwd() });
+    let output = '';
+    proc.stdout.on('data', (chunk) => { output += String(chunk); });
+    proc.on('close', (code) => resolve(code === 0 ? output.trim() || null : null));
+    proc.on('error', () => resolve(null));
+  });
+}
 const backupRouter = Router();
 const dbUpload = multer({
   storage: multer.memoryStorage(),
@@ -177,5 +196,65 @@ backupRouter.post('/restore', dbUpload.single('backup'), async (req, res) => {
 });
 
 router.use('/backups', requireAdmin, backupRouter);
+
+
+router.get('/update-status', requireAdmin, async (_req, res) => {
+  const branch = await readGitRef(['git', 'rev-parse', '--abbrev-ref', 'HEAD']);
+  const localCommit = await readGitRef(['git', 'rev-parse', 'HEAD']);
+  await readGitRef(['git', 'fetch', '--quiet', 'origin']);
+  const remoteCommit = branch ? await readGitRef(['git', 'rev-parse', `origin/${branch}`]) : null;
+  const updatesAvailable = Boolean(localCommit && remoteCommit && localCommit !== remoteCommit);
+
+  res.json({
+    branch,
+    localCommit,
+    remoteCommit,
+    updatesAvailable,
+    updateInProgress: Boolean(activeUpdatePromise)
+  });
+});
+
+router.post('/update', requireOwner, async (req, res) => {
+  const actedBy = req.session.adminUserId;
+  if (activeUpdatePromise) {
+    return res.status(409).json({ ok: false, error: 'An update is already running.' });
+  }
+
+  try {
+    await fs.access(UPDATE_SCRIPT_PATH, fsConstants.F_OK | fsConstants.X_OK);
+  } catch {
+    return res.status(500).json({ ok: false, error: 'Update script is missing or not executable.' });
+  }
+
+  const startedAt = new Date().toISOString();
+  console.log(`[ADMIN_ACTION] update install requested by userId=${actedBy ?? 'unknown'} at ${startedAt}`);
+
+  activeUpdatePromise = new Promise((resolve) => {
+    const child = spawn(UPDATE_SCRIPT_PATH, [], { cwd: process.cwd(), shell: false });
+    let output = '';
+
+    child.stdout.on('data', (chunk) => { output += String(chunk); });
+    child.stderr.on('data', (chunk) => { output += String(chunk); });
+    child.on('error', (error) => {
+      const finishedAt = new Date().toISOString();
+      resolve({ ok: false, output, startedAt, finishedAt, error: error.message });
+    });
+    child.on('close', (code) => {
+      const finishedAt = new Date().toISOString();
+      resolve({ ok: code === 0, output, startedAt, finishedAt, error: code === 0 ? undefined : `Update script exited with code ${code}` });
+    });
+  });
+
+  const result = await activeUpdatePromise;
+  activeUpdatePromise = null;
+
+  if (!result.ok) {
+    console.error(`[SYSTEM] update failed for userId=${actedBy ?? 'unknown'} at ${result.finishedAt}`, result.error);
+    return res.status(500).json(result);
+  }
+
+  console.log(`[ADMIN_ACTION] update install completed by userId=${actedBy ?? 'unknown'} at ${result.finishedAt}`);
+  return res.json(result);
+});
 
 export default router;
