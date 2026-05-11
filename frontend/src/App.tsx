@@ -2571,6 +2571,7 @@ function SettingsPage() {
           <p>Remote commit: <strong>{updateStatus?.remoteCommit ?? "Unavailable"}</strong></p>
           <p>Update available: <strong>{updateStatus ? (updateStatus.updatesAvailable ? "Yes" : "No") : "Unknown"}</strong></p>
           <p><strong>Backend cwd:</strong> {updateStatus?.updateScriptDiagnostics.cwd ?? "Unknown"}</p>
+          <p><strong>Detected repo root:</strong> {updateStatus?.updateScriptDiagnostics.repoRoot ?? "Unknown"}</p>
           <p><strong>Resolved script path:</strong> {updateStatus?.updateScriptDiagnostics.resolvedScriptPath ?? "Unknown"}</p>
           <p><strong>Script exists:</strong> {updateStatus ? (updateStatus.updateScriptDiagnostics.exists ? "Yes" : "No") : "Unknown"}</p>
           <p><strong>Script executable:</strong> {updateStatus ? (updateStatus.updateScriptDiagnostics.executable ? "Yes" : "No") : "Unknown"}</p>

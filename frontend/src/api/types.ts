@@ -171,6 +171,7 @@ export interface SystemUpdateStatus {
   updateInProgress: boolean;
   updateScriptDiagnostics: {
     cwd: string;
+    repoRoot: string | null;
     resolvedScriptPath: string;
     exists: boolean;
     executable: boolean;
