@@ -384,10 +384,10 @@ function isoFromParts(p: { year: number; month: number; day: number }) {
   return `${String(p.year).padStart(4, '0')}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
 }
 
-function getCurrentWeekRange(timezone: string, weekStartsOn: 'SUNDAY' | 'MONDAY') {
-  const todayParts = getDateInTimezoneParts(new Date(), timezone);
-  const d = new Date(Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day));
-  const day = d.getUTCDay();
+function getWeekRangeForDate(date: Date, timezone: string, weekStartsOn: 'SUNDAY' | 'MONDAY') {
+  const dateParts = getDateInTimezoneParts(date, timezone);
+  const d = new Date(Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day));
+    const day = d.getUTCDay();
   const weekStartIndex = weekStartsOn === 'SUNDAY' ? 0 : 1;
   const diffToStart = (day - weekStartIndex + 7) % 7;
   const start = new Date(d);
@@ -449,12 +449,13 @@ async function writeBackWeeklyTally(force: boolean) {
     const tabName = (settings.tallyWeeklyRawTabName || '').trim() || 'Weekly Tally Raw';
     const weekStartsOn = settings.tallyWeekStartsOn === 'SUNDAY' ? 'SUNDAY' : 'MONDAY';
     const timezone = settings.timezone || 'Etc/UTC';
-    const { weekStart, weekEnd } = getCurrentWeekRange(timezone, weekStartsOn);
     const sheets = getSheetsClient();
-    const meta = await sheets.spreadsheets.get({ spreadsheetId });
-    const existingTab = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+    let meta = await sheets.spreadsheets.get({ spreadsheetId });
+    let existingTab = meta.data.sheets?.find((s) => s.properties?.title === tabName);
     if (!existingTab) {
       await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] } });
+      meta = await sheets.spreadsheets.get({ spreadsheetId });
+      existingTab = meta.data.sheets?.find((s) => s.properties?.title === tabName);
     }
     const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:H` });
     const existingRows = (existingRowsResp.data.values || []).map((row) => (row || []).slice(0, 8));
@@ -463,79 +464,96 @@ async function writeBackWeeklyTally(force: boolean) {
       existingRows.push([...WEEKLY_TALLY_HEADER]);
     }
     const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
-    assertRequiredHeaders(headerMap, ['week_starting', 'id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'weekly tally write-back');
+    assertRequiredHeaders(headerMap, ['week_starting', 'week_ending', 'id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'weekly tally write-back');
+
     const txns = await prisma.scanTransaction.findMany({
       where: { result: 'SUCCESS', mealType: { in: [MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER] }, personId: { not: null } },
       include: { person: true }
     });
-    const grouped = new Map<string, { id: string; name: string; breakfast: number; lunch: number; dinner: number }>();
+
+    const grouped = new Map<string, { weekStart: string; weekEnd: string; id: string; name: string; breakfast: number; lunch: number; dinner: number }>();
+    const weeksCovered = new Set<string>();
     for (const t of txns) {
-      const d = getDateInTimezoneParts(t.timestamp, timezone);
-      const txnDate = isoFromParts(d);
-      if (txnDate < weekStart || txnDate > weekEnd) continue;
       if (!t.person?.personId) continue;
-      const key = `${t.person.personId}`;
-      const current = grouped.get(key) ?? { id: t.person.personId, name: `${t.person.firstName} ${t.person.lastName}`.trim(), breakfast: 0, lunch: 0, dinner: 0 };
+      const { weekStart, weekEnd } = getWeekRangeForDate(t.timestamp, timezone, weekStartsOn);
+      weeksCovered.add(weekStart);
+      const key = `${weekStart}::${t.person.personId}`;
+      const current = grouped.get(key) ?? { weekStart, weekEnd, id: t.person.personId, name: `${t.person.firstName} ${t.person.lastName}`.trim(), breakfast: 0, lunch: 0, dinner: 0 };
       if (t.mealType === MealType.BREAKFAST) current.breakfast += 1;
       if (t.mealType === MealType.LUNCH) current.lunch += 1;
       if (t.mealType === MealType.DINNER) current.dinner += 1;
       grouped.set(key, current);
     }
+
     const rowByWeekAndId = new Map<string, number>();
+    const duplicateRowsFound: Array<{ key: string; rows: number[] }> = [];
     for (let i = 1; i < existingRows.length; i++) {
       const row = existingRows[i] || [];
       const weekValue = String(row[headerMap.week_starting!] || '').trim();
       const idValue = String(row[headerMap.id!] || '').trim();
       if (!weekValue || !idValue) continue;
-      rowByWeekAndId.set(`${weekValue}::${idValue}`, i + 1);
+      const key = `${weekValue}::${idValue}`;
+      if (rowByWeekAndId.has(key)) {
+        const firstRow = rowByWeekAndId.get(key)!;
+        duplicateRowsFound.push({ key, rows: [firstRow, i + 1] });
+        continue;
+      }
+      rowByWeekAndId.set(key, i + 1);
     }
+
     let rowsUpdated = 0; let rowsAppended = 0;
     const appendValues: Array<Array<string | number>> = [];
     for (const item of grouped.values()) {
-      const row = [weekStart, weekEnd, item.id, item.name, item.breakfast, item.lunch, item.dinner, item.breakfast + item.lunch + item.dinner];
-      const existingRowNumber = rowByWeekAndId.get(`${weekStart}::${item.id}`);
+      const total = item.breakfast + item.lunch + item.dinner;
+      const existingRowNumber = rowByWeekAndId.get(`${item.weekStart}::${item.id}`);
       if (existingRowNumber) {
-        const updates = [
+        const rowUpdates = [
+          { key: 'week_starting' as const, value: item.weekStart },
+          { key: 'week_ending' as const, value: item.weekEnd },
+          { key: 'name' as const, value: item.name },
           { key: 'breakfast' as const, value: item.breakfast },
           { key: 'lunch' as const, value: item.lunch },
           { key: 'dinner' as const, value: item.dinner },
-          { key: 'total' as const, value: item.breakfast + item.lunch + item.dinner }
+          { key: 'total' as const, value: total }
         ];
-        for (const update of updates) {
-          const col = headerMap[update.key]!;
-          const colLetter = columnNumberToLetter(col + 1);
+        for (const update of rowUpdates) {
+          const colLetter = columnNumberToLetter(headerMap[update.key]! + 1);
           await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!${colLetter}${existingRowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[update.value]] } });
         }
         rowsUpdated += 1;
       } else {
-        appendValues.push(row);
+        appendValues.push([item.weekStart, item.weekEnd, item.id, item.name, item.breakfast, item.lunch, item.dinner, total]);
       }
     }
+
     if (appendValues.length > 0) {
       await sheets.spreadsheets.values.append({ spreadsheetId, range: `${tabName}!A:H`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
       rowsAppended = appendValues.length;
     }
-    const rowsWritten = rowsUpdated + rowsAppended;
-    const viewTabName = (settings.tallyWeeklyViewTabName || '').trim();
-    if (viewTabName) {
-      const viewTab = meta.data.sheets?.find((sh) => sh.properties?.title === viewTabName);
-      if (!viewTab) {
-        await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: viewTabName } } }] } });
-      }
-      await sheets.spreadsheets.values.update({
+
+    if (existingTab?.properties?.sheetId !== undefined) {
+      await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
-        range: `${viewTabName}!A1:H1`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [WEEKLY_TALLY_HEADER] }
-      });
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `${viewTabName}!A2`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[`=IFERROR(FILTER('${tabName}'!A:H,LEN('${tabName}'!A:A)),)`]] }
+        requestBody: {
+          requests: [{
+            repeatCell: {
+              range: { sheetId: existingTab.properties.sheetId, startRowIndex: 1, startColumnIndex: headerMap.week_starting, endColumnIndex: (headerMap.week_starting ?? 0) + 1 },
+              cell: { userEnteredFormat: { numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' } } },
+              fields: 'userEnteredFormat.numberFormat'
+            }
+          }, {
+            repeatCell: {
+              range: { sheetId: existingTab.properties.sheetId, startRowIndex: 1, startColumnIndex: headerMap.week_ending, endColumnIndex: (headerMap.week_ending ?? 0) + 1 },
+              cell: { userEnteredFormat: { numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' } } },
+              fields: 'userEnteredFormat.numberFormat'
+            }
+          }]
+        }
       });
     }
-    return { writeBackRowsUpdated: rowsUpdated, rowsUpdated, rowsAppended, rowsWritten, totalRows: grouped.size, tabName };
+
+    const rowsWritten = rowsUpdated + rowsAppended;
+    return { writeBackRowsUpdated: rowsUpdated, rowsUpdated, rowsAppended, rowsWritten, tabName, expectedRows: grouped.size, duplicateRowsFound: duplicateRowsFound.length, duplicateRowDetails: duplicateRowsFound, weeksCovered: Array.from(weeksCovered).sort() };
   } finally {
     releaseOperationLock('writeback');
   }

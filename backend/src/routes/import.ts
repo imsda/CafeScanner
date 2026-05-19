@@ -324,10 +324,12 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   return res.json({
     ok: true,
     tabName: result.tabName ?? weeklyTabName,
+    expectedRows: result.expectedRows ?? 0,
     rowsUpdated: result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0,
     rowsAppended: result.rowsAppended ?? 0,
-    rowsWritten: result.rowsWritten ?? ((result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0) + (result.rowsAppended ?? 0)),
-    totalRows: result.totalRows ?? undefined
+    duplicateRowsFound: result.duplicateRowsFound ?? 0,
+    weeksCovered: result.weeksCovered ?? [],
+    rowsWritten: result.rowsWritten ?? ((result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0) + (result.rowsAppended ?? 0))
   });
 });
 
