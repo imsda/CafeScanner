@@ -6,6 +6,7 @@ backend/prisma/dev.db
 backend/prisma/dev.db-journal
 backend/backups/
 backend/prisma/prisma/
+backend/data
 backend/dist
 frontend/dist
 backend/tsconfig.tsbuildinfo
