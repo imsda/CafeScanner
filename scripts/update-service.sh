@@ -18,6 +18,25 @@ run_step() {
   fi
 }
 
+
+remove_build_output() {
+  local target="$1"
+
+  if [[ ! -e "$target" ]]; then
+    log "Cleanup skip: ${target} does not exist."
+    return 0
+  fi
+
+  if rm -rf "$target"; then
+    log "Cleanup removed: ${target}"
+    return 0
+  fi
+
+  local owner permissions
+  owner="$(stat -c '%U:%G' "$target" 2>/dev/null || echo 'unknown')"
+  permissions="$(stat -c '%A' "$target" 2>/dev/null || echo 'unknown')"
+  fail "Failed to remove build output. Path: ${target}. Owner: ${owner}. Permissions: ${permissions}. Suggested fix: sudo chown -R service-user:service-user repo"
+}
 check_repo_permissions() {
   local current_user current_uid non_owned_path owner owner_uid dist_dir parent_dir
   current_user="$(id -un)"
@@ -94,6 +113,9 @@ fi
 run_step "git pull" git pull --ff-only
 run_step "npm install" npm install
 run_step "permission diagnostics before build" check_repo_permissions
+run_step "cleanup backend/dist" remove_build_output "$ROOT_DIR/backend/dist"
+run_step "cleanup frontend/dist" remove_build_output "$ROOT_DIR/frontend/dist"
+run_step "cleanup backend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/backend/tsconfig.tsbuildinfo"
 run_step "npm run build" npm run build
 
 if npm run | grep -q "db:migrate"; then
