@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import session from 'express-session';
+import connectSqlite3 from 'connect-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -38,6 +39,20 @@ const currentDir = path.dirname(currentFilePath);
 const frontendDistDir = path.resolve(currentDir, '../../frontend/dist');
 const frontendIndexPath = path.join(frontendDistDir, 'index.html');
 
+
+const SQLiteStore = connectSqlite3(session);
+const sessionStoreDir = path.resolve(currentDir, '../data');
+fs.mkdirSync(sessionStoreDir, { recursive: true });
+const sessionStore = new SQLiteStore({
+  db: 'sessions.sqlite',
+  dir: sessionStoreDir,
+  table: 'sessions',
+  expired: {
+    clear: true,
+    intervalMs: 1000 * 60 * 15
+  }
+} as any);
+
 app.use(
   cors({
     credentials: true,
@@ -66,6 +81,7 @@ if (behindProxy) app.set('trust proxy', 1);
 
 app.use(
   session({
+    store: sessionStore as session.Store,
     secret: process.env.SESSION_SECRET || (isProduction ? (()=>{throw new Error('SESSION_SECRET is required in production');})() : 'change-me'),
     resave: false,
     saveUninitialized: false,
