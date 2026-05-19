@@ -151,6 +151,7 @@ model ScanTransaction {
   adminUserId   Int?
   entitlementId Int?
   entitlementPersonName String?
+  googleLogSyncedAt DateTime?
   person        Person?    @relation(fields: [personId], references: [id])
   adminUser     AdminUser? @relation(fields: [adminUserId], references: [id])
 
