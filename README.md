@@ -254,7 +254,16 @@ Behavior:
 - Write-back updates only columns: `redeemed` (`yes`), `redeemed_at` (timestamp), `redeemed_by` (selected guest).
 - Automatic write-back runs at configured sync interval and only during configured meal windows plus 10 minutes for all modes.
 - OWNER/ADMIN can trigger manual write-back anytime via API endpoint `POST /api/import/google-sheet/write-back-now`.
+- OWNER/ADMIN can trigger manual transaction log sync via API endpoint `POST /api/import/google-sheet/write-log-now` (Settings button: **Sync LOG now**).
 - If Google Sheets is unavailable, scanning still works (SQLite remains source of truth); retries occur on the next sync.
+
+Transaction LOG tab behavior (all modes: Camp Meeting, Tally Up, Count Down):
+- A dedicated tab named `LOG` is auto-created when needed.
+- `LOG` header row is auto-created/fixed to exactly: `Time,Value,Meal,Result,Reason,Person,Station`.
+- Rows are appended from local `ScanTransaction` records only (local DB remains source of truth).
+- Mapping: `Time=timestamp`, `Value=scannedValue`, `Meal=mealType`, `Result=result`, `Reason=failureReason`, `Person=linked person full name or entitlementPersonName`, `Station=stationName`.
+- Duplicate prevention: each transaction has `googleLogSyncedAt`; only rows where this is `NULL` are appended, then marked synced only after successful append.
+- Existing `LOG` rows are never cleared/overwritten; formatting/filtering is preserved as much as possible because sync uses append-only writes.
 
 Tally Up / Count Down sheet format:
 

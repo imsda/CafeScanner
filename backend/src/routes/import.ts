@@ -5,7 +5,7 @@ import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
 import { nanoid } from 'nanoid';
 import { getMealTrackingMode, getSettings } from '../services/settingsService.js';
-import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts, writeBackWeeklyTallyNow } from '../services/campMeetingSheetSyncService.js';
+import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts, writeBackWeeklyTallyNow, syncTransactionLogToSheet } from '../services/campMeetingSheetSyncService.js';
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from '../services/campMeetingImportService.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -329,6 +329,18 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
     rowsWritten: result.rowsWritten ?? ((result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0) + (result.rowsAppended ?? 0)),
     totalRows: result.totalRows ?? undefined
   });
+});
+
+router.post('/google-sheet/write-log-now', async (req, res) => {
+  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+  try {
+    const result = await syncTransactionLogToSheet();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('[GOOGLE_SHEETS_LOG_SYNC]', error);
+    const message = error instanceof Error ? error.message : 'Google Sheet LOG sync failed.';
+    return res.status(400).json({ error: message });
+  }
 });
 
 router.post('/preview', upload.single('file'), async (req, res) => {

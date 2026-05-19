@@ -8,6 +8,8 @@ import { acquireOperationLock, isImportInProgress, isResetInProgress, isSchedule
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const WEEKLY_TALLY_HEADER = ['Week Starting', 'Week Ending', 'ID', 'Name', 'Breakfast', 'Lunch', 'Dinner', 'Total'];
+const LOG_TAB_NAME = 'LOG';
+const LOG_HEADER = ['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
 const TALLY_COUNT_COLUMNS = ['breakfast', 'lunch', 'dinner', 'total'] as const;
 
@@ -281,6 +283,43 @@ export async function writeBackTallyCounts(force = false) {
 export async function writeBackCountdownBalances(force = false) { return writeBackPeopleRows(true, force); }
 export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
 export async function writeBackWeeklyTallyNow(force = true) { return writeBackWeeklyTally(force); }
+export async function syncTransactionLogToSheet() {
+  if (!acquireOperationLock('writeback')) return { tabName: LOG_TAB_NAME, rowsAppended: 0, transactionsSynced: 0 };
+  try {
+    const settings = await getSettings();
+    if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
+    const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
+    if (!spreadsheetId) throw new Error('Google Sheet URL/ID is not configured.');
+    const sheets = getSheetsClient();
+    const pending = await prisma.scanTransaction.findMany({
+      where: { googleLogSyncedAt: null },
+      orderBy: { id: 'asc' },
+      include: { person: { select: { firstName: true, lastName: true } } }
+    });
+    if (!pending.length) return { tabName: LOG_TAB_NAME, rowsAppended: 0, transactionsSynced: 0 };
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    if (!meta.data.sheets?.find((s) => s.properties?.title === LOG_TAB_NAME)) {
+      await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: LOG_TAB_NAME } } }] } });
+    }
+    const headerResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:G1` });
+    const currentHeader = (headerResp.data.values?.[0] || []).map((cell) => `${cell ?? ''}`.trim());
+    const headerMatches = LOG_HEADER.every((value, idx) => (currentHeader[idx] || '') === value);
+    if (!headerMatches) {
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:G1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [LOG_HEADER] } });
+    }
+    const rows = pending.map((tx) => {
+      const personName = tx.person ? `${tx.person.firstName} ${tx.person.lastName}`.trim() : (tx.entitlementPersonName || '').trim();
+      return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || ''];
+    });
+    await sheets.spreadsheets.values.append({ spreadsheetId, range: `${LOG_TAB_NAME}!A:G`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: rows } });
+    await prisma.scanTransaction.updateMany({ where: { id: { in: pending.map((tx) => tx.id) }, googleLogSyncedAt: null }, data: { googleLogSyncedAt: new Date() } });
+    return { tabName: LOG_TAB_NAME, rowsAppended: rows.length, transactionsSynced: rows.length };
+  } catch (error) {
+    throw mapGoogleSheetsError(error);
+  } finally {
+    releaseOperationLock('writeback');
+  }
+}
 
 function getTallyWriteBackMode(settings: Awaited<ReturnType<typeof getSettings>>): 'lifetime' | 'weekly' | 'both' {
   const mode = (settings.tallyWriteBackMode || 'lifetime').toLowerCase();
@@ -575,6 +614,11 @@ export function startCampMeetingSheetSyncScheduler() {
           if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
         }
         if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
+        try {
+          await syncTransactionLogToSheet();
+        } catch (error) {
+          console.error('[SHEET_SYNC] LOG sync failed during scheduler cycle', error);
+        }
         const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
         if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
           console.log('[SHEET_SYNC] Completed scheduled write-back: 0 rows updated (no pending redemptions)');
@@ -627,6 +671,11 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
     if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
   }
   if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
+  try {
+    await syncTransactionLogToSheet();
+  } catch (error) {
+    console.error('[SHEET_SYNC] LOG sync failed during manual scheduler check', error);
+  }
   const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
   if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
     console.log('[SHEET_SYNC] Completed scheduled write-back: 0 rows updated (no pending redemptions)');

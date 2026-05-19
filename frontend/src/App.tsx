@@ -2480,6 +2480,25 @@ function SettingsPage() {
             >
               Write Back to Google Sheet
             </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={!isGoogleSheetsSyncEnabled || isSavingGoogleSheetsSettings || !hasGoogleSheetId}
+              onClick={() => {
+                setMessage("");
+                setError("");
+                const settingsToSave = settings;
+                const savePromise = hasUnsavedGoogleSheetsChanges
+                  ? saveGoogleSheetsSettings(settingsToSave)
+                  : Promise.resolve(settingsToSave);
+                void savePromise
+                  .then(() => api<{ ok: boolean; tabName: string; rowsAppended: number; transactionsSynced: number }>("/import/google-sheet/write-log-now", { method: "POST" }))
+                  .then((result) => setMessage(`Synced LOG tab "${result.tabName}" (${result.rowsAppended} rows appended, ${result.transactionsSynced} transactions synced).`))
+                  .catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Google Sheet LOG sync failed."));
+              }}
+            >
+              Sync LOG now
+            </button>
             {settings.mealTrackingMode === "tally" && (
               <button
                 type="button"
