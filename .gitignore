@@ -4,7 +4,12 @@ backend/.env
 frontend/.env
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
+backend/backups/
+backend/prisma/prisma/
 backend/dist
 frontend/dist
+backend/tsconfig.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
 certs/*.key
 .DS_Store

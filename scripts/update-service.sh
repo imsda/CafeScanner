@@ -18,6 +18,29 @@ run_step() {
   fi
 }
 
+show_tracked_status() {
+  local tracked_status
+  tracked_status="$(git status --porcelain --untracked-files=no || true)"
+
+  if [[ -n "$tracked_status" ]]; then
+    log "Git tracked status (modified tracked files detected):"
+    printf '%s\n' "$tracked_status"
+  else
+    log "Git tracked status: clean (no modified tracked files)."
+  fi
+}
+
+ensure_clean_tracked_files() {
+  log "Checking git status for tracked-file modifications (untracked/ignored runtime files are safe)."
+  show_tracked_status
+
+  if ! git diff --quiet || [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+    fail "Update blocked: tracked git files are modified. Commit/stash/revert these tracked file changes before updating."
+  fi
+
+  log "No tracked-file modifications detected. Proceeding with update; untracked/ignored runtime files are safe."
+}
+
 remove_build_output() {
   local target="$1"
 
@@ -125,12 +148,15 @@ else
   log "DATABASE_URL is not SQLite file-based; skipping database backup."
 fi
 
+run_step "validate tracked git status before pull" ensure_clean_tracked_files
 run_step "git pull" git pull --ff-only
 run_step "npm install" npm install
 run_step "permission diagnostics before build" check_repo_permissions
+log "Cleaning build artifacts before build (preserving runtime data such as backend/prisma/prisma)."
 run_step "cleanup backend/dist" remove_build_output "$ROOT_DIR/backend/dist"
 run_step "cleanup frontend/dist" remove_build_output "$ROOT_DIR/frontend/dist"
 run_step "cleanup backend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/backend/tsconfig.tsbuildinfo"
+run_step "cleanup frontend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/frontend/tsconfig.tsbuildinfo"
 run_step "npm run build" npm run build
 
 if npm run | grep -q "db:migrate"; then
