@@ -18,7 +18,6 @@ run_step() {
   fi
 }
 
-
 remove_build_output() {
   local target="$1"
 
@@ -37,6 +36,7 @@ remove_build_output() {
   permissions="$(stat -c '%A' "$target" 2>/dev/null || echo 'unknown')"
   fail "Failed to remove build output. Path: ${target}. Owner: ${owner}. Permissions: ${permissions}. Suggested fix: sudo chown -R service-user:service-user repo"
 }
+
 check_repo_permissions() {
   local current_user current_uid non_owned_path owner owner_uid dist_dir parent_dir
   current_user="$(id -un)"
@@ -65,6 +65,21 @@ check_repo_permissions() {
     fi
   fi
 }
+
+SERVICE_STOPPED=0
+
+ensure_service_started_on_exit() {
+  if [[ "$SERVICE_STOPPED" -eq 1 ]]; then
+    log "Starting service after failure (trap): cafescanner"
+    if sudo systemctl start cafescanner; then
+      log "Service started successfully in failure trap."
+    else
+      log "ERROR: Failed to start cafescanner in failure trap. Manual intervention required."
+    fi
+  fi
+}
+
+trap ensure_service_started_on_exit EXIT
 
 log "Starting CafeScanner safe update from repo root: $ROOT_DIR"
 BACKEND_ENV_FILE="backend/.env"
@@ -119,10 +134,24 @@ run_step "cleanup backend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/b
 run_step "npm run build" npm run build
 
 if npm run | grep -q "db:migrate"; then
-  run_step "npm run db:migrate" npm run db:migrate
+  log "Stopping service: cafescanner"
+  run_step "stop cafescanner systemd service" sudo systemctl stop cafescanner
+  SERVICE_STOPPED=1
+
+  log "Migration starting: npm run db:migrate"
+  if npm run db:migrate; then
+    log "Migration success: npm run db:migrate"
+  else
+    log "Migration failure: npm run db:migrate"
+    exit 1
+  fi
+
+  log "Starting service: cafescanner"
+  run_step "start cafescanner systemd service" sudo systemctl start cafescanner
+  SERVICE_STOPPED=0
 else
   log "Skipping npm run db:migrate (script not defined)."
 fi
 
-run_step "restart cafescanner systemd service" sudo systemctl restart cafescanner
+trap - EXIT
 log "Update completed successfully. Database was not wiped, reset, or reseeded."
