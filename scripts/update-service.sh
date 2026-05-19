@@ -18,6 +18,35 @@ run_step() {
   fi
 }
 
+check_repo_permissions() {
+  local current_user current_uid non_owned_path owner owner_uid dist_dir parent_dir
+  current_user="$(id -un)"
+  current_uid="$(id -u)"
+
+  non_owned_path=$(find "$ROOT_DIR" -mindepth 1 \! -uid "$current_uid" -print -quit)
+  if [[ -n "${non_owned_path}" ]]; then
+    owner="$(stat -c '%U' "$non_owned_path")"
+    owner_uid="$(stat -c '%u' "$non_owned_path")"
+    fail "Permission check failed: repository file is not owned by current user '${current_user}'. Path: ${non_owned_path} (owner: ${owner}, uid: ${owner_uid}). Ensure the service/update user owns repo files and avoid sudo/root builds."
+  fi
+
+  dist_dir="$ROOT_DIR/backend/dist"
+  if [[ -e "$dist_dir" ]]; then
+    if [[ ! -w "$dist_dir" ]]; then
+      owner="$(stat -c '%U' "$dist_dir")"
+      owner_uid="$(stat -c '%u' "$dist_dir")"
+      fail "Permission check failed: build output directory is not writable. Path: ${dist_dir} (owner: ${owner}, uid: ${owner_uid}). Ensure the service/update user owns repo files and avoid sudo/root builds."
+    fi
+  else
+    parent_dir="$ROOT_DIR/backend"
+    if [[ ! -w "$parent_dir" ]]; then
+      owner="$(stat -c '%U' "$parent_dir")"
+      owner_uid="$(stat -c '%u' "$parent_dir")"
+      fail "Permission check failed: cannot create build output directory ${dist_dir}. Parent path is not writable: ${parent_dir} (owner: ${owner}, uid: ${owner_uid}). Ensure the service/update user owns repo files and avoid sudo/root builds."
+    fi
+  fi
+}
+
 log "Starting CafeScanner safe update from repo root: $ROOT_DIR"
 BACKEND_ENV_FILE="backend/.env"
 PRISMA_SCHEMA_DIR="backend/prisma"
@@ -64,6 +93,7 @@ fi
 
 run_step "git pull" git pull --ff-only
 run_step "npm install" npm install
+run_step "permission diagnostics before build" check_repo_permissions
 run_step "npm run build" npm run build
 
 if npm run | grep -q "db:migrate"; then

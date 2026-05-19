@@ -223,6 +223,11 @@ Restart:
 ./scripts/service-restart.sh
 ```
 
+### Service update/build permissions
+
+- Do **not** run `./scripts/update-service.sh` (or production builds) with `sudo`/root unless your service also runs as root.
+- The service/update user should own repository files, including `backend/dist`, so build artifacts remain writable.
+
 ## Meal Tracking Modes
 
 CafeScanner uses exactly one global **meal tracking mode** at a time (`Settings → Meal tracking mode`). There is no mixed mode in normal operation.
