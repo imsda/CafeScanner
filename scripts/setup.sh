@@ -17,6 +17,18 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+ensure_arm64_rollup_compat() {
+  # npm can skip optional platform packages, which may leave ARM64 Linux
+  # missing Rollup's native binary package after install/update operations.
+  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
+    local rollup_arm64_pkg_dir="node_modules/@rollup/rollup-linux-arm64-gnu"
+    if [[ ! -d "$rollup_arm64_pkg_dir" ]]; then
+      echo "[UPDATE] ARM64 Rollup dependency missing; installing compatibility package."
+      npm install @rollup/rollup-linux-arm64-gnu --save-dev
+    fi
+  fi
+}
+
 apt_install_packages() {
   local packages=("$@")
 
@@ -469,6 +481,7 @@ database_url="$(env_get_value "backend/.env" "DATABASE_URL")"
 
 log "Installing npm dependencies (root + workspaces)"
 npm install --workspaces --include-workspace-root
+ensure_arm64_rollup_compat
 
 if is_sqlite_database_url "$database_url"; then
   sqlite_db_path="$(resolve_sqlite_db_path "$database_url")"
