@@ -11,6 +11,20 @@ fi
 echo "Using project root: ${PROJECT_ROOT}"
 echo "Using service user: ${SERVICE_USER}"
 
+ensure_arm64_rollup_compat() {
+  # npm can skip optional platform packages, which may leave ARM64 Linux
+  # missing Rollup's native binary package after install/update operations.
+  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
+    local rollup_arm64_pkg_dir="${PROJECT_ROOT}/node_modules/@rollup/rollup-linux-arm64-gnu"
+    if [[ ! -d "$rollup_arm64_pkg_dir" ]]; then
+      echo "[UPDATE] ARM64 Rollup dependency missing; installing compatibility package."
+      npm install @rollup/rollup-linux-arm64-gnu --save-dev
+    fi
+  fi
+}
+
+ensure_arm64_rollup_compat
+
 echo "Building full app for production (frontend + backend)..."
 npm run build
 

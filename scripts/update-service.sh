@@ -7,6 +7,18 @@ cd "$ROOT_DIR"
 log() { printf '[UPDATE] %s\n' "$1"; }
 fail() { printf '[UPDATE] ERROR: %s\n' "$1" >&2; exit 1; }
 
+ensure_arm64_rollup_compat() {
+  # npm can skip optional platform packages, which may leave ARM64 Linux
+  # missing Rollup's native binary package after install/update operations.
+  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
+    local rollup_arm64_pkg_dir="$ROOT_DIR/node_modules/@rollup/rollup-linux-arm64-gnu"
+    if [[ ! -d "$rollup_arm64_pkg_dir" ]]; then
+      log "ARM64 Rollup dependency missing; installing compatibility package."
+      npm install @rollup/rollup-linux-arm64-gnu --save-dev
+    fi
+  fi
+}
+
 run_step() {
   local label="$1"
   shift
@@ -151,6 +163,7 @@ fi
 run_step "validate tracked git status before pull" ensure_clean_tracked_files
 run_step "git pull" git pull --ff-only
 run_step "npm install" npm install
+run_step "ensure ARM64 Rollup compatibility dependency" ensure_arm64_rollup_compat
 run_step "permission diagnostics before build" check_repo_permissions
 log "Cleaning build artifacts before build (preserving runtime data such as backend/prisma/prisma)."
 run_step "cleanup backend/dist" remove_build_output "$ROOT_DIR/backend/dist"
