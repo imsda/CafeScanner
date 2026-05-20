@@ -284,8 +284,11 @@ export async function writeBackCountdownBalances(force = false) { return writeBa
 export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
 export async function writeBackWeeklyTallyNow(force = true) { return writeBackWeeklyTally(force); }
 export async function syncTransactionLogToSheet() {
-  if (!acquireOperationLock('writeback')) return { tabName: LOG_TAB_NAME, existingLogRows: 0, missingTransactionsFound: 0, rowsAppended: 0, transactionsMarkedSynced: 0, transactionsSynced: 0 };
+  if (!acquireOperationLock('writeback')) {
+    return { tabName: LOG_TAB_NAME, totalTransactions: 0, existingLogRows: 0, existingLogTransactionIds: 0, missingTransactionsFound: 0, rowsAppended: 0, transactionsMarkedSynced: 0, transactionsSynced: 0, reason: 'Writeback lock unavailable.' };
+  }
   try {
+    console.log('[SHEET_SYNC][LOG] Starting LOG sync');
     const settings = await getSettings();
     if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
     const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
@@ -296,25 +299,33 @@ export async function syncTransactionLogToSheet() {
       orderBy: { id: 'asc' },
       include: { person: { select: { firstName: true, lastName: true } } }
     });
+    console.log(`[SHEET_SYNC][LOG] Loaded local transactions: ${transactions.length}`);
 
     const meta = await sheets.spreadsheets.get({ spreadsheetId });
     const logTab = meta.data.sheets?.find((s) => s.properties?.title === LOG_TAB_NAME);
     if (!logTab) {
+      console.log('[SHEET_SYNC][LOG] LOG tab missing; creating tab');
       await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: LOG_TAB_NAME } } }] } });
     }
 
     const headerResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:H1` });
     const currentHeader = (headerResp.data.values?.[0] || []).map((cell) => `${cell ?? ''}`.trim());
+    const transactionIdHeaderIndex = currentHeader.findIndex((value) => value === 'Transaction ID');
     const headerMatches = LOG_HEADER.every((value, idx) => (currentHeader[idx] || '') === value);
     if (!headerMatches) {
+      if (transactionIdHeaderIndex === -1) {
+        console.log('[SHEET_SYNC][LOG] Transaction ID header missing; writing canonical LOG header with Transaction ID after Station');
+      } else {
+        console.log('[SHEET_SYNC][LOG] LOG header mismatch; normalizing header');
+      }
       await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [LOG_HEADER] } });
     }
-
 
     const refreshedMeta = logTab ? meta : await sheets.spreadsheets.get({ spreadsheetId });
     const logSheetId = refreshedMeta.data.sheets?.find((s) => s.properties?.title === LOG_TAB_NAME)?.properties?.sheetId;
     if (typeof logSheetId === 'number') {
       const transactionIdColumnIndex = 7;
+      console.log('[SHEET_SYNC][LOG] Hiding Transaction ID column');
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
@@ -329,6 +340,7 @@ export async function syncTransactionLogToSheet() {
       });
     }
 
+    console.log('[SHEET_SYNC][LOG] Reading existing LOG rows');
     const logResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:H` });
     const logRows = (logResp.data.values || []) as string[][];
     const existingTransactionIds = new Set(
@@ -336,6 +348,7 @@ export async function syncTransactionLogToSheet() {
         .map((row) => `${row[7] ?? ''}`.trim())
         .filter((value) => value.length > 0)
     );
+    console.log(`[SHEET_SYNC][LOG] Existing LOG rows: ${logRows.length}; transaction IDs found: ${existingTransactionIds.size}`);
 
     const missingTransactions = transactions.filter((tx) => !existingTransactionIds.has(String(tx.id)));
     const rowsToAppend = missingTransactions.map((tx) => {
@@ -344,7 +357,10 @@ export async function syncTransactionLogToSheet() {
     });
 
     if (rowsToAppend.length) {
+      console.log(`[SHEET_SYNC][LOG] Appending missing transaction rows: ${rowsToAppend.length}`);
       await sheets.spreadsheets.values.append({ spreadsheetId, range: `${LOG_TAB_NAME}!A:H`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: rowsToAppend } });
+    } else {
+      console.log('[SHEET_SYNC][LOG] No rows appended; all local transactions already exist in LOG by Transaction ID');
     }
 
     const presentTransactionIds = new Set<string>([...existingTransactionIds, ...missingTransactions.map((tx) => String(tx.id))]);
@@ -353,11 +369,20 @@ export async function syncTransactionLogToSheet() {
       await prisma.scanTransaction.updateMany({ where: { id: { in: unsyncedPresentTransactionIds }, googleLogSyncedAt: null }, data: { googleLogSyncedAt: new Date() } });
     }
 
-    const existingLogRows = logRows.length;
-    const missingTransactionsFound = missingTransactions.length;
-    const rowsAppended = rowsToAppend.length;
-    const transactionsMarkedSynced = unsyncedPresentTransactionIds.length;
-    return { tabName: LOG_TAB_NAME, existingLogRows, missingTransactionsFound, rowsAppended, transactionsMarkedSynced, transactionsSynced: transactionsMarkedSynced };
+    const reason = rowsToAppend.length === 0 ? (transactions.length === 0 ? 'No local ScanTransaction rows exist.' : 'No missing transactions found; LOG already includes every local Transaction ID.') : '';
+    const result = {
+      tabName: LOG_TAB_NAME,
+      totalTransactions: transactions.length,
+      existingLogRows: logRows.length,
+      existingLogTransactionIds: existingTransactionIds.size,
+      missingTransactionsFound: missingTransactions.length,
+      rowsAppended: rowsToAppend.length,
+      transactionsMarkedSynced: unsyncedPresentTransactionIds.length,
+      transactionsSynced: unsyncedPresentTransactionIds.length,
+      reason
+    };
+    console.log('[SHEET_SYNC][LOG] Sync complete', result);
+    return result;
   } catch (error) {
     throw mapGoogleSheetsError(error);
   } finally {
