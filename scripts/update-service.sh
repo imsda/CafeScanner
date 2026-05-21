@@ -7,14 +7,32 @@ cd "$ROOT_DIR"
 log() { printf '[UPDATE] %s\n' "$1"; }
 fail() { printf '[UPDATE] ERROR: %s\n' "$1" >&2; exit 1; }
 
+ARCHITECTURE="$(uname -m)"
+
+is_linux_arm64() {
+  [[ "$(uname -s)" == "Linux" && ( "$ARCHITECTURE" == "aarch64" || "$ARCHITECTURE" == "arm64" ) ]]
+}
+
 ensure_arm64_rollup_compat() {
   # npm can skip optional platform packages, which may leave ARM64 Linux
   # missing Rollup's native binary package after install/update operations.
-  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
+  # We use --no-save so package.json/package-lock.json are not modified by
+  # updater/install scripts; this is a runtime compatibility fix only.
+  if is_linux_arm64; then
+    log "ARM64 detected; ensuring Rollup native dependency exists."
+    npm install --no-save @rollup/rollup-linux-arm64-gnu || fail "Failed to install @rollup/rollup-linux-arm64-gnu on ARM64. Aborting update before build cleanup."
+  fi
+}
+
+verify_build_dependencies() {
+  if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
+    fail "Build dependencies are missing (node_modules not found). Run npm install before updating."
+  fi
+
+  if is_linux_arm64; then
     local rollup_arm64_pkg_dir="$ROOT_DIR/node_modules/@rollup/rollup-linux-arm64-gnu"
     if [[ ! -d "$rollup_arm64_pkg_dir" ]]; then
-      log "ARM64 Rollup dependency missing; installing compatibility package."
-      npm install @rollup/rollup-linux-arm64-gnu --save-dev
+      fail "ARM64 Rollup native dependency is still missing after installation attempt. Aborting before frontend/dist cleanup."
     fi
   fi
 }
@@ -117,6 +135,7 @@ ensure_service_started_on_exit() {
 trap ensure_service_started_on_exit EXIT
 
 log "Starting CafeScanner safe update from repo root: $ROOT_DIR"
+log "Architecture detected: ${ARCHITECTURE}"
 BACKEND_ENV_FILE="backend/.env"
 PRISMA_SCHEMA_DIR="backend/prisma"
 DB_URL=$(awk -F= '/^DATABASE_URL=/{print $2}' "$BACKEND_ENV_FILE" 2>/dev/null | tr -d '"' || true)
@@ -165,12 +184,37 @@ run_step "git pull" git pull --ff-only
 run_step "npm install" npm install
 run_step "ensure ARM64 Rollup compatibility dependency" ensure_arm64_rollup_compat
 run_step "permission diagnostics before build" check_repo_permissions
+run_step "verify build dependencies before cleanup" verify_build_dependencies
+
+FRONTEND_DIST_DIR="$ROOT_DIR/frontend/dist"
+FRONTEND_DIST_BACKUP_DIR="$ROOT_DIR/frontend/dist.pre-update-backup"
+FRONTEND_DIST_BACKED_UP=0
+
+if [[ -d "$FRONTEND_DIST_DIR" ]]; then
+  run_step "backup frontend/dist" cp -a "$FRONTEND_DIST_DIR" "$FRONTEND_DIST_BACKUP_DIR"
+  FRONTEND_DIST_BACKED_UP=1
+fi
+
 log "Cleaning build artifacts before build (preserving runtime data such as backend/prisma/prisma)."
 run_step "cleanup backend/dist" remove_build_output "$ROOT_DIR/backend/dist"
 run_step "cleanup frontend/dist" remove_build_output "$ROOT_DIR/frontend/dist"
 run_step "cleanup backend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/backend/tsconfig.tsbuildinfo"
 run_step "cleanup frontend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/frontend/tsconfig.tsbuildinfo"
-run_step "npm run build" npm run build
+if npm run build; then
+  log "Success: npm run build"
+  if [[ "$FRONTEND_DIST_BACKED_UP" -eq 1 && -d "$FRONTEND_DIST_BACKUP_DIR" ]]; then
+    run_step "cleanup frontend/dist backup" remove_build_output "$FRONTEND_DIST_BACKUP_DIR"
+  fi
+else
+  log "ERROR: Failed: npm run build"
+  if [[ "$FRONTEND_DIST_BACKED_UP" -eq 1 && -d "$FRONTEND_DIST_BACKUP_DIR" ]]; then
+    log "Build failed; restoring previous frontend/dist backup."
+    rm -rf "$FRONTEND_DIST_DIR"
+    mv "$FRONTEND_DIST_BACKUP_DIR" "$FRONTEND_DIST_DIR"
+    log "Previous frontend/dist restored."
+  fi
+  fail "Build failed. Update aborted to avoid production frontend downtime."
+fi
 
 if npm run | grep -q "db:migrate"; then
   log "Stopping service: cafescanner"

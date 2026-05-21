@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_USER="${SUDO_USER:-${USER:-manager}}"
+ARCHITECTURE="$(uname -m)"
 
 if [[ -z "${SERVICE_USER}" ]]; then
   SERVICE_USER="manager"
@@ -10,20 +11,40 @@ fi
 
 echo "Using project root: ${PROJECT_ROOT}"
 echo "Using service user: ${SERVICE_USER}"
+echo "[UPDATE] Architecture detected: ${ARCHITECTURE}"
+
+run_step() {
+  local label="$1"
+  shift
+  echo "[UPDATE] Starting: ${label}"
+  if "$@"; then
+    echo "[UPDATE] Success: ${label}"
+  else
+    echo "[UPDATE] ERROR: Failed: ${label}" >&2
+    exit 1
+  fi
+}
+
+is_linux_arm64() {
+  [[ "$(uname -s)" == "Linux" && ( "$ARCHITECTURE" == "aarch64" || "$ARCHITECTURE" == "arm64" ) ]]
+}
 
 ensure_arm64_rollup_compat() {
   # npm can skip optional platform packages, which may leave ARM64 Linux
   # missing Rollup's native binary package after install/update operations.
-  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
-    local rollup_arm64_pkg_dir="${PROJECT_ROOT}/node_modules/@rollup/rollup-linux-arm64-gnu"
-    if [[ ! -d "$rollup_arm64_pkg_dir" ]]; then
-      echo "[UPDATE] ARM64 Rollup dependency missing; installing compatibility package."
-      npm install @rollup/rollup-linux-arm64-gnu --save-dev
-    fi
+  # We use --no-save so package.json/package-lock.json are not modified by
+  # updater/install scripts; this is a runtime compatibility fix only.
+  if is_linux_arm64; then
+    echo "[UPDATE] ARM64 detected; ensuring Rollup native dependency exists."
+    npm install --no-save @rollup/rollup-linux-arm64-gnu || {
+      echo "[UPDATE] ERROR: Failed to install @rollup/rollup-linux-arm64-gnu on ARM64." >&2
+      exit 1
+    }
   fi
 }
 
-ensure_arm64_rollup_compat
+run_step "npm install" npm install
+run_step "ensure ARM64 Rollup compatibility dependency" ensure_arm64_rollup_compat
 
 echo "Building full app for production (frontend + backend)..."
 npm run build
