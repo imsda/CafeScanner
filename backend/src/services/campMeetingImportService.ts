@@ -218,7 +218,16 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
       }));
     }
 
-    const existingEntitlement = await prisma.mealEntitlement.findUnique({ where: { sourceTicketId: row.sourceTicketId }, select: { id: true } });
+    const existingEntitlement = await prisma.mealEntitlement.findUnique({
+      where: { sourceTicketId: row.sourceTicketId },
+      select: { id: true, redeemed: true, sheetSyncedAt: true, sourceTicketId: true }
+    });
+    const preserveUnsyncedLocalRedemption = Boolean(existingEntitlement?.redeemed && existingEntitlement?.sheetSyncedAt === null);
+    if (preserveUnsyncedLocalRedemption) {
+      console.log(`[SHEET_IMPORT] preservedUnsyncedLocalRedemption=true entitlementId=${existingEntitlement?.id} sourceRowKey=${existingEntitlement?.sourceTicketId || row.sourceTicketId} reason=local_redeemed_sheetSyncedAt_null`);
+    } else {
+      console.log(`[SHEET_IMPORT] preservedUnsyncedLocalRedemption=false entitlementId=${existingEntitlement?.id || ''} sourceRowKey=${row.sourceTicketId} reason=none`);
+    }
     await withSqliteTimeoutRetry(`import.campMeeting.entitlement.${row.rowNumber}`, () => prisma.mealEntitlement.upsert({
       where: { sourceTicketId: row.sourceTicketId },
       update: {
@@ -227,7 +236,7 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
         mealType: row.mealType,
         mealDay: row.mealDay,
         mealDate: row.mealDate,
-        redeemed: row.redeemed,
+        redeemed: preserveUnsyncedLocalRedemption ? true : row.redeemed,
         notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null),
         sourceSheetRow: row.rowNumber
       },

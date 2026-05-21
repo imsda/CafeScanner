@@ -278,6 +278,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           }
         });
 
+        console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson= selectedEntitlementId= sourceRowKey= meal=${detectedMeal} mealDate= matchedPeopleCount=0 matchedEntitlementsCount=0 eligibleEntitlementsCount=0 result=${reason}`);
         return {
           ok: false,
           error: helpfulError,
@@ -288,6 +289,8 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
 
       if (options?.entitlementId !== undefined) {
+        const selected = matchingUnused.find((m) => m.id === options.entitlementId) || null;
+        console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson=${selected?.personName || ''} selectedEntitlementId=${options.entitlementId} sourceRowKey= meal=${detectedMeal} mealDate=${selected?.mealDate || ''} matchedPeopleCount=${new Set(matchingUnused.map((m) => m.personName || '')).size} matchedEntitlementsCount=${matchingUnused.length} eligibleEntitlementsCount=${matchingUnused.length} result=SELECTED`);
         return redeemCampMeetingEntitlement({
           tx,
           settings,
@@ -300,6 +303,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
 
       if (matchingUnused.length > 1) {
+        console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson= selectedEntitlementId= sourceRowKey= meal=${detectedMeal} mealDate= matchedPeopleCount=${new Set(matchingUnused.map((m) => m.personName || '')).size} matchedEntitlementsCount=${matchingUnused.length} eligibleEntitlementsCount=${matchingUnused.length} result=MULTIPLE_MATCHES`);
         return {
           ok: false,
           pendingSelection: true,
@@ -315,6 +319,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         };
       }
 
+      console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson=${matchingUnused[0].personName || ''} selectedEntitlementId=${matchingUnused[0].id} sourceRowKey= meal=${detectedMeal} mealDate=${matchingUnused[0].mealDate || ''} matchedPeopleCount=1 matchedEntitlementsCount=${matchingUnused.length} eligibleEntitlementsCount=${matchingUnused.length} result=AUTO_SELECTED`);
       return redeemCampMeetingEntitlement({
         tx,
         settings,

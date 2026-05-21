@@ -23,6 +23,8 @@ type SchedulerStatus = {
   lastAutomaticImportSummary: string | null;
   lastSkipReason: string | null;
   lastRowsUpdated: number;
+  lastCampMeetingWriteBackError: string | null;
+  lastScheduledCycleOrder: string | null;
   nextExpectedRunTime: string | null;
 };
 
@@ -34,6 +36,8 @@ const schedulerStatus: SchedulerStatus = {
   lastAutomaticImportSummary: null,
   lastSkipReason: null,
   lastRowsUpdated: 0,
+  lastCampMeetingWriteBackError: null,
+  lastScheduledCycleOrder: null,
   nextExpectedRunTime: null
 };
 
@@ -688,12 +692,15 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
 }
 
 export async function flushCampMeetingRedemptionsToSheet(force = false) {
-  if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0 };
+  if (!acquireOperationLock('writeback')) {
+    console.log('[SHEET_SYNC] skipped: sync already running');
+    return { writeBackRowsUpdated: 0 };
+  }
   try {
   const settings = await getSettings();
   if (settings.mealTrackingMode !== MealTrackingMode.camp_meeting) return { writeBackRowsUpdated: 0 };
   if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
-  const pending = await prisma.mealEntitlement.findMany({ where: { redeemed: true, sourceSheetRow: { not: null }, sheetSyncedAt: null } });
+  const pending = await prisma.mealEntitlement.findMany({ where: { redeemed: true, sheetSyncedAt: null } });
   console.log(`[SHEET_SYNC] Camp Meeting pending redeemed rows (sheetSyncedAt=null): ${pending.length}`);
   if (!pending.length) return { writeBackRowsUpdated: 0 };
   if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
@@ -703,12 +710,20 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   if (!spreadsheetId) throw new Error('Google Sheet URL/ID is not configured.');
   if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
   for (const row of pending) {
-    const r = row.sourceSheetRow!;
+    const r = row.sourceSheetRow;
+    const targetSheetRow = r ?? 'not-found';
+    const ticketId = (row.notes || '').match(/ticket_id=([^,\s]+)/)?.[1] || '';
+    if (!r) {
+      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} entitlementId=${row.id} ticket_id=${ticketId} personName=${row.personName || ''} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=${targetSheetRow} updatedColumns=none failure=missing_source_row`);
+      continue;
+    }
     try {
       await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: [
         { range: `${sheetName}!I${r}:K${r}`, values: [['yes', row.redeemedAt?.toISOString() || new Date().toISOString(), row.redeemedBy || row.personName || '']] }
       ] } });
+      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} entitlementId=${row.id} ticket_id=${ticketId} personName=${row.personName || ''} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=${r} updatedColumns=I:K success=true`);
     } catch (error) {
+      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} entitlementId=${row.id} ticket_id=${ticketId} personName=${row.personName || ''} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=${r} updatedColumns=I:K success=false`);
       throw mapGoogleSheetsError(error);
     }
     await prisma.mealEntitlement.update({ where: { id: row.id }, data: { sheetSyncedAt: new Date() } });
@@ -741,8 +756,7 @@ export function startCampMeetingSheetSyncScheduler() {
         schedulerStatus.lastSkipReason = skipReason;
         schedulerStatus.lastRowsUpdated = 0;
       } else {
-        await runAutoImportForMode(settings);
-        console.log('[SHEET_SYNC] Running scheduled write-back');
+        console.log('[SHEET_SYNC] Running scheduled write-back (before import)');
         let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
         if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
         if (settings.mealTrackingMode === MealTrackingMode.tally) {
@@ -751,6 +765,7 @@ export function startCampMeetingSheetSyncScheduler() {
           if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
         }
         if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
+        await runAutoImportForMode(settings);
         try {
           await syncTransactionLogToSheet();
         } catch (error) {
@@ -763,6 +778,8 @@ export function startCampMeetingSheetSyncScheduler() {
           console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
         }
         schedulerStatus.lastAutomaticWriteBackTime = now.toISOString();
+        schedulerStatus.lastScheduledCycleOrder = 'writeback -> import -> log';
+        schedulerStatus.lastCampMeetingWriteBackError = null;
         schedulerStatus.lastSkipReason = null;
         schedulerStatus.lastRowsUpdated = rowsUpdated;
       }
@@ -798,8 +815,7 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
     schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
     return { ran: false, reason: skipReason, mode: settings.mealTrackingMode };
   }
-  await runAutoImportForMode(settings);
-  console.log('[SHEET_SYNC] Running scheduled write-back');
+  console.log('[SHEET_SYNC] Running scheduled write-back (before import)');
   let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
   if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
   if (settings.mealTrackingMode === MealTrackingMode.tally) {
@@ -808,6 +824,7 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
     if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
   }
   if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
+  await runAutoImportForMode(settings);
   try {
     await syncTransactionLogToSheet();
   } catch (error) {
@@ -820,6 +837,8 @@ export async function runGoogleSheetsSyncSchedulerCheckNow() {
     console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
   }
   schedulerStatus.lastAutomaticWriteBackTime = now.toISOString();
+  schedulerStatus.lastScheduledCycleOrder = 'writeback -> import -> log';
+  schedulerStatus.lastCampMeetingWriteBackError = null;
   schedulerStatus.lastSkipReason = null;
   schedulerStatus.lastRowsUpdated = rowsUpdated;
   schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();

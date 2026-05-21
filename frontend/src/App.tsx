@@ -2607,9 +2607,11 @@ function SettingsPage() {
             <p><strong>Last automatic check:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticCheckTime, "Never")}</p>
             <p><strong>Last automatic write-back:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticWriteBackTime, "Never")}</p>
             <p><strong>Last auto-import:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticImportTime, "Never")}</p>
+            <p><strong>Last scheduled cycle order:</strong> {schedulerStatus?.lastScheduledCycleOrder ?? "Unknown"}</p>
             <p><strong>Last auto-import summary:</strong> {schedulerStatus?.lastAutomaticImportSummary ?? "None"}</p>
             <p><strong>Last skip reason:</strong> {schedulerStatus?.lastSkipReason ?? "None"}</p>
-            <p><strong>Last rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
+            <p><strong>Last Camp Meeting rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
+            <p><strong>Last Camp Meeting write-back error:</strong> {schedulerStatus?.lastCampMeetingWriteBackError ?? "None"}</p>
             <p><strong>Next expected run:</strong> {formatDateTimeSafe(schedulerStatus?.nextExpectedRunTime, "Unknown")}</p>
           </section>
         </section>
