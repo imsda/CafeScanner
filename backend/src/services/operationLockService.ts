@@ -21,6 +21,7 @@ export function pauseScheduler() { state.schedulerPaused = true; }
 export function resumeScheduler() { state.schedulerPaused = false; }
 
 export function acquireOperationLock(key: OperationKey): boolean {
+  if (key !== 'reset' && (state.importInProgress || state.writebackInProgress)) return false;
   const flag = keyToFlag(key);
   if (state[flag]) return false;
   state[flag] = true;
@@ -40,4 +41,3 @@ export async function waitForOperationsToFinish(keys: OperationKey[], label: str
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
-
