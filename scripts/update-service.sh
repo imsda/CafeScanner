@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 log() { printf '[UPDATE] %s\n' "$1"; }
 fail() { printf '[UPDATE] ERROR: %s\n' "$1" >&2; exit 1; }
+git_safe() { timeout 30 git "$@"; }
 
 ARCHITECTURE="$(uname -m)"
 
@@ -48,9 +49,70 @@ run_step() {
   fi
 }
 
+diagnostics() {
+  log "User: $(id -un)"
+  log "UID/GID: $(id -u)/$(id -g)"
+  log "HOME: ${HOME:-<unset>}"
+  log "PWD: $(pwd)"
+  log "Architecture: ${ARCHITECTURE}"
+  log "Branch: $(git_safe branch --show-current 2>/dev/null || echo '<unknown>')"
+  log "SSH binary: $(command -v ssh || echo '<missing>')"
+  log "Git remotes:"
+  git_safe remote -v | sed 's/^/[UPDATE]   /'
+}
+
+run_git_pull_with_timeout() {
+  local pull_output pull_status
+  pull_output="$(
+    timeout 60 bash -c '
+      set -euo pipefail
+      export GIT_TERMINAL_PROMPT=0
+      export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=2"
+      git pull --ff-only
+    ' 2>&1
+  )"
+  pull_status=$?
+  printf '%s\n' "$pull_output"
+  return "$pull_status"
+}
+
+handle_git_pull_failure_reason() {
+  local output="$1"
+  if grep -q "Permission denied (publickey)" <<<"$output"; then
+    fail "SSH authentication failed."
+  fi
+  if grep -qi "Connection timed out" <<<"$output"; then
+    fail "GitHub unreachable."
+  fi
+  if grep -q "Host key verification failed" <<<"$output"; then
+    fail "GitHub host key trust issue."
+  fi
+}
+
+run_git_pull_with_retry() {
+  local pull_output
+  if pull_output="$(run_git_pull_with_timeout)"; then
+    printf '%s\n' "$pull_output"
+    return 0
+  fi
+
+  printf '%s\n' "$pull_output"
+  log "git pull failed; retrying in 5 seconds..."
+  sleep 5
+
+  if pull_output="$(run_git_pull_with_timeout)"; then
+    printf '%s\n' "$pull_output"
+    return 0
+  fi
+
+  printf '%s\n' "$pull_output"
+  handle_git_pull_failure_reason "$pull_output"
+  fail "git pull failed after 2 attempts."
+}
+
 show_tracked_status() {
   local tracked_status
-  tracked_status="$(git status --porcelain --untracked-files=no || true)"
+  tracked_status="$(git_safe status --porcelain --untracked-files=no || true)"
 
   if [[ -n "$tracked_status" ]]; then
     log "Git tracked status (modified tracked files detected):"
@@ -64,7 +126,7 @@ ensure_clean_tracked_files() {
   log "Checking git status for tracked-file modifications (untracked/ignored runtime files are safe)."
   show_tracked_status
 
-  if ! git diff --quiet || [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  if ! git_safe diff --quiet || [[ -n "$(git_safe status --porcelain --untracked-files=no)" ]]; then
     fail "Update blocked: tracked git files are modified. Commit/stash/revert these tracked file changes before updating."
   fi
 
@@ -136,6 +198,7 @@ trap ensure_service_started_on_exit EXIT
 
 log "Starting CafeScanner safe update from repo root: $ROOT_DIR"
 log "Architecture detected: ${ARCHITECTURE}"
+diagnostics
 BACKEND_ENV_FILE="backend/.env"
 PRISMA_SCHEMA_DIR="backend/prisma"
 DB_URL=$(awk -F= '/^DATABASE_URL=/{print $2}' "$BACKEND_ENV_FILE" 2>/dev/null | tr -d '"' || true)
@@ -180,7 +243,7 @@ else
 fi
 
 run_step "validate tracked git status before pull" ensure_clean_tracked_files
-run_step "git pull" git pull --ff-only
+run_step "git pull" run_git_pull_with_retry
 run_step "npm install" npm install
 run_step "ensure ARM64 Rollup compatibility dependency" ensure_arm64_rollup_compat
 run_step "permission diagnostics before build" check_repo_permissions
@@ -238,3 +301,12 @@ fi
 
 trap - EXIT
 log "Update completed successfully. Database was not wiped, reset, or reseeded."
+log "Summary:"
+log "- git pull: success"
+log "- build: success"
+if npm run | grep -q "db:migrate"; then
+  log "- migrations: success"
+else
+  log "- migrations: skipped (script not defined)"
+fi
+log "- restart: success"

@@ -20,11 +20,11 @@ command_exists() {
 ensure_arm64_rollup_compat() {
   # npm can skip optional platform packages, which may leave ARM64 Linux
   # missing Rollup's native binary package after install/update operations.
-  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
+  if [[ "$(uname -s)" == "Linux" && ( "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ) ]]; then
     local rollup_arm64_pkg_dir="node_modules/@rollup/rollup-linux-arm64-gnu"
     if [[ ! -d "$rollup_arm64_pkg_dir" ]]; then
-      echo "[UPDATE] ARM64 Rollup dependency missing; installing compatibility package."
-      npm install @rollup/rollup-linux-arm64-gnu --save-dev
+      echo "[UPDATE] ARM64 detected; ensuring Rollup native dependency exists."
+      npm install --no-save @rollup/rollup-linux-arm64-gnu
     fi
   fi
 }
