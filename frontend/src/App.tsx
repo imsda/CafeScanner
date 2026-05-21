@@ -2492,12 +2492,31 @@ function SettingsPage() {
                   ? saveGoogleSheetsSettings(settingsToSave)
                   : Promise.resolve(settingsToSave);
                 void savePromise
-                  .then(() => api<{ ok: boolean; tabName: string; rowsAppended: number; transactionsSynced: number }>("/import/google-sheet/write-log-now", { method: "POST" }))
-                  .then((result) => setMessage(`Synced LOG tab "${result.tabName}" (${result.rowsAppended} rows appended, ${result.transactionsSynced} transactions synced).`))
+                  .then(() => api<{ ok: boolean; tabName: string; rowsAppended: number; transactionsSynced: number; totalTransactions: number; logRowCount: number; missingTransactionsFound: number; rowsRecreated: number; duplicatesSkipped: number }>("/import/google-sheet/write-log-now", { method: "POST" }))
+                  .then((result) => setMessage(`Synced LOG tab "${result.tabName}" (local=${result.totalTransactions}, log=${result.logRowCount}, missing=${result.missingTransactionsFound}, recreated=${result.rowsRecreated}, duplicates skipped=${result.duplicatesSkipped}).`))
                   .catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Google Sheet LOG sync failed."));
               }}
             >
               Sync LOG now
+            </button>
+            <button
+              type="button"
+              className="secondary danger"
+              disabled={!isGoogleSheetsSyncEnabled || isSavingGoogleSheetsSettings || !hasGoogleSheetId}
+              onClick={() => {
+                setMessage("");
+                setError("");
+                const settingsToSave = settings;
+                const savePromise = hasUnsavedGoogleSheetsChanges
+                  ? saveGoogleSheetsSettings(settingsToSave)
+                  : Promise.resolve(settingsToSave);
+                void savePromise
+                  .then(() => api<{ ok: boolean; tabName: string; rowsRebuilt: number; totalTransactions: number }>("/import/google-sheet/rebuild-log-now", { method: "POST" }))
+                  .then((result) => setMessage(`Rebuilt LOG tab "${result.tabName}" from database (${result.rowsRebuilt}/${result.totalTransactions} rows written).`))
+                  .catch((syncError) => setError(syncError instanceof Error ? syncError.message : "Google Sheet LOG rebuild failed."));
+              }}
+            >
+              Rebuild LOG from Database
             </button>
             {settings.mealTrackingMode === "tally" && (
               <button
