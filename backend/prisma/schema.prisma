@@ -126,6 +126,7 @@ model Setting {
   googleSheetTabName       String           @default("Sheet1")
   googleSyncIntervalMinutes Int             @default(5)
   googleAutoImportEnabled  Boolean          @default(true)
+  campMeetingAutoSelectFirstAvailable Boolean @default(true)
   tallyWriteBackMode       String           @default("lifetime")
   tallyWeeklyRawTabName    String           @default("Weekly Tally Raw")
   tallyWeeklyViewTabName   String?
@@ -177,7 +178,7 @@ model MealEntitlement {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([sourceTicketId])
+  @@index([sourceTicketId])
   @@index([personId, mealType, mealDay, redeemed])
   @@index([personId])
   @@index([mealDate])
