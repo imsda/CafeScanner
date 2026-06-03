@@ -24,12 +24,19 @@ export interface ScanSuccessResponse {
   scannedValue?: string;
   mealTrackingMode: MealTrackingMode;
   remainingAvailableTodayForMeal?: number;
+  remainingAvailableCount?: number;
+  selectedPerson?: string;
+  selectedEntitlementId?: number;
+  sourceRowKey?: string;
+  sourceRow?: number | null;
   redeemedEntitlement?: {
     id: number;
     personName?: string | null;
     personId: string;
     mealDay: MealDay;
     mealDate: string;
+    sourceRowKey?: string;
+    sourceSheetRow?: number | null;
   };
 }
 
@@ -44,6 +51,8 @@ export interface ScanPendingSelectionResponse {
   options: Array<{
     entitlementId: number;
     personName: string;
+    sourceRowKey?: string;
+    sourceRow?: number | null;
   }>;
 }
 
@@ -83,6 +92,7 @@ export interface Settings {
   googleSheetTabName: string;
   googleSyncIntervalMinutes: number;
   googleAutoImportEnabled?: boolean | null;
+  campMeetingAutoSelectFirstAvailable?: boolean | null;
   tallyWriteBackMode?: 'lifetime' | 'weekly' | 'both';
   tallyWeeklyRawTabName?: string;
   tallyWeeklyViewTabName?: string | null;

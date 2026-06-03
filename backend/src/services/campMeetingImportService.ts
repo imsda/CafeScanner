@@ -127,12 +127,9 @@ export function mapRowsToCampMeetingInput(rows: string[][]): { inputRows: RawInp
   return { inputRows, errors: [] };
 }
 
-function buildSourceTicketId(rawTicketId: string, rowNumber: number, options: NormalizeOptions): string {
-  if (options.source === 'google_sheet') {
-    const safeSheetName = (options.sheetName || 'Sheet1').trim() || 'Sheet1';
-    return `google:${safeSheetName}:row:${rowNumber}`;
-  }
-  return rawTicketId || `sheet-row-${rowNumber}`;
+function buildSourceTicketId(_rawTicketId: string, rowNumber: number, options: NormalizeOptions): string {
+  const safeSheetName = (options.sheetName || (options.source === 'google_sheet' ? 'Sheet1' : 'CSV')).trim() || (options.source === 'google_sheet' ? 'Sheet1' : 'CSV');
+  return `${options.source}:${safeSheetName}:row:${rowNumber}`;
 }
 
 export function normalizeCampMeetingRows(inputRows: RawInputRow[], options: NormalizeOptions = { source: 'csv' }): { validRows: NormalizedCampMeetingRow[]; skipped: Array<{ row: number; reason: string }>; totalRows: number; uniqueRegIds: Set<string>; duplicateTicketIdCount: number } {
@@ -218,8 +215,9 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
       }));
     }
 
-    const existingEntitlement = await prisma.mealEntitlement.findUnique({
+    const existingEntitlement = await prisma.mealEntitlement.findFirst({
       where: { sourceTicketId: row.sourceTicketId },
+      orderBy: { id: 'asc' },
       select: { id: true, redeemed: true, sheetSyncedAt: true, sourceTicketId: true }
     });
     const preserveUnsyncedLocalRedemption = Boolean(existingEntitlement?.redeemed && existingEntitlement?.sheetSyncedAt === null);
@@ -228,30 +226,33 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
     } else {
       console.log(`[SHEET_IMPORT] preservedUnsyncedLocalRedemption=false entitlementId=${existingEntitlement?.id || ''} sourceRowKey=${row.sourceTicketId} reason=none`);
     }
-    await withSqliteTimeoutRetry(`import.campMeeting.entitlement.${row.rowNumber}`, () => prisma.mealEntitlement.upsert({
-      where: { sourceTicketId: row.sourceTicketId },
-      update: {
-        personId: row.personId,
-        personName: row.personName,
-        mealType: row.mealType,
-        mealDay: row.mealDay,
-        mealDate: row.mealDate,
-        redeemed: preserveUnsyncedLocalRedemption ? true : row.redeemed,
-        notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null),
-        sourceSheetRow: row.rowNumber
-      },
-      create: {
-        sourceTicketId: row.sourceTicketId,
-        sourceSheetRow: row.rowNumber,
-        personId: row.personId,
-        personName: row.personName,
-        mealType: row.mealType,
-        mealDay: row.mealDay,
-        mealDate: row.mealDate,
-        redeemed: row.redeemed,
-        notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null)
-      }
-    }));
+    await withSqliteTimeoutRetry(`import.campMeeting.entitlement.${row.rowNumber}`, () => existingEntitlement
+      ? prisma.mealEntitlement.update({
+          where: { id: existingEntitlement.id },
+          data: {
+            personId: row.personId,
+            personName: row.personName,
+            mealType: row.mealType,
+            mealDay: row.mealDay,
+            mealDate: row.mealDate,
+            redeemed: preserveUnsyncedLocalRedemption ? true : row.redeemed,
+            notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null),
+            sourceSheetRow: row.rowNumber
+          }
+        })
+      : prisma.mealEntitlement.create({
+          data: {
+            sourceTicketId: row.sourceTicketId,
+            sourceSheetRow: row.rowNumber,
+            personId: row.personId,
+            personName: row.personName,
+            mealType: row.mealType,
+            mealDay: row.mealDay,
+            mealDate: row.mealDate,
+            redeemed: row.redeemed,
+            notes: row.notes || (row.originalTicketId ? `ticket_id=${row.originalTicketId}` : null)
+          }
+        }));
     if (existingEntitlement) summary.entitlementsUpdated += 1;
     else summary.entitlementsCreated += 1;
 

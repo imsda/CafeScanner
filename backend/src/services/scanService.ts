@@ -66,6 +66,63 @@ const noRemainingErrorByMeal: Record<MealType, string> = {
   NONE: 'No meals remaining'
 };
 
+type CampMeetingEntitlementForScan = {
+  id: number;
+  personName: string | null;
+  personId: string;
+  mealDate: string;
+  mealDay: MealDay;
+  sourceTicketId: string | null;
+  sourceSheetRow: number | null;
+  redeemed: boolean;
+};
+
+function getSourceRowSortValue(entitlement: Pick<CampMeetingEntitlementForScan, 'sourceSheetRow'>): number {
+  return entitlement.sourceSheetRow ?? Number.MAX_SAFE_INTEGER;
+}
+
+function compareCampMeetingEntitlements(a: CampMeetingEntitlementForScan, b: CampMeetingEntitlementForScan): number {
+  const sourceRowDelta = getSourceRowSortValue(a) - getSourceRowSortValue(b);
+  if (sourceRowDelta !== 0) return sourceRowDelta;
+
+  if (a.sourceSheetRow == null && b.sourceSheetRow == null) {
+    const nameDelta = (a.personName || '').localeCompare(b.personName || '', undefined, { sensitivity: 'base' });
+    if (nameDelta !== 0) return nameDelta;
+  }
+
+  return a.id - b.id;
+}
+
+function sourceRowKey(entitlement: Pick<CampMeetingEntitlementForScan, 'sourceTicketId' | 'sourceSheetRow'>): string {
+  return entitlement.sourceTicketId || (entitlement.sourceSheetRow ? `row:${entitlement.sourceSheetRow}` : '');
+}
+
+function logScanMatch(params: {
+  ticketId: string;
+  meal: MealType;
+  mealDate?: string | null;
+  matchedCount: number;
+  eligibleCount: number;
+  selectedPerson?: string | null;
+  selectedEntitlementId?: number | null;
+  selectedSourceRow?: string | number | null;
+  remainingAvailableCount?: number;
+  result?: string;
+}) {
+  console.log(
+    `[SCAN_MATCH] ticket_id=${params.ticketId}`
+    + ` meal=${params.meal}`
+    + ` mealDate=${params.mealDate || ''}`
+    + ` matchedCount=${params.matchedCount}`
+    + ` eligibleCount=${params.eligibleCount}`
+    + ` selectedPerson=${params.selectedPerson || ''}`
+    + ` selectedEntitlementId=${params.selectedEntitlementId ?? ''}`
+    + ` selectedSourceRow=${params.selectedSourceRow ?? ''}`
+    + ` remainingAvailableCount=${params.remainingAvailableCount ?? 0}`
+    + (params.result ? ` result=${params.result}` : '')
+  );
+}
+
 async function redeemCampMeetingEntitlement(params: {
   tx: any;
   settings: { stationName: string; timezone: string | null; mealTrackingMode: MealTrackingMode | null };
@@ -84,6 +141,15 @@ async function redeemCampMeetingEntitlement(params: {
       mealType: detectedMeal,
       mealDay: todayMealDay,
       redeemed: false
+    },
+    select: {
+      id: true,
+      personName: true,
+      personId: true,
+      mealDate: true,
+      mealDay: true,
+      sourceTicketId: true,
+      sourceSheetRow: true
     }
   });
 
@@ -131,7 +197,7 @@ async function redeemCampMeetingEntitlement(params: {
     }
   });
 
-  const remainingAvailableTodayForMeal = await tx.mealEntitlement.count({
+  const remainingAvailableCount = await tx.mealEntitlement.count({
     where: {
       personId: personIdValue,
       mealType: detectedMeal,
@@ -141,6 +207,7 @@ async function redeemCampMeetingEntitlement(params: {
   });
 
   const displayName = deriveDisplayName(entitlement.personName);
+  const selectedSourceRow = sourceRowKey(entitlement);
   return {
     ok: true,
     person: {
@@ -160,13 +227,20 @@ async function redeemCampMeetingEntitlement(params: {
     mealType: detectedMeal,
     scannedValue: personIdValue,
     mealTrackingMode: settings.mealTrackingMode ?? MealTrackingMode.camp_meeting,
-    remainingAvailableTodayForMeal,
+    remainingAvailableTodayForMeal: remainingAvailableCount,
+    remainingAvailableCount,
+    selectedPerson: entitlement.personName || 'Camp Meeting Guest',
+    selectedEntitlementId: entitlement.id,
+    sourceRowKey: selectedSourceRow,
+    sourceRow: entitlement.sourceSheetRow,
     redeemedEntitlement: {
       id: entitlement.id,
       personName: entitlement.personName,
       personId: entitlement.personId,
       mealDate: entitlement.mealDate,
-      mealDay: entitlement.mealDay
+      mealDay: entitlement.mealDay,
+      sourceRowKey: selectedSourceRow,
+      sourceSheetRow: entitlement.sourceSheetRow
     }
   };
 }
@@ -226,37 +300,37 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       const now = new Date();
       const timezone = settings.timezone || 'Etc/UTC';
       const todayMealDay = localMealDay(now, timezone);
-      const matchingUnused = await tx.mealEntitlement.findMany({
+      const matchingEntitlements: CampMeetingEntitlementForScan[] = (await tx.mealEntitlement.findMany({
         where: {
           personId: personIdValue,
           mealType: detectedMeal,
-          mealDay: todayMealDay,
-          redeemed: false
+          mealDay: todayMealDay
         },
-        orderBy: [
-          { personName: 'asc' },
-          { id: 'asc' }
-        ],
         select: {
           id: true,
           personName: true,
           personId: true,
           mealDate: true,
-          mealDay: true
+          mealDay: true,
+          sourceTicketId: true,
+          sourceSheetRow: true,
+          redeemed: true
         }
-      });
+      })).sort(compareCampMeetingEntitlements);
+      const matchingUnused = matchingEntitlements.filter((entitlement) => !entitlement.redeemed);
+      const matchedCount = matchingEntitlements.length;
+      const eligibleCount = matchingUnused.length;
 
-      if (matchingUnused.length === 0) {
+      if (eligibleCount === 0) {
         const person = await tx.person.findUnique({ where: { personId: personIdValue } });
-        const [allForId, dayMealAnyState, dayAnyMeal, mealAnyDay] = await Promise.all([
+        const [allForId, dayAnyMeal, mealAnyDay] = await Promise.all([
           tx.mealEntitlement.count({ where: { personId: personIdValue } }),
-          tx.mealEntitlement.count({ where: { personId: personIdValue, mealDay: todayMealDay, mealType: detectedMeal } }),
           tx.mealEntitlement.count({ where: { personId: personIdValue, mealDay: todayMealDay } }),
           tx.mealEntitlement.count({ where: { personId: personIdValue, mealType: detectedMeal } })
         ]);
         let helpfulError = 'No entitlements for this ID.';
         let reason = 'NO_ENTITLEMENTS_FOR_ID';
-        if (allForId > 0 && dayMealAnyState > 0) {
+        if (matchedCount > 0) {
           helpfulError = 'All matching entitlements are already redeemed.';
           reason = 'ALL_MATCHING_REDEEMED';
         } else if (allForId > 0 && dayAnyMeal > 0) {
@@ -278,19 +352,39 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           }
         });
 
-        console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson= selectedEntitlementId= sourceRowKey= meal=${detectedMeal} mealDate= matchedPeopleCount=0 matchedEntitlementsCount=0 eligibleEntitlementsCount=0 result=${reason}`);
+        logScanMatch({
+          ticketId: personIdValue,
+          meal: detectedMeal,
+          mealDate: matchingEntitlements[0]?.mealDate,
+          matchedCount,
+          eligibleCount,
+          remainingAvailableCount: 0,
+          result: reason
+        });
         return {
           ok: false,
           error: helpfulError,
           reason,
           person,
-          mealType: detectedMeal
+          mealType: detectedMeal,
+          remainingAvailableCount: 0
         };
       }
 
       if (options?.entitlementId !== undefined) {
         const selected = matchingUnused.find((m) => m.id === options.entitlementId) || null;
-        console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson=${selected?.personName || ''} selectedEntitlementId=${options.entitlementId} sourceRowKey= meal=${detectedMeal} mealDate=${selected?.mealDate || ''} matchedPeopleCount=${new Set(matchingUnused.map((m) => m.personName || '')).size} matchedEntitlementsCount=${matchingUnused.length} eligibleEntitlementsCount=${matchingUnused.length} result=SELECTED`);
+        logScanMatch({
+          ticketId: personIdValue,
+          meal: detectedMeal,
+          mealDate: selected?.mealDate,
+          matchedCount,
+          eligibleCount,
+          selectedPerson: selected?.personName,
+          selectedEntitlementId: options.entitlementId,
+          selectedSourceRow: selected ? sourceRowKey(selected) : null,
+          remainingAvailableCount: Math.max(eligibleCount - (selected ? 1 : 0), 0),
+          result: 'SELECTED'
+        });
         return redeemCampMeetingEntitlement({
           tx,
           settings,
@@ -302,8 +396,16 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         });
       }
 
-      if (matchingUnused.length > 1) {
-        console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson= selectedEntitlementId= sourceRowKey= meal=${detectedMeal} mealDate= matchedPeopleCount=${new Set(matchingUnused.map((m) => m.personName || '')).size} matchedEntitlementsCount=${matchingUnused.length} eligibleEntitlementsCount=${matchingUnused.length} result=MULTIPLE_MATCHES`);
+      const autoSelectFirstAvailable = settings.campMeetingAutoSelectFirstAvailable ?? true;
+      if (!autoSelectFirstAvailable && matchingUnused.length > 1) {
+        logScanMatch({
+          ticketId: personIdValue,
+          meal: detectedMeal,
+          matchedCount,
+          eligibleCount,
+          remainingAvailableCount: eligibleCount,
+          result: 'MULTIPLE_MATCHES'
+        });
         return {
           ok: false,
           pendingSelection: true,
@@ -314,12 +416,26 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
           mealDay: todayMealDay,
           options: matchingUnused.map((option) => ({
             entitlementId: option.id,
-            personName: option.personName || 'Camp Meeting Guest'
+            personName: option.personName || 'Camp Meeting Guest',
+            sourceRowKey: sourceRowKey(option),
+            sourceRow: option.sourceSheetRow
           }))
         };
       }
 
-      console.log(`[SCAN_MATCH] ticket_id=${personIdValue} selectedPerson=${matchingUnused[0].personName || ''} selectedEntitlementId=${matchingUnused[0].id} sourceRowKey= meal=${detectedMeal} mealDate=${matchingUnused[0].mealDate || ''} matchedPeopleCount=1 matchedEntitlementsCount=${matchingUnused.length} eligibleEntitlementsCount=${matchingUnused.length} result=AUTO_SELECTED`);
+      const selected = matchingUnused[0];
+      logScanMatch({
+        ticketId: personIdValue,
+        meal: detectedMeal,
+        mealDate: selected.mealDate,
+        matchedCount,
+        eligibleCount,
+        selectedPerson: selected.personName,
+        selectedEntitlementId: selected.id,
+        selectedSourceRow: sourceRowKey(selected),
+        remainingAvailableCount: eligibleCount - 1,
+        result: 'AUTO_SELECTED'
+      });
       return redeemCampMeetingEntitlement({
         tx,
         settings,
@@ -327,7 +443,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         personIdValue,
         detectedMeal,
         todayMealDay,
-        entitlementId: matchingUnused[0].id
+        entitlementId: selected.id
       });
     }
 

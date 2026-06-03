@@ -326,12 +326,19 @@ type ScanResultState =
           mealTrackingMode: MealTrackingMode;
           scannedValue?: string;
           remainingAvailableTodayForMeal?: number;
+          remainingAvailableCount?: number;
+          selectedPerson?: string;
+          selectedEntitlementId?: number;
+          sourceRowKey?: string;
+          sourceRow?: number | null;
           redeemedEntitlement?: {
             id: number;
             personName?: string | null;
             personId: string;
             mealDay: string;
             mealDate: string;
+            sourceRowKey?: string;
+            sourceSheetRow?: number | null;
           };
         }
       | { ok: false; error: string }
@@ -343,7 +350,7 @@ type PendingCampMeetingSelection = {
   originalScannedValue?: string;
   mealType: MealType;
   mealDay: string;
-  options: Array<{ entitlementId: number; personName: string }>;
+  options: Array<{ entitlementId: number; personName: string; sourceRowKey?: string; sourceRow?: number | null }>;
 };
 
 function ScanResultCard({ result }: { result: ScanResultState }) {
@@ -394,13 +401,13 @@ function ScanResultCard({ result }: { result: ScanResultState }) {
       {result.mealTrackingMode === "camp_meeting" ? (
         <>
           <p>
-            {result.redeemedEntitlement?.personName
-              ? `Meal redeemed for ${result.redeemedEntitlement.personName}`
+            {result.selectedPerson || result.redeemedEntitlement?.personName
+              ? `Meal redeemed for ${result.selectedPerson || result.redeemedEntitlement?.personName}`
               : "Meal redeemed."}
           </p>
           <p>
             Remaining available today for this meal:{" "}
-            <strong>{result.remainingAvailableTodayForMeal ?? 0}</strong>
+            <strong>{result.remainingAvailableCount ?? result.remainingAvailableTodayForMeal ?? 0}</strong>
           </p>
         </>
       ) : result.mealTrackingMode === "countdown" ? (
@@ -530,6 +537,11 @@ function ScanPage() {
         mealTrackingMode: response.mealTrackingMode,
         scannedValue: response.scannedValue,
         remainingAvailableTodayForMeal: response.remainingAvailableTodayForMeal,
+        remainingAvailableCount: response.remainingAvailableCount,
+        selectedPerson: response.selectedPerson,
+        selectedEntitlementId: response.selectedEntitlementId,
+        sourceRowKey: response.sourceRowKey,
+        sourceRow: response.sourceRow,
         redeemedEntitlement: response.redeemedEntitlement,
       });
       setPendingSelection(null);

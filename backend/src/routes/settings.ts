@@ -58,6 +58,7 @@ const settingsSchema = z.object({
   googleSheetTabName: z.string().min(1).optional(),
   googleSyncIntervalMinutes: z.number().int().min(1).max(1440).optional(),
   googleAutoImportEnabled: z.boolean().optional(),
+  campMeetingAutoSelectFirstAvailable: z.boolean().optional(),
   tallyWriteBackMode: z.enum(['lifetime', 'weekly', 'both']).optional(),
   tallyWeeklyRawTabName: z.string().min(1).optional(),
   tallyWeeklyViewTabName: z.string().nullable().optional(),

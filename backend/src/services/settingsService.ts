@@ -38,8 +38,8 @@ async function createSettingsIfMissing() {
         lunchEnd: '14:00',
         dinnerStart: '15:00',
         dinnerEnd: '19:00',
-        googleAutoImportEnabled: true
-        ,
+        googleAutoImportEnabled: true,
+        campMeetingAutoSelectFirstAvailable: true,
         tallyWriteBackMode: 'lifetime',
         tallyWeeklyRawTabName: 'Weekly Tally Raw',
         tallyWeeklyViewTabName: null,
@@ -93,6 +93,7 @@ export async function getSettings() {
       googleSheetTabName: true,
       googleSyncIntervalMinutes: true,
       googleAutoImportEnabled: true,
+      campMeetingAutoSelectFirstAvailable: true,
       tallyWriteBackMode: true,
       tallyWeeklyRawTabName: true,
       tallyWeeklyViewTabName: true,
