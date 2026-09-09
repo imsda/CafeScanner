@@ -459,7 +459,7 @@ function ScanPage() {
     return () => { controller.abort(); window.clearTimeout(timeout); };
   }, [peopleQuery]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [mode, setMode] = useState<"camera" | "usb">("usb");
+  const [mode, setMode] = useState<"camera" | "usb" | "search">("usb");
   const [mealTrackingMode, setMealTrackingMode] =
     useState<MealTrackingMode>("camp_meeting");
   const [scanCooldownSeconds, setScanCooldownSeconds] = useState(1);
@@ -657,18 +657,24 @@ function ScanPage() {
             type="button"
             onClick={() => setMode("usb")}
           >
-            USB Scanner / Manual ID Entry
+            USB Scanner
+          </button>
+          <button className={mode === "search" ? "primary" : "secondary"} type="button"
+            aria-pressed={mode === "search"}
+            onClick={() => { clearAutoSubmitTimeout(); scannerLikeInputRef.current = false; setManual(""); setMode("search"); }}>
+            Find Person by Name
           </button>
         </div>
         <p className="muted">
-          For the fastest line, use camera scan when available. If needed,
-          switch to USB Scanner / Manual ID Entry.
+          {mode === "usb" ? "USB scanner ready. Scan a badge to record the meal automatically, or choose Find Person by Name."
+            : mode === "search" ? "Search by name or ID, then select the person. USB scanning resumes after your selection."
+            : "Scan a badge with the camera, or choose USB Scanner or Find Person by Name."}
         </p>
         {mode === "camera" ? (
           <QrScanner
             cooldownMs={scanCooldownSeconds * 1000}
             diagnosticsEnabled={scannerDiagnosticsEnabled}
-            selectedScannerMode={mode}
+            selectedScannerMode="camera"
             lastScannerError={lastScannerError}
             onResult={(text) => void submitScan(text)}
             onError={(message) => {
@@ -676,7 +682,7 @@ function ScanPage() {
               setResult({ ok: false, error: message });
             }}
           />
-        ) : (
+        ) : mode === "usb" ? (
           <form className="stack" onSubmit={onManualSubmit}>
             <label>
               Person ID input
@@ -688,6 +694,11 @@ function ScanPage() {
                 onChange={(e) => onManualInputChange(e.target.value)}
                 onKeyDown={onManualKeyDown}
                 aria-label="Person ID input"
+                onBlur={() => {
+                  window.setTimeout(() => {
+                    if (document.activeElement === document.body) usbInputRef.current?.focus();
+                  }, 0);
+                }}
               />
             </label>
             <button
@@ -698,10 +709,11 @@ function ScanPage() {
               {isSubmitting ? "Submitting…" : "Submit ID"}
             </button>
           </form>
-        )}
-        <div className="stack">
-          <label>Find a person by ID or name
-            <input type="search" value={peopleQuery} placeholder="Enter an ID, first name, or last name"
+        ) : (
+        <div className="stack scanner-card">
+          <h3>Find Person by Name</h3>
+          <label>Name or person ID
+            <input autoFocus type="search" value={peopleQuery} placeholder="Enter an ID, first name, or last name"
               onChange={(e) => setPeopleQuery(e.target.value)} />
           </label>
           <p role="status">{searchStatus}</p>
@@ -709,12 +721,16 @@ function ScanPage() {
             <p className="muted">Select Scan to record a meal. Shared IDs use the normal ticket selection rules. Showing up to 20 matches.</p>
             <ul>{peopleMatches.map((person, index) => <li key={`${person.personId}-${index}`}>
               <strong>{person.name}</strong> — ID: {person.personId} {person.personType ? `(${person.personType})` : ''}{" "}
-              <button type="button" disabled={isSubmitting} onClick={() => { setPeopleQuery(""); void submitScan(person.personId); }}>
+              <button type="button" disabled={isSubmitting} onClick={() => { setPeopleQuery(""); setMode("usb"); void submitScan(person.personId); }}>
                 Scan ID {person.personId}
               </button>
             </li>)}</ul>
           </>}
+          <button className="secondary" type="button" onClick={() => { setPeopleQuery(""); setMode("usb"); }}>
+            Back to USB Scanner
+          </button>
         </div>
+        )}
         {scannerDiagnosticsEnabled && (
           <div className="scanner-diagnostics">
             <p>
