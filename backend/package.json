@@ -18,7 +18,8 @@
     "promote-owner": "tsx scripts/promote-owner.ts",
     "set-owner-recovery-code": "tsx scripts/set-owner-recovery-code.ts",
     "full-wipe": "tsx scripts/full-wipe.ts",
-    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json"
+    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.6.0",

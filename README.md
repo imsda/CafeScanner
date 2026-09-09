@@ -423,3 +423,9 @@ Destructive reset flows are admin-initiated app actions only (for explicit maint
 - `sudo systemctl status cafescanner`
 - `sudo systemctl restart cafescanner`
 - `journalctl -u cafescanner -f`
+
+### Tally Up user types
+
+In **People**, select **1: Student**, **2: Staff**, or **3: Guest** when adding a person. For an existing person, change **User type** and click **Save**. Students can scan once for each meal per local calendar day, using the timezone in Settings. Duplicate student scans are logged as failures and do not increase tallies. Staff and guests have no per-meal limit; the configured scanner cooldown still applies to all types. Countdown and Camp Meeting behavior is unchanged.
+
+Apply database migrations before starting the updated app (`npm run db:migrate`). Existing people and imports without a type default to Guest to preserve their previous unlimited Tally Up behavior; assign Student or Staff on the People page. New people added through the Tally Up form default to Student. Resetting tally counters does not clear scan history or allow a student to repeat a meal.

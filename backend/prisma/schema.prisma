@@ -49,6 +49,12 @@ enum ScanResult {
   FAILURE
 }
 
+enum PersonType {
+  STUDENT
+  STAFF
+  GUEST
+}
+
 enum MealTrackingMode {
   camp_meeting
   countdown
@@ -85,6 +91,7 @@ model Person {
   lastName           String
   personId           String   @unique
   codeValue          String   @unique
+  personType         PersonType @default(GUEST)
   breakfastRemaining Int      @default(0)
   lunchRemaining     Int      @default(0)
   dinnerRemaining    Int      @default(0)
@@ -157,6 +164,7 @@ model ScanTransaction {
   adminUser     AdminUser? @relation(fields: [adminUserId], references: [id])
 
   @@index([entitlementId])
+  @@index([personId, mealType, result, timestamp])
 }
 
 

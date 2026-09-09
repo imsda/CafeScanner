@@ -3,6 +3,7 @@ export type MealTrackingMode = 'camp_meeting' | 'countdown' | 'tally';
 export type MealDay = 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
 
 export interface ScanPerson {
+  personType?: 'STUDENT' | 'STAFF' | 'GUEST';
   id?: number;
   firstName: string;
   lastName: string;

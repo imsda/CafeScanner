@@ -246,6 +246,7 @@ async function redeemCampMeetingEntitlement(params: {
 }
 
 export async function processScan(rawPersonId: string, options?: { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number }) {
+  const scanTime = new Date();
   const originalScannedValue = rawPersonId.trim();
   const settings = await prisma.setting.findUnique({ where: { id: 1 } });
   if (!settings) throw new Error('Settings not found');
@@ -257,7 +258,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
   const detectedMeal = options?.manualMealOverride && settings.allowManualMealOverride
     ? options.manualMealOverride
-    : detectMealType(new Date(), settings);
+    : detectMealType(scanTime, settings);
 
   const latest = await prisma.scanTransaction.findFirst({
     where: { scannedValue: personIdValue },
@@ -499,6 +500,26 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
     }
 
+    if (person.personType === 'STUDENT') {
+      // Keep the check and counter update in the same SQLite write transaction.
+      const previousMeal = await tx.scanTransaction.findFirst({
+        where: { personId: person.id, mealType: detectedMeal, result: ScanResult.SUCCESS },
+        orderBy: { timestamp: 'desc' }
+      });
+      const localDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: settings.timezone || 'Etc/UTC', year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+      if (previousMeal && localDate.format(previousMeal.timestamp) === localDate.format(scanTime)) {
+        await tx.scanTransaction.create({ data: {
+          scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE,
+          failureReason: 'STUDENT_MEAL_ALREADY_SCANNED', personId: person.id,
+          stationName: settings.stationName, adminUserId: options?.adminUserId
+        } });
+        return { ok: false, error: 'Student has already scanned for this meal today.',
+          reason: 'STUDENT_MEAL_ALREADY_SCANNED', person, mealType: detectedMeal };
+      }
+    }
+
     const tallyField = tallyFieldByMeal[detectedMeal];
     const updated = await tx.person.update({
       where: { id: person.id },
@@ -512,6 +533,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
     await tx.scanTransaction.create({
       data: {
+        timestamp: scanTime,
         scannedValue: personIdValue,
         mealType: detectedMeal,
         result: ScanResult.SUCCESS,

@@ -27,6 +27,7 @@ function localMealDay(timezone: string): 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' |
 
 
 const personSchema = z.object({
+  personType: z.enum(['STUDENT', 'STAFF', 'GUEST']).default('GUEST'),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   personId: z.string().min(1),

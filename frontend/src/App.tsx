@@ -757,6 +757,7 @@ function ScanPage() {
 }
 
 type PersonRecord = {
+  personType: "STUDENT" | "STAFF" | "GUEST";
   id: number;
   firstName: string;
   lastName: string;
@@ -801,6 +802,7 @@ function PeoplePage() {
     mealTrackingMode: MealTrackingMode;
   } | null>(null);
   const [form, setForm] = useState<Record<string, string | number | boolean>>({
+    personType: "STUDENT",
     firstName: "",
     lastName: "",
     personId: "",
@@ -848,6 +850,7 @@ function PeoplePage() {
         }
       : {
           ...form,
+          personType: "GUEST",
           breakfastCount: 0,
           lunchCount: 0,
           dinnerCount: 0,
@@ -862,6 +865,7 @@ function PeoplePage() {
     setMessage("");
     const payload = isTally
       ? {
+          personType: person.personType,
           breakfastCount: person.breakfastCount,
           lunchCount: person.lunchCount,
           dinnerCount: person.dinnerCount,
@@ -969,7 +973,7 @@ function PeoplePage() {
         </strong>
         .{" "}
         {isTally
-          ? "Tally counters are editable in this mode."
+          ? "Students can scan once per meal each day. Staff and guests can scan multiple times. Select a user type and click Save. Tally counters are editable in this mode."
           : isCountdown
             ? "Remaining balances are editable in this mode."
             : "Camp Meeting entitlement status is shown from imported CSV data. Today B/L/D are based on the current local day-of-week."}
@@ -996,6 +1000,13 @@ function PeoplePage() {
             onChange={(e) => setForm({ ...form, [k]: e.target.value })}
           />
         ))}
+        {isTally && <label>User type
+          <select value={String(form.personType)} onChange={(e) => setForm({ ...form, personType: e.target.value })}>
+            <option value="STUDENT">1: Student</option>
+            <option value="STAFF">2: Staff</option>
+            <option value="GUEST">3: Guest</option>
+          </select>
+        </label>}
         <button className="primary add-person-btn">Add</button>
       </form>
       <div className="filters-row people-filters">
@@ -1045,6 +1056,7 @@ function PeoplePage() {
             <tr>
               <th>Name</th>
               <th>Person ID</th>
+              {isTally && <th>User type</th>}
               {hasAnyGrade && <th>Grade</th>}
               {isCampMeeting ? (
                 <>
@@ -1084,6 +1096,15 @@ function PeoplePage() {
                 <tr key={p.id}>
                   <td>{personDisplayName(p)}</td>
                   <td>{p.personId}</td>
+                  {isTally && <td>
+                    <select aria-label={`User type for ${personDisplayName(p)}`} value={p.personType}
+                      onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id
+                        ? { ...row, personType: e.target.value as PersonRecord['personType'] } : row))}>
+                      <option value="STUDENT">1: Student</option>
+                      <option value="STAFF">2: Staff</option>
+                      <option value="GUEST">3: Guest</option>
+                    </select>
+                  </td>}
                   {hasAnyGrade && <td>{(p.grade || "").trim() || null}</td>}
                   {isCampMeeting ? (
                     <>
@@ -1272,7 +1293,7 @@ function PeoplePage() {
               ))
             ) : (
               <tr>
-                <td className="muted" colSpan={noResultsColSpan}>
+                <td className="muted" colSpan={noResultsColSpan + (isTally ? 1 : 0)}>
                   No people match your current{" "}
                   {isCampMeeting ? "search" : "search and grade filters"}.
                 </td>
