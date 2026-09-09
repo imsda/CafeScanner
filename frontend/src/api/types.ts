@@ -110,6 +110,9 @@ export interface GoogleSheetsSchedulerStatus {
   lastAutomaticImportTime: string | null;
   lastAutomaticImportSummary: string | null;
   lastSkipReason: string | null;
+  lastSyncError?: string | null;
+  lastCycleDurationMs?: number | null;
+  lastLogSyncTime?: string | null;
   lastRowsUpdated: number;
   lastCampMeetingWriteBackError: string | null;
   lastScheduledCycleOrder: string | null;

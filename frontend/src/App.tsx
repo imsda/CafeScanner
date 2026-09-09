@@ -2477,7 +2477,7 @@ function SettingsPage() {
           {settings.mealTrackingMode === "tally" && <p className="muted">
             Add a User Type column to your sheet: 1 or Student, 2 or Staff, 3 or Guest.
             Blank cells preserve existing types; new people with a blank type default to Guest.
-            Import the sheet to apply type changes. Meal-count write-back preserves your type entries.
+            Import the sheet to apply type changes. Google Sheets owns the user roster. Write-back updates meal counts only for users already in the sheet.
           </p>}
           <div className="button-row">
             <button type="button" className="secondary" onClick={() => window.open("/api/import/template", "_blank")}>
@@ -2690,12 +2690,15 @@ function SettingsPage() {
             <p><strong>Scheduler:</strong> {schedulerStatus?.schedulerEnabled ? "Enabled" : "Disabled"}</p>
             <p><strong>Last automatic check:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticCheckTime, "Never")}</p>
             <p><strong>Last automatic write-back:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticWriteBackTime, "Never")}</p>
+            <p><strong>Last LOG export:</strong> {formatDateTimeSafe(schedulerStatus?.lastLogSyncTime, "Never")}</p>
+            <p className="muted">Transactions are stored in the database. LOG is a secondary export, checked every 15 minutes during scheduled sync or when you click Sync LOG.</p>
             <p><strong>Last auto-import:</strong> {formatDateTimeSafe(schedulerStatus?.lastAutomaticImportTime, "Never")}</p>
             <p><strong>Last scheduled cycle order:</strong> {schedulerStatus?.lastScheduledCycleOrder ?? "Unknown"}</p>
             <p><strong>Last auto-import summary:</strong> {schedulerStatus?.lastAutomaticImportSummary ?? "None"}</p>
             <p><strong>Last skip reason:</strong> {schedulerStatus?.lastSkipReason ?? "None"}</p>
-            <p><strong>Last Camp Meeting rows updated:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
-            <p><strong>Last Camp Meeting write-back error:</strong> {schedulerStatus?.lastCampMeetingWriteBackError ?? "None"}</p>
+            <p><strong>Last tally/balance rows processed:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
+            <p><strong>Last sync error:</strong> {schedulerStatus?.lastSyncError ?? schedulerStatus?.lastCampMeetingWriteBackError ?? "None"}</p>
+            <p><strong>Last cycle duration:</strong> {schedulerStatus?.lastCycleDurationMs == null ? "Unknown" : `${(schedulerStatus.lastCycleDurationMs / 1000).toFixed(1)} seconds`}</p>
             <p><strong>Next expected run:</strong> {formatDateTimeSafe(schedulerStatus?.nextExpectedRunTime, "Unknown")}</p>
           </section>
         </section>

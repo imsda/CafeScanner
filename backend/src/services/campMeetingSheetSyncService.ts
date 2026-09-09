@@ -23,6 +23,9 @@ type SchedulerStatus = {
   lastAutomaticImportTime: string | null;
   lastAutomaticImportSummary: string | null;
   lastSkipReason: string | null;
+  lastSyncError: string | null;
+  lastCycleDurationMs: number | null;
+  lastLogSyncTime: string | null;
   lastRowsUpdated: number;
   lastCampMeetingWriteBackError: string | null;
   lastScheduledCycleOrder: string | null;
@@ -36,6 +39,9 @@ const schedulerStatus: SchedulerStatus = {
   lastAutomaticImportTime: null,
   lastAutomaticImportSummary: null,
   lastSkipReason: null,
+  lastSyncError: null,
+  lastCycleDurationMs: null,
+  lastLogSyncTime: null,
   lastRowsUpdated: 0,
   lastCampMeetingWriteBackError: null,
   lastScheduledCycleOrder: null,
@@ -147,6 +153,7 @@ function mapGoogleSheetsError(error: unknown): Error {
   const status = maybe?.response?.status ?? maybe?.code;
   const apiMessage = maybe?.response?.data?.error?.message || maybe?.message || 'Unknown Google Sheets API error';
 
+  if (status === 429) return new Error('Google Sheets write quota exceeded (429). Wait a minute before retrying. Local scans are saved.');
   if (status === 403) {
     return new Error('Google Sheets API denied access (403). Share the sheet with the service account email and confirm API access is enabled.');
   }
@@ -288,9 +295,11 @@ export async function writeBackTallyCounts(force = false) {
 export async function writeBackCountdownBalances(force = false) { return writeBackPeopleRows(true, force); }
 export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
 export async function writeBackWeeklyTallyNow(force = true) { return writeBackWeeklyTally(force); }
+const formattedLogSheets = new Set<string>();
+
 export async function syncTransactionLogToSheet() {
   if (!acquireOperationLock('writeback')) {
-    return { tabName: LOG_TAB_NAME, totalTransactions: 0, existingLogRows: 0, existingLogTransactionIds: 0, missingTransactionsFound: 0, rowsAppended: 0, transactionsMarkedSynced: 0, transactionsSynced: 0, reason: 'Writeback lock unavailable.' };
+    throw new Error('Another sheet sync is running. Please try again shortly.');
   }
   try {
     console.log('[SHEET_SYNC][LOG] Starting LOG sync');
@@ -328,7 +337,7 @@ export async function syncTransactionLogToSheet() {
 
     const refreshedMeta = logTab ? meta : await sheets.spreadsheets.get({ spreadsheetId });
     const logSheetId = refreshedMeta.data.sheets?.find((s) => s.properties?.title === LOG_TAB_NAME)?.properties?.sheetId;
-    if (typeof logSheetId === 'number') {
+    if (typeof logSheetId === 'number' && !formattedLogSheets.has(spreadsheetId)) {
       const transactionIdColumnIndex = 7;
       console.log('[SHEET_SYNC][LOG] Hiding Transaction ID column');
       await sheets.spreadsheets.batchUpdate({
@@ -345,6 +354,7 @@ export async function syncTransactionLogToSheet() {
       });
     }
 
+    if (typeof logSheetId === 'number') formattedLogSheets.add(spreadsheetId);
     console.log('[SHEET_SYNC][LOG] Reading existing LOG rows');
     const logResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:H` });
     const logRows = (logResp.data.values || []) as string[][];
@@ -361,17 +371,11 @@ export async function syncTransactionLogToSheet() {
       return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || '', String(tx.id)];
     });
 
-    const orderedRows = transactions.map((tx) => {
-      const personName = tx.person ? `${tx.person.firstName} ${tx.person.lastName}`.trim() : (tx.entitlementPersonName || '').trim();
-      return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || '', String(tx.id)];
-    });
-    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:H` });
-    if (orderedRows.length) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `${LOG_TAB_NAME}!A2:H`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: orderedRows }
+    // Keep existing LOG rows intact. A failed append can be retried by Transaction ID.
+    for (let offset = 0; offset < rowsToAppend.length; offset += 1000) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId, range: `${LOG_TAB_NAME}!A:H`, valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS', requestBody: { values: rowsToAppend.slice(offset, offset + 1000) }
       });
     }
     console.log(`[SHEET_SYNC] totalTransactions=${transactions.length} logRowsFound=${logRows.length} existingTransactionIds=${existingTransactionIds.size} missingTransactions=${missingTransactions.length} rowsAppended=${rowsToAppend.length}`);
@@ -397,6 +401,7 @@ export async function syncTransactionLogToSheet() {
       transactionsSynced: unsyncedPresentTransactionIds.length,
       reason
     };
+    schedulerStatus.lastLogSyncTime = new Date().toISOString();
     console.log('[SHEET_SYNC][LOG] Sync complete', result);
     return result;
   } catch (error) {
@@ -485,7 +490,8 @@ function normalizeHeaderName(value: string): string {
 
 function findHeaderIndex(headers: string[], aliases: string[]): number | undefined {
   const normalizedAliases = aliases.map((a) => normalizeHeaderName(a));
-  return headers.findIndex((header) => normalizedAliases.includes(normalizeHeaderName(header)));
+  const index = headers.findIndex((header) => normalizedAliases.includes(normalizeHeaderName(header)));
+  return index < 0 ? undefined : index;
 }
 
 function getTallyHeaderMap(headerRow: string[]): HeaderMap {
@@ -520,13 +526,17 @@ function columnNumberToLetter(columnNumber: number): string {
 }
 
 async function writeBackWeeklyTally(force: boolean) {
-  if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
+  if (!acquireOperationLock('writeback')) {
+    if (force) throw new Error('Another sheet sync is running. Please try again shortly.');
+    return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
+  }
   try {
     const settings = await getSettings();
     if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
     const tabName = (settings.tallyWeeklyRawTabName || '').trim() || 'Weekly Tally Raw';
+    const quotedTab = `'${tabName.replace(/'/g, "''")}'`;
     const weekStartsOn = settings.tallyWeekStartsOn === 'SUNDAY' ? 'SUNDAY' : 'MONDAY';
     const timezone = settings.timezone || 'Etc/UTC';
     const sheets = getSheetsClient();
@@ -537,10 +547,10 @@ async function writeBackWeeklyTally(force: boolean) {
       meta = await sheets.spreadsheets.get({ spreadsheetId });
       existingTab = meta.data.sheets?.find((s) => s.properties?.title === tabName);
     }
-    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A:H` });
-    const existingRows = (existingRowsResp.data.values || []).map((row) => (row || []).slice(0, 8));
+    const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${quotedTab}!A:ZZ`, valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' });
+    const existingRows = (existingRowsResp.data.values || []).map((row) => (row || []));
     if (existingRows.length === 0) {
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedTab}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
       existingRows.push([...WEEKLY_TALLY_HEADER]);
     }
     const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
@@ -569,7 +579,10 @@ async function writeBackWeeklyTally(force: boolean) {
     const duplicateRowsFound: Array<{ key: string; rows: number[] }> = [];
     for (let i = 1; i < existingRows.length; i++) {
       const row = existingRows[i] || [];
-      const weekValue = String(row[headerMap.week_starting!] || '').trim();
+      const rawWeek = row[headerMap.week_starting!];
+      const weekValue = typeof rawWeek === 'number'
+        ? new Date(Date.UTC(1899, 11, 30) + Math.round(rawWeek) * 86400000).toISOString().slice(0, 10)
+        : String(rawWeek || '').trim();
       const idValue = String(row[headerMap.id!] || '').trim();
       if (!weekValue || !idValue) continue;
       const key = `${weekValue}::${idValue}`;
@@ -583,31 +596,37 @@ async function writeBackWeeklyTally(force: boolean) {
 
     let rowsUpdated = 0; let rowsAppended = 0;
     const appendValues: Array<Array<string | number>> = [];
+    const updates: Array<{ range: string; values: Array<Array<string | number>> }> = [];
+    const dateSerial = (iso: string) => (Date.parse(`${iso}T00:00:00Z`) - Date.UTC(1899, 11, 30)) / 86400000;
     for (const item of grouped.values()) {
-      const total = item.breakfast + item.lunch + item.dinner;
       const existingRowNumber = rowByWeekAndId.get(`${item.weekStart}::${item.id}`);
+      const values = {
+        week_starting: dateSerial(item.weekStart), week_ending: dateSerial(item.weekEnd),
+        id: item.id, name: item.name, breakfast: item.breakfast, lunch: item.lunch,
+        dinner: item.dinner, total: item.breakfast + item.lunch + item.dinner
+      };
       if (existingRowNumber) {
-        const rowUpdates = [
-          { key: 'week_starting' as const, value: item.weekStart },
-          { key: 'week_ending' as const, value: item.weekEnd },
-          { key: 'name' as const, value: item.name },
-          { key: 'breakfast' as const, value: item.breakfast },
-          { key: 'lunch' as const, value: item.lunch },
-          { key: 'dinner' as const, value: item.dinner },
-          { key: 'total' as const, value: total }
-        ];
-        for (const update of rowUpdates) {
-          const colLetter = columnNumberToLetter(headerMap[update.key]! + 1);
-          await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tabName}!${colLetter}${existingRowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[update.value]] } });
+        for (const key of Object.keys(values) as Array<keyof typeof values>) {
+          const colLetter = columnNumberToLetter(headerMap[key]! + 1);
+          const existing = existingRows[existingRowNumber - 1]?.[headerMap[key]!];
+          const normalized = (key === 'week_starting' || key === 'week_ending') && typeof existing === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(existing)
+            ? dateSerial(existing) : existing;
+          if (String(normalized ?? '') === String(values[key])) continue;
+          updates.push({ range: `${quotedTab}!${colLetter}${existingRowNumber}`, values: [[values[key]]] });
         }
         rowsUpdated += 1;
       } else {
-        appendValues.push([item.weekStart, item.weekEnd, item.id, item.name, item.breakfast, item.lunch, item.dinner, total]);
+        const row: Array<string | number> = Array(existingRows[0].length).fill('');
+        for (const key of Object.keys(values) as Array<keyof typeof values>) row[headerMap[key]!] = values[key];
+        appendValues.push(row);
       }
     }
-
+    // Batch writes instead of consuming one API request per cell.
+    for (let offset = 0; offset < updates.length; offset += 1000) {
+      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'RAW', data: updates.slice(offset, offset + 1000) } });
+    }
     if (appendValues.length > 0) {
-      await sheets.spreadsheets.values.append({ spreadsheetId, range: `${tabName}!A:H`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
+      await sheets.spreadsheets.values.append({ spreadsheetId, range: `${quotedTab}!A:${columnNumberToLetter(existingRows[0].length)}`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
       rowsAppended = appendValues.length;
     }
 
@@ -633,31 +652,35 @@ async function writeBackWeeklyTally(force: boolean) {
     }
 
     const rowsWritten = rowsUpdated + rowsAppended;
-    return { writeBackRowsUpdated: rowsUpdated, rowsUpdated, rowsAppended, rowsWritten, tabName, expectedRows: grouped.size, duplicateRowsFound: duplicateRowsFound.length, duplicateRowDetails: duplicateRowsFound, weeksCovered: Array.from(weeksCovered).sort() };
+    return { writeBackRowsUpdated: rowsWritten, rowsUpdated, rowsAppended, rowsWritten, tabName, expectedRows: grouped.size, duplicateRowsFound: duplicateRowsFound.length, duplicateRowDetails: duplicateRowsFound, weeksCovered: Array.from(weeksCovered).sort() };
   } finally {
     releaseOperationLock('writeback');
   }
 }
 
 async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
-  if (!acquireOperationLock('writeback')) return { writeBackRowsUpdated: 0 };
+  if (!acquireOperationLock('writeback')) {
+    if (force) throw new Error('Another sheet sync is running. Please try again shortly.');
+    return { writeBackRowsUpdated: 0 };
+  }
   try {
   const settings = await getSettings();
   if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
   if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
   const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
+  const quotedSheet = `'${sheetName.replace(/'/g, "''")}'`;
   const sheets = getSheetsClient();
   const people = await prisma.person.findMany({ where: { active: true }, orderBy: { personId: 'asc' } });
-  const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!A:ZZ` });
+  const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${quotedSheet}!A:ZZ` });
   const existingRows = existingRowsResp.data.values || [];
   if (existingRows.length === 0) {
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!A1:F1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [TALLY_HEADER] } });
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedSheet}!A1:F1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [TALLY_HEADER] } });
     existingRows.push([...TALLY_HEADER]);
   }
   if (!useBalances && !existingRows[0].some((cell) => ['usertype', 'persontype'].includes(String(cell).toLowerCase().replace(/[ _-]/g, '')))) {
     const column = columnNumberToLetter(existingRows[0].length + 1);
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!${column}1`, valueInputOption: 'RAW', requestBody: { values: [['User Type']] } });
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedSheet}!${column}1`, valueInputOption: 'RAW', requestBody: { values: [['User Type']] } });
     existingRows[0].push('User Type');
   }
   const typeColumn = existingRows[0].findIndex((cell) => ['usertype', 'persontype'].includes(String(cell).toLowerCase().replace(/[ _-]/g, '')));
@@ -675,27 +698,25 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
     if (id) rowById.set(id, i + 1);
   }
   let rowsUpdated = 0;
-  const appendValues: Array<Array<string | number>> = [];
+  const updates: Array<{ range: string; values: Array<Array<string | number>> }> = [];
   for (const [id, tally] of peopleById.entries()) {
     const rowNum = rowById.get(id);
-    if (!rowNum) {
-      const row: Array<string | number> = Array(existingRows[0].length).fill('');
-      for (const key of ['id', 'name', ...TALLY_COUNT_COLUMNS] as const) row[headerMap[key]!] = tally[key];
-      if (typeColumn >= 0) row[typeColumn] = tally.personType;
-      appendValues.push(row);
-      continue;
-    }
+    // The sheet owns the roster. Database-only people must not be added back.
+    if (!rowNum) continue;
     for (const key of TALLY_COUNT_COLUMNS) {
       const colIndex = headerMap[key]!;
       const colLetter = columnNumberToLetter(colIndex + 1);
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!${colLetter}${rowNum}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[tally[key]]] } });
+      const current = existingRows[rowNum - 1]?.[colIndex];
+      if (current !== '' && current !== undefined && Number(current) === tally[key]) continue;
+      updates.push({ range: `${quotedSheet}!${colLetter}${rowNum}`, values: [[tally[key]]] });
     }
     rowsUpdated += 1;
   }
-  if (appendValues.length > 0) {
-    await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetName}!A:${columnNumberToLetter(existingRows[0].length)}`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
+  for (let offset = 0; offset < updates.length; offset += 1000) {
+    await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'RAW', data: updates.slice(offset, offset + 1000) } });
   }
-  return { writeBackRowsUpdated: rowsUpdated + appendValues.length, rowsAppended: appendValues.length };
+  console.log(`[SHEET_SYNC][TOTALS] tab=${sheetName} people=${people.length} matched=${rowsUpdated} changedCells=${updates.length}`);
+  return { writeBackRowsUpdated: rowsUpdated, rowsAppended: 0 };
   } finally {
     releaseOperationLock('writeback');
   }
@@ -744,115 +765,76 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   }
 }
 
+let schedulerCycleRunning = false;
+
 export function startCampMeetingSheetSyncScheduler() {
-  console.log('[SHEET_SYNC] Scheduler started');
+  if (schedulerStatus.schedulerEnabled) return;
   schedulerStatus.schedulerEnabled = true;
+  console.log('[SHEET_SYNC] Scheduler started');
   const run = async () => {
-    try {
-      const settings = await getSettings();
-      const now = new Date();
-      const intervalMinutes = Math.max(1, settings.googleSyncIntervalMinutes ?? 5);
-      const timezone = settings.timezone || 'Etc/UTC';
-      const activeWindow = calculateActiveWindow(now, timezone, settings);
-      schedulerStatus.lastAutomaticCheckTime = now.toISOString();
-      const skipReason = getSchedulerSkipReason(settings);
-      console.log(
-        `[SHEET_SYNC] cycle ts=${now.toISOString()} intervalMin=${intervalMinutes} mode=${settings.mealTrackingMode} enabled=${settings.googleSheetsEnabled} sheetIdPresent=${Boolean(parseSpreadsheetId(settings.googleSheetId || ''))} localTime=${getLocalTimeHHMM(now, timezone)} tz=${timezone} activeMealWindow=${Boolean(activeWindow)} activeWindow=${activeWindow ?? 'none'} skipReason=${skipReason ?? 'none'}`
-      );
-      if (skipReason) {
-        if (skipReason === 'import already running') console.log('[SHEET_SYNC] skipped: import already running');
-        if (skipReason === 'reset in progress') console.log('[SHEET_SYNC] skipped: reset in progress');
-        console.log(`[SHEET_SYNC] skipped: ${skipReason}`);
-        schedulerStatus.lastSkipReason = skipReason;
-        schedulerStatus.lastRowsUpdated = 0;
-      } else {
-        console.log('[SHEET_SYNC] Running scheduled write-back (before import)');
-        let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
-        if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
-        if (settings.mealTrackingMode === MealTrackingMode.tally) {
-          const tallyMode = getTallyWriteBackMode(settings);
-          if (tallyMode === 'weekly' || tallyMode === 'both') await writeBackWeeklyTally(false);
-          if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
-        }
-        if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
-        await runAutoImportForMode(settings);
-        try {
-          await syncTransactionLogToSheet();
-        } catch (error) {
-          console.error('[SHEET_SYNC] LOG sync failed during scheduler cycle', error);
-        }
-        const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
-        if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
-          console.log('[SHEET_SYNC] Completed scheduled write-back: 0 rows updated (no pending redemptions)');
-        } else {
-          console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
-        }
-        schedulerStatus.lastAutomaticWriteBackTime = now.toISOString();
-        schedulerStatus.lastScheduledCycleOrder = 'writeback -> import -> log';
-        schedulerStatus.lastCampMeetingWriteBackError = null;
-        schedulerStatus.lastSkipReason = null;
-        schedulerStatus.lastRowsUpdated = rowsUpdated;
-      }
-    } catch (e) {
-      console.error('[SHEET_SYNC]', e);
-    } finally {
+    try { await runGoogleSheetsSyncSchedulerCheckNow(); }
+    catch (error) { console.error('[SHEET_SYNC]', error instanceof Error ? error.message : String(error)); }
+    finally {
       const settings = await getSettings().catch(() => null);
-      const intervalMinutes = Math.max(1, settings?.googleSyncIntervalMinutes ?? 5);
-      schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
-      setTimeout(() => {
-        void run();
-      }, intervalMinutes * 60 * 1000);
+      const delay = Math.max(1, settings?.googleSyncIntervalMinutes ?? 5) * 60000;
+      schedulerStatus.nextExpectedRunTime = new Date(Date.now() + delay).toISOString();
+      setTimeout(() => { void run(); }, delay);
     }
   };
   void run();
 }
 
 export async function runGoogleSheetsSyncSchedulerCheckNow() {
-  const settings = await getSettings();
-  const now = new Date();
-  const intervalMinutes = Math.max(1, settings.googleSyncIntervalMinutes ?? 5);
-  const timezone = settings.timezone || 'Etc/UTC';
-  const activeWindow = calculateActiveWindow(now, timezone, settings);
-  schedulerStatus.lastAutomaticCheckTime = now.toISOString();
-  const skipReason = getSchedulerSkipReason(settings);
-  console.log(
-    `[SHEET_SYNC] manual-cycle ts=${now.toISOString()} intervalMin=${intervalMinutes} mode=${settings.mealTrackingMode} enabled=${settings.googleSheetsEnabled} sheetIdPresent=${Boolean(parseSpreadsheetId(settings.googleSheetId || ''))} localTime=${getLocalTimeHHMM(now, timezone)} tz=${timezone} activeMealWindow=${Boolean(activeWindow)} activeWindow=${activeWindow ?? 'none'} skipReason=${skipReason ?? 'none'}`
-  );
-  if (skipReason) {
-    console.log(`[SHEET_SYNC] skipped: ${skipReason}`);
-    schedulerStatus.lastSkipReason = skipReason;
-    schedulerStatus.lastRowsUpdated = 0;
-    schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
-    return { ran: false, reason: skipReason, mode: settings.mealTrackingMode };
-  }
-  console.log('[SHEET_SYNC] Running scheduled write-back (before import)');
-  let result: { writeBackRowsUpdated?: number } | void = { writeBackRowsUpdated: 0 };
-  if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(false);
-  if (settings.mealTrackingMode === MealTrackingMode.tally) {
-    const tallyMode = getTallyWriteBackMode(settings);
-    if (tallyMode === 'weekly' || tallyMode === 'both') await writeBackWeeklyTally(false);
-    if (tallyMode === 'lifetime' || tallyMode === 'both') result = await writeBackTallyCounts(false);
-  }
-  if (settings.mealTrackingMode === MealTrackingMode.countdown) result = await writeBackCountdownBalances(false);
-  await runAutoImportForMode(settings);
+  if (schedulerCycleRunning) return { ran: false, reason: 'sync cycle already running' };
+  schedulerCycleRunning = true;
+  const started = Date.now();
   try {
-    await syncTransactionLogToSheet();
-  } catch (error) {
-    console.error('[SHEET_SYNC] LOG sync failed during manual scheduler check', error);
+    const settings = await getSettings();
+    schedulerStatus.lastAutomaticCheckTime = new Date().toISOString();
+    const skipReason = getSchedulerSkipReason(settings);
+    if (skipReason) {
+      schedulerStatus.lastSkipReason = skipReason;
+      console.log(`[SHEET_SYNC] skipped: ${skipReason}`);
+      return { ran: false, reason: skipReason, mode: settings.mealTrackingMode };
+    }
+    const errors: string[] = [];
+    let rowsUpdated = 0;
+    const stage = async (label: string, action: () => Promise<unknown>) => {
+      const stageStarted = Date.now();
+      try {
+        const result = await action() as { writeBackRowsUpdated?: number } | null;
+        rowsUpdated += result?.writeBackRowsUpdated ?? 0;
+        console.log(`[SHEET_SYNC] ${label} completed durationMs=${Date.now() - stageStarted}`);
+      } catch (error) {
+        const message = mapGoogleSheetsError(error).message;
+        errors.push(`${label}: ${message}`);
+        console.error(`[SHEET_SYNC] ${label} failed: ${message}`);
+      }
+    };
+    if (settings.mealTrackingMode === MealTrackingMode.camp_meeting) await stage('entitlements', () => writeBackCampMeetingRedemptions(false));
+    if (settings.mealTrackingMode === MealTrackingMode.countdown) await stage('balances', () => writeBackCountdownBalances(false));
+    if (settings.mealTrackingMode === MealTrackingMode.tally) {
+      const mode = getTallyWriteBackMode(settings);
+      if (mode === 'weekly' || mode === 'both') await stage('weekly totals', () => writeBackWeeklyTally(false));
+      if (mode === 'lifetime' || mode === 'both') await stage('lifetime totals', () => writeBackTallyCounts(false));
+    }
+    // Do not re-import balances when write-back failed; still attempt LOG recovery.
+    if (!errors.length) await stage('import', () => runAutoImportForMode(settings));
+    const logDue = !schedulerStatus.lastLogSyncTime || Date.now() - Date.parse(schedulerStatus.lastLogSyncTime) >= 15 * 60000;
+    if (logDue) await stage('LOG', () => syncTransactionLogToSheet());
+    else console.log('[SHEET_SYNC] LOG export not due (15 minute interval)');
+    schedulerStatus.lastRowsUpdated = rowsUpdated;
+    schedulerStatus.lastScheduledCycleOrder = 'writeback -> import (if writeback succeeded) -> LOG (when due)';
+    schedulerStatus.lastSkipReason = null;
+    schedulerStatus.lastSyncError = errors.length ? errors.join('; ') : null;
+    schedulerStatus.lastCampMeetingWriteBackError = settings.mealTrackingMode === MealTrackingMode.camp_meeting ? schedulerStatus.lastSyncError : null;
+    if (errors.length) throw new Error(errors.join('; '));
+    schedulerStatus.lastAutomaticWriteBackTime = new Date().toISOString();
+    return { ran: true, rowsUpdated, mode: settings.mealTrackingMode };
+  } finally {
+    schedulerCycleRunning = false;
+    schedulerStatus.lastCycleDurationMs = Date.now() - started;
   }
-  const rowsUpdated = result?.writeBackRowsUpdated ?? 0;
-  if (settings.mealTrackingMode === MealTrackingMode.camp_meeting && rowsUpdated === 0) {
-    console.log('[SHEET_SYNC] Completed scheduled write-back: 0 rows updated (no pending redemptions)');
-  } else {
-    console.log(`[SHEET_SYNC] Completed scheduled write-back: ${rowsUpdated} rows updated`);
-  }
-  schedulerStatus.lastAutomaticWriteBackTime = now.toISOString();
-  schedulerStatus.lastScheduledCycleOrder = 'writeback -> import -> log';
-  schedulerStatus.lastCampMeetingWriteBackError = null;
-  schedulerStatus.lastSkipReason = null;
-  schedulerStatus.lastRowsUpdated = rowsUpdated;
-  schedulerStatus.nextExpectedRunTime = new Date(Date.now() + (intervalMinutes * 60 * 1000)).toISOString();
-  return { ran: true, rowsUpdated, mode: settings.mealTrackingMode };
 }
 
 export async function getGoogleSheetsSchedulerStatus() {

@@ -432,6 +432,12 @@ Apply database migrations before starting the updated app (`npm run db:migrate`)
 
 ### Google Sheets user types and scan lookup
 
-For Tally Up, add **User Type** in column G (or another column with that header). Use `1` or `Student`, `2` or `Staff`, and `3` or `Guest`; names are case-insensitive. The downloaded Tally Up template includes this column. Manual and automatic imports apply the types. Blank or missing type cells preserve existing assignments; newly imported people default to Guest. Invalid types skip the row and appear in the import errors. Existing six-column sheets continue to work. Meal-count write-back preserves existing type cells and includes types for newly appended people.
+For Tally Up, add **User Type** in column G (or another column with that header). Use `1` or `Student`, `2` or `Staff`, and `3` or `Guest`; names are case-insensitive. The downloaded Tally Up template includes this column. Manual and automatic imports apply the types. Blank or missing type cells preserve existing assignments; newly imported people default to Guest. Invalid types skip the row and appear in the import errors. Existing six-column sheets continue to work. Google Sheets owns the user roster. Meal-count write-back preserves existing type cells and never adds database-only people to the sheet.
 
 On the scan station, **Find a person by ID or name** shows up to 20 matches. Click **Scan ID** to submit the usual scan, including cooldowns and student limits. Searching alone does not count a meal. Camp Meeting names search ticket records; scanning a shared ID follows the existing ticket selection rules.
+
+### Sync ownership and efficiency
+
+Google Sheets owns IDs, names, and user types. Tally write-back only updates meal-count cells for IDs already in the sheet; it does not create roster rows. The database owns scan transactions. LOG is a secondary export: normal sync appends missing transactions without clearing existing rows, and automatic LOG export runs at most every 15 minutes during scheduled meal-window checks. Manual LOG sync remains available; Rebuild LOG is the explicit full-replacement operation.
+
+Lifetime and weekly count updates are batched and unchanged cells are skipped. Sync status reports errors and cycle duration. A failed tally write-back skips roster import for that cycle to protect unsaved balances; LOG is attempted separately when due.

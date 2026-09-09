@@ -294,6 +294,7 @@ router.post('/google-sheet/import', async (_req, res) => {
 
 router.post('/google-sheet/write-back-now', async (req, res) => {
   if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+  try {
   const mode = await getMode();
   let result;
   if (mode === MealTrackingMode.camp_meeting) result = await writeBackCampMeetingRedemptions(true);
@@ -309,6 +310,10 @@ router.post('/google-sheet/write-back-now', async (req, res) => {
     } else result = await writeBackTallyCounts(true);
   }
   return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('[TALLY_WRITEBACK]', error instanceof Error ? error.message : String(error));
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Tally write-back failed.' });
+  }
 });
 
 router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
@@ -320,6 +325,7 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   if (!settings.tallyWeeklyRawTabName?.trim()) {
     await prisma.setting.update({ where: { id: settings.id }, data: { tallyWeeklyRawTabName: weeklyTabName } });
   }
+  try {
   const result = await writeBackWeeklyTallyNow(true);
   return res.json({
     ok: true,
@@ -331,6 +337,10 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
     weeksCovered: result.weeksCovered ?? [],
     rowsWritten: result.rowsWritten ?? ((result.rowsUpdated ?? result.writeBackRowsUpdated ?? 0) + (result.rowsAppended ?? 0))
   });
+  } catch (error) {
+    console.error('[WEEKLY_TALLY_SYNC]', error instanceof Error ? error.message : String(error));
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Weekly tally sync failed.' });
+  }
 });
 
 router.post('/google-sheet/write-log-now', async (req, res) => {
@@ -339,7 +349,7 @@ router.post('/google-sheet/write-log-now', async (req, res) => {
     const result = await syncTransactionLogToSheet();
     return res.json({ ok: true, ...result });
   } catch (error) {
-    console.error('[GOOGLE_SHEETS_LOG_SYNC]', error);
+    console.error('[GOOGLE_SHEETS_LOG_SYNC]', error instanceof Error ? error.message : String(error));
     const message = error instanceof Error ? error.message : 'Google Sheet LOG sync failed.';
     return res.status(400).json({ error: message });
   }
