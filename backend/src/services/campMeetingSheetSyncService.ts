@@ -1,4 +1,5 @@
 import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
+import { parsePersonType, peopleSheetRows } from './peopleSheetRows.js';
 import { google } from 'googleapis';
 import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
@@ -190,16 +191,14 @@ export async function importTallyFromSheet() {
   if (isResetInProgress()) throw new Error('Reset in progress. Try again after reset completes.');
   const { spreadsheetId, sheetName, rows } = await readSheetRows();
   void spreadsheetId; void sheetName;
-  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
-  const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
+  const dataRows = peopleSheetRows(rows as string[][]);
   return importPeopleFromRows(dataRows, { includeBalances: false, overwriteExistingBalances: false, overwriteExistingCounts: true });
 }
 
 export async function importCountdownFromSheet() {
   if (isResetInProgress()) throw new Error('Reset in progress. Try again after reset completes.');
   const { rows } = await readSheetRows();
-  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
-  const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
+  const dataRows = peopleSheetRows(rows as string[][]);
   return importPeopleFromRows(dataRows, { includeBalances: true, overwriteExistingBalances: true, overwriteExistingCounts: true });
 }
 
@@ -208,13 +207,13 @@ async function readSheetRows() {
   if (!settings.googleSheetsEnabled) throw new Error('Google Sheets sync is disabled in Settings.');
   const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
-  const range = `${sheetName}!A:L`;
+  const range = `${sheetName}!A:ZZ`;
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   return { spreadsheetId, sheetName, rows: resp.data.values || [] };
 }
 
-async function importPeopleFromRows(dataRows: string[][], options: { includeBalances: boolean; overwriteExistingBalances: boolean; overwriteExistingCounts: boolean }) {
+export async function importPeopleFromRows(dataRows: string[][], options: { includeBalances: boolean; overwriteExistingBalances: boolean; overwriteExistingCounts: boolean }) {
   if (!acquireOperationLock('import')) throw new Error('Import already in progress.');
   try {
   let peopleCreated = 0; let peopleUpdated = 0; let rowsImported = 0; let rowsSkipped = 0;
@@ -224,10 +223,13 @@ async function importPeopleFromRows(dataRows: string[][], options: { includeBala
     const id = (r[0] || '').trim();
     const name = (r[1] || '').trim();
     if (!id) { rowsSkipped += 1; errors.push(`Row ${i + 2}: missing ID`); continue; }
+    let personType;
+    try { personType = parsePersonType(r[6] || ''); }
+    catch (error) { rowsSkipped += 1; errors.push(`Row ${i + 2}: ${error instanceof Error ? error.message : 'Invalid User Type'}`); continue; }
     const existing = await prisma.person.findFirst({ where: { OR: [{ personId: id }, { codeValue: id }] }, select: { id: true } });
     const breakfast = Number(r[2] || 0); const lunch = Number(r[3] || 0); const dinner = Number(r[4] || 0);
     const total = breakfast + lunch + dinner;
-    const data: any = { personId: id, codeValue: id, firstName: name || id, lastName: ' ', active: true };
+    const data: any = { personId: id, codeValue: id, firstName: name || id, lastName: ' ', active: true, ...(personType ? { personType } : {}) };
     if (options.includeBalances) Object.assign(data, { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner, totalMealsCount: total });
     if (existing) {
       if (!options.overwriteExistingBalances) {
@@ -265,8 +267,7 @@ async function runAutoImportForMode(settings: Awaited<ReturnType<typeof getSetti
     return text;
   }
   const { rows } = await readSheetRows();
-  const normalizedHeader = (rows[0] || []).map((v: string) => v.toLowerCase().trim());
-  const dataRows = JSON.stringify(normalizedHeader) === JSON.stringify(TALLY_HEADER) ? rows.slice(1) : [];
+  const dataRows = peopleSheetRows(rows as string[][]);
   const result = settings.mealTrackingMode === MealTrackingMode.tally
     ? await importPeopleFromRows(dataRows as string[][], { includeBalances: false, overwriteExistingBalances: false, overwriteExistingCounts: false })
     : await importPeopleFromRows(dataRows as string[][], { includeBalances: true, overwriteExistingBalances: false, overwriteExistingCounts: false });
@@ -654,13 +655,19 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
     await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!A1:F1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [TALLY_HEADER] } });
     existingRows.push([...TALLY_HEADER]);
   }
+  if (!useBalances && !existingRows[0].some((cell) => ['usertype', 'persontype'].includes(String(cell).toLowerCase().replace(/[ _-]/g, '')))) {
+    const column = columnNumberToLetter(existingRows[0].length + 1);
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${sheetName}!${column}1`, valueInputOption: 'RAW', requestBody: { values: [['User Type']] } });
+    existingRows[0].push('User Type');
+  }
+  const typeColumn = existingRows[0].findIndex((cell) => ['usertype', 'persontype'].includes(String(cell).toLowerCase().replace(/[ _-]/g, '')));
   const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
   assertRequiredHeaders(headerMap, ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'tally write-back');
   const peopleById = new Map(people.map((p) => {
     const b = useBalances ? p.breakfastRemaining : p.breakfastCount;
     const l = useBalances ? p.lunchRemaining : p.lunchCount;
     const d = useBalances ? p.dinnerRemaining : p.dinnerCount;
-    return [p.personId, { id: p.personId, name: `${p.firstName} ${p.lastName}`.trim(), breakfast: b, lunch: l, dinner: d, total: b + l + d }];
+    return [p.personId, { id: p.personId, name: `${p.firstName} ${p.lastName}`.trim(), breakfast: b, lunch: l, dinner: d, total: b + l + d, personType: p.personType }];
   }));
   const rowById = new Map<string, number>();
   for (let i = 1; i < existingRows.length; i++) {
@@ -672,7 +679,10 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   for (const [id, tally] of peopleById.entries()) {
     const rowNum = rowById.get(id);
     if (!rowNum) {
-      appendValues.push([tally.id, tally.name, tally.breakfast, tally.lunch, tally.dinner, tally.total]);
+      const row: Array<string | number> = Array(existingRows[0].length).fill('');
+      for (const key of ['id', 'name', ...TALLY_COUNT_COLUMNS] as const) row[headerMap[key]!] = tally[key];
+      if (typeColumn >= 0) row[typeColumn] = tally.personType;
+      appendValues.push(row);
       continue;
     }
     for (const key of TALLY_COUNT_COLUMNS) {
@@ -683,7 +693,7 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
     rowsUpdated += 1;
   }
   if (appendValues.length > 0) {
-    await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetName}!A:F`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
+    await sheets.spreadsheets.values.append({ spreadsheetId, range: `${sheetName}!A:${columnNumberToLetter(existingRows[0].length)}`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: appendValues } });
   }
   return { writeBackRowsUpdated: rowsUpdated + appendValues.length, rowsAppended: appendValues.length };
   } finally {

@@ -443,6 +443,21 @@ function ScanPage() {
   const [pendingSelection, setPendingSelection] =
     useState<PendingCampMeetingSelection | null>(null);
   const [manual, setManual] = useState("");
+  const [peopleQuery, setPeopleQuery] = useState("");
+  const [peopleMatches, setPeopleMatches] = useState<Array<{ personId: string; name: string; personType?: string }>>([]);
+  const [searchStatus, setSearchStatus] = useState("");
+  useEffect(() => {
+    setPeopleMatches([]);
+    if (!peopleQuery.trim()) { setSearchStatus(""); return; }
+    setSearchStatus("Searching…");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void api<Array<{ personId: string; name: string; personType?: string }>>(`/scan/people?q=${encodeURIComponent(peopleQuery.trim())}`, { signal: controller.signal })
+        .then((rows) => { if (!controller.signal.aborted) { setPeopleMatches(rows); setSearchStatus(rows.length ? "" : "No people found."); } })
+        .catch(() => { if (!controller.signal.aborted) setSearchStatus("Search failed. Please try again."); });
+    }, 250);
+    return () => { controller.abort(); window.clearTimeout(timeout); };
+  }, [peopleQuery]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mode, setMode] = useState<"camera" | "usb">("usb");
   const [mealTrackingMode, setMealTrackingMode] =
@@ -673,7 +688,6 @@ function ScanPage() {
                 onChange={(e) => onManualInputChange(e.target.value)}
                 onKeyDown={onManualKeyDown}
                 aria-label="Person ID input"
-                onBlur={() => focusUsbInput()}
               />
             </label>
             <button
@@ -685,6 +699,22 @@ function ScanPage() {
             </button>
           </form>
         )}
+        <div className="stack">
+          <label>Find a person by ID or name
+            <input type="search" value={peopleQuery} placeholder="Enter an ID, first name, or last name"
+              onChange={(e) => setPeopleQuery(e.target.value)} />
+          </label>
+          <p role="status">{searchStatus}</p>
+          {peopleMatches.length > 0 && <>
+            <p className="muted">Select Scan to record a meal. Shared IDs use the normal ticket selection rules. Showing up to 20 matches.</p>
+            <ul>{peopleMatches.map((person, index) => <li key={`${person.personId}-${index}`}>
+              <strong>{person.name}</strong> — ID: {person.personId} {person.personType ? `(${person.personType})` : ''}{" "}
+              <button type="button" disabled={isSubmitting} onClick={() => { setPeopleQuery(""); void submitScan(person.personId); }}>
+                Scan ID {person.personId}
+              </button>
+            </li>)}</ul>
+          </>}
+        </div>
         {scannerDiagnosticsEnabled && (
           <div className="scanner-diagnostics">
             <p>
@@ -2428,6 +2458,11 @@ function SettingsPage() {
                 <p className="muted">Enter and save a Google Sheet URL or Sheet ID first.</p>
               ) : null}
           </>
+          {settings.mealTrackingMode === "tally" && <p className="muted">
+            Add a User Type column to your sheet: 1 or Student, 2 or Staff, 3 or Guest.
+            Blank cells preserve existing types; new people with a blank type default to Guest.
+            Import the sheet to apply type changes. Meal-count write-back preserves your type entries.
+          </p>}
           <div className="button-row">
             <button type="button" className="secondary" onClick={() => window.open("/api/import/template", "_blank")}>
               Download Template

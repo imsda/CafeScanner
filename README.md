@@ -429,3 +429,9 @@ Destructive reset flows are admin-initiated app actions only (for explicit maint
 In **People**, select **1: Student**, **2: Staff**, or **3: Guest** when adding a person. For an existing person, change **User type** and click **Save**. Students can scan once for each meal per local calendar day, using the timezone in Settings. Duplicate student scans are logged as failures and do not increase tallies. Staff and guests have no per-meal limit; the configured scanner cooldown still applies to all types. Countdown and Camp Meeting behavior is unchanged.
 
 Apply database migrations before starting the updated app (`npm run db:migrate`). Existing people and imports without a type default to Guest to preserve their previous unlimited Tally Up behavior; assign Student or Staff on the People page. New people added through the Tally Up form default to Student. Resetting tally counters does not clear scan history or allow a student to repeat a meal.
+
+### Google Sheets user types and scan lookup
+
+For Tally Up, add **User Type** in column G (or another column with that header). Use `1` or `Student`, `2` or `Staff`, and `3` or `Guest`; names are case-insensitive. The downloaded Tally Up template includes this column. Manual and automatic imports apply the types. Blank or missing type cells preserve existing assignments; newly imported people default to Guest. Invalid types skip the row and appear in the import errors. Existing six-column sheets continue to work. Meal-count write-back preserves existing type cells and includes types for newly appended people.
+
+On the scan station, **Find a person by ID or name** shows up to 20 matches. Click **Scan ID** to submit the usual scan, including cooldowns and student limits. Searching alone does not count a meal. Camp Meeting names search ticket records; scanning a shared ID follows the existing ticket selection rules.

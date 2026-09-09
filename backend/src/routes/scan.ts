@@ -3,7 +3,18 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { processScan } from '../services/scanService.js';
 
+import { searchPeople } from '../services/searchPeople.js';
+
 const router = Router();
+
+router.get('/people', async (req, res) => {
+  try {
+    return res.json(await searchPeople(typeof req.query.q === 'string' ? req.query.q : ''));
+  } catch (error) {
+    console.error('[SCAN_SEARCH]', error);
+    return res.status(500).json({ error: 'Unable to search people. Please try again.' });
+  }
+});
 
 const scanRequestSchema = z.object({
   personId: z.string().optional(),

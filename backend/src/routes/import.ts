@@ -233,7 +233,7 @@ router.get('/template', async (_req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="camp-meeting-google-sheet-template.csv"');
     return res.send(header);
   }
-  const header = 'ID,Name,Breakfast,Lunch,Dinner,Total\n';
+  const header = mode === MealTrackingMode.tally ? 'ID,Name,Breakfast,Lunch,Dinner,Total,User Type\n' : 'ID,Name,Breakfast,Lunch,Dinner,Total\n';
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="${mode === MealTrackingMode.tally ? 'tally-up' : 'count-down'}-google-sheet-template.csv"`);
   return res.send(header);

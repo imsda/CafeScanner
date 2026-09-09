@@ -60,4 +60,57 @@ test('Tally Up person types and meal limits', async (t) => {
   await prisma.setting.update({ where: { id: 1 }, data: { mealTrackingMode: 'tally' } });
   await prisma.person.update({ where: { personId: 'STAFF' }, data: { active: false } });
   assert.equal((await scan('STAFF')).ok, false);
+
+  const { peopleSheetRows, parsePersonType } = await import('../src/services/peopleSheetRows.js');
+  const { importPeopleFromRows, writeBackTallyCounts } = await import('../src/services/campMeetingSheetSyncService.js');
+  const { searchPeople } = await import('../src/services/searchPeople.js');
+  for (const [value, expected] of [['1', 'STUDENT'], ['student', 'STUDENT'], ['2', 'STAFF'], ['Staff', 'STAFF'], ['3', 'GUEST'], ['guest', 'GUEST']]) assert.equal(parsePersonType(value), expected);
+  assert.equal(parsePersonType(' '), undefined);
+  assert.throws(() => parsePersonType('4'));
+  assert.throws(() => peopleSheetRows([['Wrong header']]));
+  const rows = peopleSheetRows([
+    ['Name', 'User Type', 'ID', 'Total', 'Dinner', 'Lunch', 'Breakfast'],
+    ['Jane Smith', '1', '00123', '0', '0', '0', '0'],
+    ['Sam Jones', 'Staff', '00456', '0', '0', '0', '0'],
+    ['Invalid Person', 'Teacher', 'bad', '0', '0', '0', '0']
+  ]);
+  const options = { includeBalances: false, overwriteExistingBalances: false, overwriteExistingCounts: false };
+  const imported = await importPeopleFromRows(rows, options);
+  assert.equal(imported.peopleCreated, 2);
+  assert.equal(imported.rowsSkipped, 1);
+  assert.match(imported.errors[0], /User Type/);
+  assert.equal((await prisma.person.findUniqueOrThrow({ where: { personId: '00123' } })).personType, 'STUDENT');
+  // Six-column imports preserve an assigned type and existing counts.
+  const legacyRows = peopleSheetRows([['ID', 'Name', 'Breakfast', 'Lunch', 'Dinner', 'Total'], ['00123', 'Jane Smith', '99', '99', '99', '297']]);
+  await importPeopleFromRows(legacyRows, options);
+  const jane = await prisma.person.findUniqueOrThrow({ where: { personId: '00123' } });
+  assert.equal(jane.personType, 'STUDENT');
+  assert.equal(jane.lunchCount, 0);
+  assert.equal((await searchPeople('jane smith'))[0].personId, '00123');
+  assert.equal((await searchPeople('00123'))[0].name, 'Jane Smith');
+  assert.equal((await searchPeople('Jones'))[0].personId, '00456');
+  assert.deepEqual(await searchPeople(''), []);
+  assert.deepEqual(await searchPeople('does not exist'), []);
+  assert.equal((await searchPeople('STAFF')).some((person) => person.personId === 'STAFF'), false);
+
+  // Mock the Sheets boundary: existing type cells must never be overwritten.
+  const { google } = await import('googleapis');
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'test@example.com';
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nTEST\\n-----END PRIVATE KEY-----';
+  await prisma.setting.update({ where: { id: 1 }, data: { googleSheetsEnabled: true, googleSheetId: 'test-sheet', googleSheetTabName: 'Sheet1' } });
+  const writes: any[] = [];
+  const appends: any[] = [];
+  const sheetRows = [['Name', 'User Type', 'ID', 'Breakfast', 'Lunch', 'Dinner', 'Total'], ['Jane Smith', 'Staff', '00123', '0', '0', '0', '0']];
+  t.mock.method(google, 'sheets', () => ({ spreadsheets: { values: {
+    get: async () => ({ data: { values: sheetRows } }),
+    update: async (request: any) => { writes.push(request); return {}; },
+    append: async (request: any) => { appends.push(request); return {}; }
+  } } }));
+  await writeBackTallyCounts(true);
+  assert.equal(writes.some((request) => /!B2$/.test(request.range)), false);
+  assert.equal(writes.length, 4);
+  const samRow = appends[0].requestBody.values.find((row: string[]) => row[2] === '00456');
+  assert.equal(samRow[0], 'Sam Jones');
+  assert.equal(samRow[1], 'STAFF');
+
 });
