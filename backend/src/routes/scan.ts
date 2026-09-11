@@ -1,11 +1,42 @@
 import { MealType } from '@prisma/client';
 import { Router } from 'express';
 import { z } from 'zod';
+import { prisma } from '../db.js';
 import { processScan } from '../services/scanService.js';
 
 import { searchPeople } from '../services/searchPeople.js';
 
 const router = Router();
+
+// These routes inherit SCAN access, not administrative SETTINGS access.
+router.get('/settings', async (req, res) => {
+  try {
+    const [settings, user] = await Promise.all([
+      prisma.setting.findUniqueOrThrow({ where: { id: 1 } }),
+      prisma.adminUser.findUniqueOrThrow({ where: { id: req.session.adminUserId! }, select: { scannerCooldownSeconds: true } })
+    ]);
+    return res.json({
+      scannerCooldownSeconds: user.scannerCooldownSeconds ?? settings.scannerCooldownSeconds,
+      personalScanDelay: user.scannerCooldownSeconds,
+      defaultScanDelay: settings.scannerCooldownSeconds,
+      mealTrackingMode: settings.mealTrackingMode,
+      scannerDiagnosticsEnabled: settings.scannerDiagnosticsEnabled
+    });
+  } catch { return res.status(500).json({ error: 'Unable to load scanner preferences.' }); }
+});
+
+const preferenceSchema = z.object({ scannerCooldownSeconds: z.number().min(0.5).max(10).nullable() }).strict();
+router.put('/settings', async (req, res) => {
+  const parsed = preferenceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Choose a delay from 0.5 to 10 seconds, or use the default.' });
+  try {
+    const user = await prisma.adminUser.update({
+      where: { id: req.session.adminUserId! }, data: parsed.data,
+      select: { scannerCooldownSeconds: true }
+    });
+    return res.json({ personalScanDelay: user.scannerCooldownSeconds });
+  } catch { return res.status(500).json({ error: 'Unable to save scanner preferences.' }); }
+});
 
 router.get('/people', async (req, res) => {
   try {

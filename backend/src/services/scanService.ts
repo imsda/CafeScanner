@@ -251,6 +251,11 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
   const settings = await prisma.setting.findUnique({ where: { id: 1 } });
   if (!settings) throw new Error('Settings not found');
 
+  const scannerUser = options?.adminUserId === undefined ? null : await prisma.adminUser.findUnique({
+    where: { id: options.adminUserId }, select: { scannerCooldownSeconds: true }
+  });
+  const cooldownSeconds = scannerUser?.scannerCooldownSeconds ?? settings.scannerCooldownSeconds;
+
   const mode = settings.mealTrackingMode ?? MealTrackingMode.camp_meeting;
   const personIdValue = mode === MealTrackingMode.camp_meeting
     ? normalizeCampMeetingPersonId(rawPersonId)
@@ -267,7 +272,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
   if (latest) {
     const elapsedSeconds = (Date.now() - latest.timestamp.getTime()) / 1000;
-    if (elapsedSeconds < settings.scannerCooldownSeconds) {
+    if (elapsedSeconds < cooldownSeconds) {
       await prisma.scanTransaction.create({
         data: {
           scannedValue: personIdValue,

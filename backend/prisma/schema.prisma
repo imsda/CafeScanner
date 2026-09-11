@@ -64,6 +64,7 @@ enum MealTrackingMode {
 model AdminUser {
   id           Int      @id @default(autoincrement())
   username     String   @unique
+  scannerCooldownSeconds Float?
   passwordHash String
   ownerRecoveryCodeHash String?
   role         UserRole @default(ADMIN)

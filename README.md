@@ -441,3 +441,7 @@ On the scan station, **Find a person by ID or name** shows up to 20 matches. Cli
 Google Sheets owns IDs, names, and user types. Tally write-back only updates meal-count cells for IDs already in the sheet; it does not create roster rows. The database owns scan transactions. LOG is a secondary export: normal sync appends missing transactions without clearing existing rows, and automatic LOG export runs at most every 15 minutes during scheduled meal-window checks. Manual LOG sync remains available; Rebuild LOG is the explicit full-replacement operation.
 
 Lifetime and weekly count updates are batched and unchanged cells are skipped. Sync status reports errors and cycle duration. A failed tally write-back skips roster import for that cycle to protect unsaved balances; LOG is attempted separately when due.
+
+### Personal scanner delay
+
+Scanner accounts have a second page, **My Scanner Settings**, where they can save a personal delay between repeat scans of the same ID (0.5–10 seconds), or use the school default. The preference belongs to the signed-in account, applies to USB and camera scanning, and is enforced by the server. It does not change anyone else's setting or student meal limits. Apply migration `0023_personal_scan_delay` before starting this version.
