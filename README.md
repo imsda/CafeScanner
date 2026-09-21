@@ -445,3 +445,5 @@ Lifetime and weekly count updates are batched and unchanged cells are skipped. S
 ### Personal scanner delay
 
 Scanner accounts have a second page, **My Scanner Settings**, where they can save a personal delay between repeat scans of the same ID (0.5–10 seconds), or use the school default. The preference belongs to the signed-in account, applies to USB and camera scanning, and is enforced by the server. It does not change anyone else's setting or student meal limits. Apply migration `0023_personal_scan_delay` before starting this version.
+
+Transaction logs, reports, Google Sheets LOG exports, and CSV exports include each person's Student, Staff, or Guest type. In Tally Up mode, Settings also controls how many complete local calendar days a student may go without a recorded meal before the scanner shows a persistent warning. Use **Clear Warning** on that student's scan result to reset the warning and begin counting again. Apply migration `0024_student_meal_warnings` before starting this version.

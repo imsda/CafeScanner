@@ -209,3 +209,11 @@ select {
 .compact-card {
   max-width: 900px;
 }
+.scan-warning {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 2px solid #b45309;
+  border-radius: 0.75rem;
+  background: #fff7ed;
+  color: #7c2d12;
+}

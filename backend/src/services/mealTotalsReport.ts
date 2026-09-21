@@ -5,6 +5,7 @@ export interface MealTotalsRow {
   personId: string;
   firstName: string;
   lastName: string;
+  personType: string;
   breakfasts: number;
   lunches: number;
   dinners: number;
@@ -27,6 +28,7 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
         firstName: true,
         lastName: true,
         personId: true,
+        personType: true,
         breakfastCount: true,
         lunchCount: true,
         dinnerCount: true,
@@ -39,6 +41,7 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
         personId: person.personId,
         firstName: person.firstName,
         lastName: person.lastName,
+        personType: person.personType,
         breakfasts: person.breakfastCount,
         lunches: person.lunchCount,
         dinners: person.dinnerCount,
@@ -57,7 +60,7 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
     });
 
     const people = await prisma.person.findMany({
-      select: { personId: true, firstName: true, lastName: true }
+      select: { personId: true, firstName: true, lastName: true, personType: true }
     });
     const personById = new Map(people.map((p) => [p.personId, p]));
 
@@ -73,6 +76,7 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
         personId: entitlement.personId,
         firstName: person?.firstName || firstNameFromCsv || 'Unknown',
         lastName: person?.lastName || lastNameFromCsv,
+        personType: person?.personType || 'GUEST',
         breakfasts: 0,
         lunches: 0,
         dinners: 0,
@@ -95,7 +99,8 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
           id: true,
           firstName: true,
           lastName: true,
-          personId: true
+          personId: true,
+          personType: true
         }
       }
     }
@@ -110,6 +115,7 @@ export async function getMealTotalsByPerson(params: { from: Date; to: Date; meal
       personId: tx.person.personId,
       firstName: tx.person.firstName,
       lastName: tx.person.lastName,
+      personType: tx.person.personType,
       breakfasts: 0,
       lunches: 0,
       dinners: 0,

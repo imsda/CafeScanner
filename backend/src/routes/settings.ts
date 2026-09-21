@@ -62,7 +62,8 @@ const settingsSchema = z.object({
   tallyWriteBackMode: z.enum(['lifetime', 'weekly', 'both']).optional(),
   tallyWeeklyRawTabName: z.string().min(1).optional(),
   tallyWeeklyViewTabName: z.string().nullable().optional(),
-  tallyWeekStartsOn: z.enum(['SUNDAY', 'MONDAY']).optional()
+  tallyWeekStartsOn: z.enum(['SUNDAY', 'MONDAY']).optional(),
+  studentMealWarningDays: z.number().int().min(1).max(365).optional()
 });
 
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });

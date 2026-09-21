@@ -105,6 +105,8 @@ model Person {
   group              String?
   campus             String?
   notes              String?
+  mealWarningSince   DateTime?
+  mealWarningClearedAt DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   transactions       ScanTransaction[]
@@ -139,6 +141,7 @@ model Setting {
   tallyWeeklyRawTabName    String           @default("Weekly Tally Raw")
   tallyWeeklyViewTabName   String?
   tallyWeekStartsOn        String           @default("MONDAY")
+  studentMealWarningDays   Int              @default(1)
   googleLastAutoImportAt   DateTime?
   googleLastAutoImportSummary String?
   fullWipeTokenHash        String?

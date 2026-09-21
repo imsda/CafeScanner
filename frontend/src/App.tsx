@@ -342,6 +342,7 @@ type ScanResultState =
             sourceRowKey?: string;
             sourceSheetRow?: number | null;
           };
+          mealWarning?: { personId: number; missedDays: number; message: string };
         }
       | { ok: false; error: string }
     )
@@ -355,7 +356,7 @@ type PendingCampMeetingSelection = {
   options: Array<{ entitlementId: number; personName: string; sourceRowKey?: string; sourceRow?: number | null }>;
 };
 
-function ScanResultCard({ result }: { result: ScanResultState }) {
+function ScanResultCard({ result, onWarningCleared }: { result: ScanResultState; onWarningCleared: () => void }) {
   if (!result)
     return (
       <div className="scan-result info">
@@ -400,6 +401,14 @@ function ScanResultCard({ result }: { result: ScanResultState }) {
       <p>
         Mode: <strong>{modeLabel(result.mealTrackingMode)}</strong>
       </p>
+      {result.mealWarning && (
+        <div className="scan-warning" role="alert">
+          <p><strong>{result.mealWarning.message}</strong></p>
+          <button type="button" className="secondary" onClick={() => {
+            void api(`/scan/warnings/${result.mealWarning!.personId}/clear`, { method: "POST" }).then(onWarningCleared);
+          }}>Clear Warning</button>
+        </div>
+      )}
       {result.mealTrackingMode === "camp_meeting" ? (
         <>
           <p>
@@ -598,6 +607,7 @@ function ScanPage() {
         sourceRowKey: response.sourceRowKey,
         sourceRow: response.sourceRow,
         redeemedEntitlement: response.redeemedEntitlement,
+        mealWarning: response.mealWarning,
       });
       setPendingSelection(null);
       setMealTrackingMode(response.mealTrackingMode);
@@ -837,7 +847,7 @@ function ScanPage() {
           </div>
         )}
       </section>
-      <ScanResultCard result={result} />
+      <ScanResultCard result={result} onWarningCleared={() => setResult(null)} />
     </div>
   );
 }
@@ -1670,6 +1680,7 @@ function TransactionsPage() {
             <th>Result</th>
             <th>Reason</th>
             <th>Person</th>
+            <th>Type</th>
             <th>Station</th>
           </tr>
         </thead>
@@ -1687,6 +1698,7 @@ function TransactionsPage() {
                     ? `${r.person.firstName} ${r.person.lastName}`
                     : "-")}
               </td>
+              <td>{r.person?.personType ? formatMealLabel(r.person.personType) : "-"}</td>
               <td>{r.stationName || "-"}</td>
             </tr>
           ))}
@@ -1939,6 +1951,7 @@ function ReportsPage() {
                   <tr>
                     <th>Name</th>
                     <th>Person ID</th>
+                    <th>Type</th>
                     <th>Total Meals</th>
                     <th>Breakfast</th>
                     <th>Lunch</th>
@@ -1952,6 +1965,7 @@ function ReportsPage() {
                         {row.firstName} {row.lastName}
                       </td>
                       <td>{row.personId}</td>
+                      <td>{formatMealLabel(row.personType)}</td>
                       <td>{row.total}</td>
                       <td>{row.breakfasts}</td>
                       <td>{row.lunches}</td>
@@ -2338,6 +2352,12 @@ function SettingsPage() {
         <label>Lunch end<input type="time" value={settings.lunchEnd} onChange={(e) => setSettings({ ...settings, lunchEnd: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.lunchEnd)}</small></label>
         <label>Dinner start<input type="time" value={settings.dinnerStart} onChange={(e) => setSettings({ ...settings, dinnerStart: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerStart)}</small></label>
         <label>Dinner end<input type="time" value={settings.dinnerEnd} onChange={(e) => setSettings({ ...settings, dinnerEnd: e.target.value })} /><small className="muted">Stored value: {renderStoredTimeValue(settings.dinnerEnd)}</small></label>
+        <label>
+          Complete days without a meal before warning
+          <input type="number" min={1} max={365} step={1} value={settings.studentMealWarningDays}
+            onChange={(e) => setSettings({ ...settings, studentMealWarningDays: Math.max(1, Number(e.target.value) || 1) })} />
+          <small className="muted">Only applies to students in Tally Up mode. Clearing a warning starts the count over.</small>
+        </label>
         <button type="button" className="primary" onClick={() => void saveSettings()}>Save Meal Tracking Settings</button>
       </section>)}
 
