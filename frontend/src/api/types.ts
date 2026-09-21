@@ -24,6 +24,7 @@ export interface ScanSuccessResponse {
   mealType: MealType;
   scannedValue?: string;
   mealTrackingMode: MealTrackingMode;
+  mealWarning?: { personId: number; missedDays: number; message: string };
   remainingAvailableTodayForMeal?: number;
   remainingAvailableCount?: number;
   selectedPerson?: string;
@@ -98,6 +99,7 @@ export interface Settings {
   tallyWeeklyRawTabName?: string;
   tallyWeeklyViewTabName?: string | null;
   tallyWeekStartsOn?: 'SUNDAY' | 'MONDAY';
+  studentMealWarningDays: number;
   googleLastAutoImportAt?: string | null;
   googleLastAutoImportSummary?: string | null;
   updatedAt: string;
@@ -134,6 +136,7 @@ export interface ReportsSummaryResponse {
     personId: string;
     firstName: string;
     lastName: string;
+    personType: 'STUDENT' | 'STAFF' | 'GUEST';
     breakfasts: number;
     lunches: number;
     dinners: number;
@@ -143,6 +146,7 @@ export interface ReportsSummaryResponse {
     personId: string;
     firstName: string;
     lastName: string;
+    personType: 'STUDENT' | 'STAFF' | 'GUEST';
     breakfasts: number;
     lunches: number;
     dinners: number;
@@ -176,6 +180,7 @@ export interface ReportsSummaryResponse {
       firstName: string;
       lastName: string;
       personId: string;
+      personType: 'STUDENT' | 'STAFF' | 'GUEST';
     };
   }>;
 }

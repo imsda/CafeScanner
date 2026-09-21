@@ -47,6 +47,21 @@ router.get('/people', async (req, res) => {
   }
 });
 
+router.post('/warnings/:personId/clear', async (req, res) => {
+  const personId = Number(req.params.personId);
+  if (!Number.isInteger(personId) || personId <= 0) return res.status(400).json({ error: 'Invalid person.' });
+  try {
+    const person = await prisma.person.update({
+      where: { id: personId },
+      data: { mealWarningSince: null, mealWarningClearedAt: new Date() },
+      select: { id: true, mealWarningSince: true, mealWarningClearedAt: true }
+    });
+    return res.json({ ok: true, person });
+  } catch {
+    return res.status(404).json({ error: 'Student warning not found.' });
+  }
+});
+
 const scanRequestSchema = z.object({
   personId: z.string().optional(),
   scannedValue: z.string().optional(),

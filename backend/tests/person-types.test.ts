@@ -38,6 +38,16 @@ test('Tally Up person types and meal limits', async (t) => {
   t.mock.timers.setTime(new Date('2030-09-10T16:00:00Z').getTime());
   assert.equal((await scan('student')).ok, true);
 
+  // A complete local calendar day without any meal creates a persistent warning.
+  t.mock.timers.setTime(new Date('2030-09-12T16:00:00Z').getTime());
+  const warned = await scan('student', 'BREAKFAST');
+  assert.equal(warned.ok, true);
+  assert.equal('mealWarning' in warned && warned.mealWarning?.missedDays, 1);
+  assert.ok((await prisma.person.findUniqueOrThrow({ where: { id: student.id } })).mealWarningSince);
+  await prisma.person.update({ where: { id: student.id }, data: { mealWarningSince: null, mealWarningClearedAt: new Date() } });
+  const clearedStudent = await prisma.person.findUniqueOrThrow({ where: { id: student.id } });
+  assert.equal(clearedStudent.mealWarningSince, null);
+
   for (const personType of ['STAFF', 'GUEST'] as const) {
     await prisma.person.create({ data: { firstName: 'Test', lastName: personType, personId: personType, codeValue: personType, personType } });
     for (let i = 0; i < 3; i++) assert.equal((await scan(personType)).ok, true);
@@ -160,8 +170,8 @@ test('Tally Up person types and meal limits', async (t) => {
     get: async () => ({ data: { sheets: [{ properties: { title: 'LOG', sheetId: 0 } }] } }),
     batchUpdate: async () => ({}),
     values: {
-      get: async (request: any) => ({ data: { values: request.range.endsWith('A1:H1')
-        ? [['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station', 'Transaction ID']] : logRows } }),
+      get: async (request: any) => ({ data: { values: request.range.endsWith('A1:I1')
+        ? [['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station', 'Transaction ID', 'Type']] : logRows } }),
       clear: async () => { throw new Error('LOG must not be cleared'); },
       update: async () => { throw new Error('LOG must not be rewritten'); },
       append: async (request: any) => {
@@ -195,8 +205,8 @@ test('Tally Up person types and meal limits', async (t) => {
       get: async (request: any) => {
         if (request.range.startsWith("'Sheet1'!")) return { data: { values: sheetRows } };
         logReads++;
-        return { data: { values: request.range.endsWith('A1:H1')
-          ? [['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station', 'Transaction ID']] : logRows } };
+        return { data: { values: request.range.endsWith('A1:I1')
+          ? [['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station', 'Transaction ID', 'Type']] : logRows } };
       },
       batchUpdate: async () => { throw quotaError; },
       append: async () => { throw new Error('Unexpected append'); }

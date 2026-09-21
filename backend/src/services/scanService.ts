@@ -10,6 +10,18 @@ function normalizePersonId(value: string): string {
   return value.trim();
 }
 
+function localDateKey(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+  const value = (type: 'year' | 'month' | 'day') => parts.find((part) => part.type === type)?.value || '0';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+function calendarDaysBetween(from: Date, to: Date, timezone: string): number {
+  const [fromYear, fromMonth, fromDay] = localDateKey(from, timezone).split('-').map(Number);
+  const [toYear, toMonth, toDay] = localDateKey(to, timezone).split('-').map(Number);
+  return Math.floor((Date.UTC(toYear, toMonth - 1, toDay) - Date.UTC(fromYear, fromMonth - 1, fromDay)) / 86_400_000);
+}
+
 function localMealDay(date: Date, timezone: string): MealDay {
   const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
@@ -525,15 +537,46 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
     }
 
+    let mealWarning: { personId: number; missedDays: number; message: string } | undefined;
+    let mealWarningSince = person.mealWarningSince;
+    if (person.personType === 'STUDENT') {
+      if (mealWarningSince) {
+        mealWarning = {
+          personId: person.id,
+          missedDays: settings.studentMealWarningDays,
+          message: 'Warning: this student has gone without a recorded meal for the configured number of complete days.'
+        };
+      } else {
+        const lastMeal = await tx.scanTransaction.findFirst({
+          where: { personId: person.id, result: ScanResult.SUCCESS },
+          orderBy: { timestamp: 'desc' },
+          select: { timestamp: true }
+        });
+        const baselineCandidates = [person.createdAt, person.mealWarningClearedAt, lastMeal?.timestamp].filter((value): value is Date => Boolean(value));
+        const baseline = baselineCandidates.reduce((latest, value) => value > latest ? value : latest);
+        const missedDays = Math.max(0, calendarDaysBetween(baseline, scanTime, settings.timezone || 'Etc/UTC') - 1);
+        if (missedDays >= settings.studentMealWarningDays) {
+          mealWarningSince = scanTime;
+          mealWarning = {
+            personId: person.id,
+            missedDays,
+            message: `Warning: this student went ${missedDays} complete day${missedDays === 1 ? '' : 's'} without a recorded meal.`
+          };
+        }
+      }
+    }
+
     const tallyField = tallyFieldByMeal[detectedMeal];
     const updated = await tx.person.update({
       where: { id: person.id },
-      data: tallyField
-        ? {
+      data: {
+        ...(tallyField ? {
             [tallyField]: { increment: 1 },
             totalMealsCount: { increment: 1 }
           }
-        : { totalMealsCount: { increment: 1 } }
+        : { totalMealsCount: { increment: 1 } }),
+        mealWarningSince
+      }
     });
 
     await tx.scanTransaction.create({
@@ -548,6 +591,6 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
     });
 
-    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
+    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode, mealWarning };
   });
 }

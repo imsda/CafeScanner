@@ -58,7 +58,8 @@ router.get('/summary', async (req, res) => {
             id: true,
             firstName: true,
             lastName: true,
-            personId: true
+            personId: true,
+            personType: true
           }
         }
       },
@@ -179,6 +180,7 @@ router.get('/meal-totals.csv', async (req, res) => {
   const rows = reportRows.map((row) => ({
     name: `${row.firstName} ${row.lastName}`.trim(),
     personId: row.personId,
+    personType: row.personType,
     totalMeals: row.total,
     breakfast: row.breakfasts,
     lunch: row.lunches,
@@ -186,7 +188,7 @@ router.get('/meal-totals.csv', async (req, res) => {
   }));
 
   const parser = new Parser({
-    fields: ['name', 'personId', 'totalMeals', 'breakfast', 'lunch', 'dinner']
+    fields: ['name', 'personId', 'personType', 'totalMeals', 'breakfast', 'lunch', 'dinner']
   });
 
   const csv = parser.parse(rows as unknown as Record<string, unknown>[]);
@@ -216,7 +218,8 @@ router.get('/export.csv', async (req, res) => {
       'entitlementPersonName',
       'person.firstName',
       'person.lastName',
-      'person.personId'
+      'person.personId',
+      'person.personType'
     ]
   });
 

@@ -10,7 +10,7 @@ const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_d
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const WEEKLY_TALLY_HEADER = ['Week Starting', 'Week Ending', 'ID', 'Name', 'Breakfast', 'Lunch', 'Dinner', 'Total'];
 const LOG_TAB_NAME = 'LOG';
-const LOG_HEADER = ['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station', 'Transaction ID'];
+const LOG_HEADER = ['Time', 'Value', 'Meal', 'Result', 'Reason', 'Person', 'Station', 'Transaction ID', 'Type'];
 const DEFAULT_SHEET_TAB_NAME = 'Sheet1';
 const TALLY_COUNT_COLUMNS = ['breakfast', 'lunch', 'dinner', 'total'] as const;
 
@@ -311,7 +311,7 @@ export async function syncTransactionLogToSheet() {
 
     const transactions = await prisma.scanTransaction.findMany({
       orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
-      include: { person: { select: { firstName: true, lastName: true } } }
+      include: { person: { select: { firstName: true, lastName: true, personType: true } } }
     });
     console.log(`[SHEET_SYNC][LOG] Loaded local transactions: ${transactions.length}`);
 
@@ -322,7 +322,7 @@ export async function syncTransactionLogToSheet() {
       await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: LOG_TAB_NAME } } }] } });
     }
 
-    const headerResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:H1` });
+    const headerResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:I1` });
     const currentHeader = (headerResp.data.values?.[0] || []).map((cell) => `${cell ?? ''}`.trim());
     const transactionIdHeaderIndex = currentHeader.findIndex((value) => value === 'Transaction ID');
     const headerMatches = LOG_HEADER.every((value, idx) => (currentHeader[idx] || '') === value);
@@ -332,7 +332,7 @@ export async function syncTransactionLogToSheet() {
       } else {
         console.log('[SHEET_SYNC][LOG] LOG header mismatch; normalizing header');
       }
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [LOG_HEADER] } });
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:I1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [LOG_HEADER] } });
     }
 
     const refreshedMeta = logTab ? meta : await sheets.spreadsheets.get({ spreadsheetId });
@@ -356,7 +356,7 @@ export async function syncTransactionLogToSheet() {
 
     if (typeof logSheetId === 'number') formattedLogSheets.add(spreadsheetId);
     console.log('[SHEET_SYNC][LOG] Reading existing LOG rows');
-    const logResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:H` });
+    const logResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:I` });
     const logRows = (logResp.data.values || []) as string[][];
     const existingTransactionIds = new Set(
       logRows
@@ -368,13 +368,13 @@ export async function syncTransactionLogToSheet() {
     const missingTransactions = transactions.filter((tx) => !existingTransactionIds.has(String(tx.id)));
     const rowsToAppend = missingTransactions.map((tx) => {
       const personName = tx.person ? `${tx.person.firstName} ${tx.person.lastName}`.trim() : (tx.entitlementPersonName || '').trim();
-      return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || '', String(tx.id)];
+      return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || '', String(tx.id), tx.person?.personType || ''];
     });
 
     // Keep existing LOG rows intact. A failed append can be retried by Transaction ID.
     for (let offset = 0; offset < rowsToAppend.length; offset += 1000) {
       await sheets.spreadsheets.values.append({
-        spreadsheetId, range: `${LOG_TAB_NAME}!A:H`, valueInputOption: 'RAW',
+        spreadsheetId, range: `${LOG_TAB_NAME}!A:I`, valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS', requestBody: { values: rowsToAppend.slice(offset, offset + 1000) }
       });
     }
@@ -423,23 +423,23 @@ export async function rebuildTransactionLogFromDatabase() {
     const sheets = getSheetsClient();
     const transactions = await prisma.scanTransaction.findMany({
       orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
-      include: { person: { select: { firstName: true, lastName: true } } }
+      include: { person: { select: { firstName: true, lastName: true, personType: true } } }
     });
 
-    const headerResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:H1` });
+    const headerResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:I1` });
     const currentHeader = (headerResp.data.values?.[0] || []).map((cell) => `${cell ?? ''}`.trim());
     const headerMatches = LOG_HEADER.every((value, idx) => (currentHeader[idx] || '') === value);
     if (!headerMatches) {
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [LOG_HEADER] } });
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A1:I1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [LOG_HEADER] } });
     }
 
-    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:H` });
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:I` });
     const values = transactions.map((tx) => {
       const personName = tx.person ? `${tx.person.firstName} ${tx.person.lastName}`.trim() : (tx.entitlementPersonName || '').trim();
-      return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || '', String(tx.id)];
+      return [tx.timestamp.toISOString(), tx.scannedValue, tx.mealType, tx.result, tx.failureReason || '', personName, tx.stationName || '', String(tx.id), tx.person?.personType || ''];
     });
     if (values.length) {
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:H`, valueInputOption: 'USER_ENTERED', requestBody: { values } });
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${LOG_TAB_NAME}!A2:I`, valueInputOption: 'USER_ENTERED', requestBody: { values } });
     }
     await prisma.scanTransaction.updateMany({ where: { googleLogSyncedAt: null }, data: { googleLogSyncedAt: new Date() } });
     return { tabName: LOG_TAB_NAME, totalTransactions: transactions.length, rowsRebuilt: values.length };
