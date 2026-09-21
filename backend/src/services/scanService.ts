@@ -537,32 +537,18 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
     }
 
-    let mealWarning: { personId: number; missedDays: number; message: string } | undefined;
     let mealWarningSince = person.mealWarningSince;
-    if (person.personType === 'STUDENT') {
-      if (mealWarningSince) {
-        mealWarning = {
-          personId: person.id,
-          missedDays: settings.studentMealWarningDays,
-          message: 'Warning: this student has gone without a recorded meal for the configured number of complete days.'
-        };
-      } else {
-        const lastMeal = await tx.scanTransaction.findFirst({
-          where: { personId: person.id, result: ScanResult.SUCCESS },
-          orderBy: { timestamp: 'desc' },
-          select: { timestamp: true }
-        });
-        const baselineCandidates = [person.createdAt, person.mealWarningClearedAt, lastMeal?.timestamp].filter((value): value is Date => Boolean(value));
-        const baseline = baselineCandidates.reduce((latest, value) => value > latest ? value : latest);
-        const missedDays = Math.max(0, calendarDaysBetween(baseline, scanTime, settings.timezone || 'Etc/UTC') - 1);
-        if (missedDays >= settings.studentMealWarningDays) {
-          mealWarningSince = scanTime;
-          mealWarning = {
-            personId: person.id,
-            missedDays,
-            message: `Warning: this student went ${missedDays} complete day${missedDays === 1 ? '' : 's'} without a recorded meal.`
-          };
-        }
+    if (person.personType === 'STUDENT' && !mealWarningSince) {
+      const lastMeal = await tx.scanTransaction.findFirst({
+        where: { personId: person.id, result: ScanResult.SUCCESS },
+        orderBy: { timestamp: 'desc' },
+        select: { timestamp: true }
+      });
+      const baselineCandidates = [person.createdAt, person.mealWarningClearedAt, lastMeal?.timestamp].filter((value): value is Date => Boolean(value));
+      const baseline = baselineCandidates.reduce((latest, value) => value > latest ? value : latest);
+      const missedDays = Math.max(0, calendarDaysBetween(baseline, scanTime, settings.timezone || 'Etc/UTC') - 1);
+      if (missedDays >= settings.studentMealWarningDays) {
+        mealWarningSince = scanTime;
       }
     }
 
@@ -591,6 +577,6 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       }
     });
 
-    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode, mealWarning };
+    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
   });
 }

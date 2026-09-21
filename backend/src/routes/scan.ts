@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { processScan } from '../services/scanService.js';
+import { getStudentsNotEating } from '../services/studentMealWarningService.js';
 
 import { searchPeople } from '../services/searchPeople.js';
 
@@ -47,19 +48,9 @@ router.get('/people', async (req, res) => {
   }
 });
 
-router.post('/warnings/:personId/clear', async (req, res) => {
-  const personId = Number(req.params.personId);
-  if (!Number.isInteger(personId) || personId <= 0) return res.status(400).json({ error: 'Invalid person.' });
-  try {
-    const person = await prisma.person.update({
-      where: { id: personId },
-      data: { mealWarningSince: null, mealWarningClearedAt: new Date() },
-      select: { id: true, mealWarningSince: true, mealWarningClearedAt: true }
-    });
-    return res.json({ ok: true, person });
-  } catch {
-    return res.status(404).json({ error: 'Student warning not found.' });
-  }
+router.get('/warnings/status', async (_req, res) => {
+  const report = await getStudentsNotEating();
+  return res.json({ hasWarnings: report.students.length > 0 });
 });
 
 const scanRequestSchema = z.object({
