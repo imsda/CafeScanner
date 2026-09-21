@@ -24,7 +24,6 @@ export interface ScanSuccessResponse {
   mealType: MealType;
   scannedValue?: string;
   mealTrackingMode: MealTrackingMode;
-  mealWarning?: { personId: number; missedDays: number; message: string };
   remainingAvailableTodayForMeal?: number;
   remainingAvailableCount?: number;
   selectedPerson?: string;
@@ -182,6 +181,20 @@ export interface ReportsSummaryResponse {
       personId: string;
       personType: 'STUDENT' | 'STAFF' | 'GUEST';
     };
+  }>;
+}
+
+export interface StudentsNotEatingResponse {
+  mealTrackingMode: MealTrackingMode;
+  warningDays: number;
+  students: Array<{
+    id: number;
+    personId: string;
+    firstName: string;
+    lastName: string;
+    missedDays: number;
+    lastMealAt: string | null;
+    warningSince: string | null;
   }>;
 }
 

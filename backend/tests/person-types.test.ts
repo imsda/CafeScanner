@@ -42,8 +42,12 @@ test('Tally Up person types and meal limits', async (t) => {
   t.mock.timers.setTime(new Date('2030-09-12T16:00:00Z').getTime());
   const warned = await scan('student', 'BREAKFAST');
   assert.equal(warned.ok, true);
-  assert.equal('mealWarning' in warned && warned.mealWarning?.missedDays, 1);
   assert.ok((await prisma.person.findUniqueOrThrow({ where: { id: student.id } })).mealWarningSince);
+  const { getStudentsNotEating, clearStudentMealWarning } = await import('../src/services/studentMealWarningService.js');
+  const warningReport = await getStudentsNotEating();
+  assert.equal(warningReport.students.some((row) => row.id === student.id), true);
+  await clearStudentMealWarning(student.id);
+  assert.equal((await getStudentsNotEating()).students.some((row) => row.id === student.id), false);
   await prisma.person.update({ where: { id: student.id }, data: { mealWarningSince: null, mealWarningClearedAt: new Date() } });
   const clearedStudent = await prisma.person.findUniqueOrThrow({ where: { id: student.id } });
   assert.equal(clearedStudent.mealWarningSince, null);

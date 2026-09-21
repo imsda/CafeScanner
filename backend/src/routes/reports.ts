@@ -4,8 +4,23 @@ import { endOfDay, startOfDay } from 'date-fns';
 import { Parser } from 'json2csv';
 import { prisma } from '../db.js';
 import { getMealTotalsByPerson } from '../services/mealTotalsReport.js';
+import { clearStudentMealWarning, getStudentsNotEating } from '../services/studentMealWarningService.js';
 
 const router = Router();
+
+router.get('/students-not-eating', async (_req, res) => {
+  res.json(await getStudentsNotEating());
+});
+
+router.post('/students-not-eating/:personId/clear', async (req, res) => {
+  const personId = Number(req.params.personId);
+  if (!Number.isInteger(personId) || personId <= 0) return res.status(400).json({ error: 'Invalid student.' });
+  try {
+    return res.json({ ok: true, person: await clearStudentMealWarning(personId) });
+  } catch {
+    return res.status(404).json({ error: 'Student warning not found.' });
+  }
+});
 
 function parseDate(value: unknown, fallback: Date): Date {
   if (typeof value !== 'string' || value.length === 0) {

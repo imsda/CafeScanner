@@ -7,6 +7,7 @@ import type {
   MealTrackingMode,
   MealType,
   ReportsSummaryResponse,
+  StudentsNotEatingResponse,
   ScanPerson,
   ScanResponse,
   Settings,
@@ -342,7 +343,6 @@ type ScanResultState =
             sourceRowKey?: string;
             sourceSheetRow?: number | null;
           };
-          mealWarning?: { personId: number; missedDays: number; message: string };
         }
       | { ok: false; error: string }
     )
@@ -356,7 +356,7 @@ type PendingCampMeetingSelection = {
   options: Array<{ entitlementId: number; personName: string; sourceRowKey?: string; sourceRow?: number | null }>;
 };
 
-function ScanResultCard({ result, onWarningCleared }: { result: ScanResultState; onWarningCleared: () => void }) {
+function ScanResultCard({ result }: { result: ScanResultState }) {
   if (!result)
     return (
       <div className="scan-result info">
@@ -401,14 +401,6 @@ function ScanResultCard({ result, onWarningCleared }: { result: ScanResultState;
       <p>
         Mode: <strong>{modeLabel(result.mealTrackingMode)}</strong>
       </p>
-      {result.mealWarning && (
-        <div className="scan-warning" role="alert">
-          <p><strong>{result.mealWarning.message}</strong></p>
-          <button type="button" className="secondary" onClick={() => {
-            void api(`/scan/warnings/${result.mealWarning!.personId}/clear`, { method: "POST" }).then(onWarningCleared);
-          }}>Clear Warning</button>
-        </div>
-      )}
       {result.mealTrackingMode === "camp_meeting" ? (
         <>
           <p>
@@ -508,14 +500,16 @@ function ScanPage() {
     return () => { controller.abort(); window.clearTimeout(timeout); };
   }, [peopleQuery]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [mode, setMode] = useState<"camera" | "usb" | "search">("usb");
+  const [mode, setMode] = useState<"camera" | "usb">("usb");
   const [mealTrackingMode, setMealTrackingMode] =
     useState<MealTrackingMode>("camp_meeting");
   const [scanCooldownSeconds, setScanCooldownSeconds] = useState(1);
   const [scannerDiagnosticsEnabled, setScannerDiagnosticsEnabled] =
     useState(false);
   const [lastScannerError, setLastScannerError] = useState("");
+  const [hasStudentMealWarnings, setHasStudentMealWarnings] = useState(false);
   const usbInputRef = useRef<HTMLInputElement>(null);
+  const peopleSearchInputRef = useRef<HTMLInputElement>(null);
   const autoSubmitTimeoutRef = useRef<number | null>(null);
   const lastInputAtRef = useRef(0);
   const previousManualRef = useRef("");
@@ -550,6 +544,16 @@ function ScanPage() {
       );
       setScannerDiagnosticsEnabled(Boolean(s.scannerDiagnosticsEnabled));
     });
+  }, []);
+
+  useEffect(() => {
+    const refreshWarningStatus = () => {
+      void api<{ hasWarnings: boolean }>("/scan/warnings/status")
+        .then((status) => setHasStudentMealWarnings(status.hasWarnings));
+    };
+    refreshWarningStatus();
+    const interval = window.setInterval(refreshWarningStatus, 60_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => () => clearAutoSubmitTimeout(), []);
@@ -607,7 +611,6 @@ function ScanPage() {
         sourceRowKey: response.sourceRowKey,
         sourceRow: response.sourceRow,
         redeemedEntitlement: response.redeemedEntitlement,
-        mealWarning: response.mealWarning,
       });
       setPendingSelection(null);
       setMealTrackingMode(response.mealTrackingMode);
@@ -688,6 +691,11 @@ function ScanPage() {
         <p className="muted">
           Active tracking mode: <strong>{modeLabel(mealTrackingMode)}</strong>
         </p>
+        {hasStudentMealWarnings && (
+          <div className="scan-warning" role="status">
+            <strong>Please notify administration to check Reports for students.</strong>
+          </div>
+        )}
         <p className="muted">
           Scan cooldown:{" "}
           <strong>
@@ -709,16 +717,10 @@ function ScanPage() {
           >
             USB Scanner
           </button>
-          <button className={mode === "search" ? "primary" : "secondary"} type="button"
-            aria-pressed={mode === "search"}
-            onClick={() => { clearAutoSubmitTimeout(); scannerLikeInputRef.current = false; setManual(""); setMode("search"); }}>
-            Find Person by Name
-          </button>
         </div>
         <p className="muted">
-          {mode === "usb" ? "USB scanner ready. Scan a badge to record the meal automatically, or choose Find Person by Name."
-            : mode === "search" ? "Search by name or ID, then select the person. USB scanning resumes after your selection."
-            : "Scan a badge with the camera, or choose USB Scanner or Find Person by Name."}
+          {mode === "usb" ? "USB scanner ready. Scan a badge to record the meal automatically."
+            : "Scan a badge with the camera, or use the name search below."}
         </p>
         {mode === "camera" ? (
           <QrScanner
@@ -732,7 +734,7 @@ function ScanPage() {
               setResult({ ok: false, error: message });
             }}
           />
-        ) : mode === "usb" ? (
+        ) : (
           <form className="stack" onSubmit={onManualSubmit}>
             <label>
               Person ID input
@@ -759,11 +761,11 @@ function ScanPage() {
               {isSubmitting ? "Submitting…" : "Submit ID"}
             </button>
           </form>
-        ) : (
+        )}
         <div className="stack scanner-card">
           <h3>Find Person by Name</h3>
           <label>Name or person ID
-            <input autoFocus type="search" value={peopleQuery} placeholder="Enter an ID, first name, or last name"
+            <input ref={peopleSearchInputRef} type="search" value={peopleQuery} placeholder="Enter an ID, first name, or last name"
               onChange={(e) => setPeopleQuery(e.target.value)} />
           </label>
           <p role="status">{searchStatus}</p>
@@ -771,16 +773,15 @@ function ScanPage() {
             <p className="muted">Select Scan to record a meal. Shared IDs use the normal ticket selection rules. Showing up to 20 matches.</p>
             <ul>{peopleMatches.map((person, index) => <li key={`${person.personId}-${index}`}>
               <strong>{person.name}</strong> — ID: {person.personId} {person.personType ? `(${person.personType})` : ''}{" "}
-              <button type="button" disabled={isSubmitting} onClick={() => { setPeopleQuery(""); setMode("usb"); void submitScan(person.personId); }}>
+              <button type="button" disabled={isSubmitting} onClick={() => {
+                setPeopleQuery("");
+                void submitScan(person.personId).finally(() => window.setTimeout(() => peopleSearchInputRef.current?.focus(), 0));
+              }}>
                 Scan ID {person.personId}
               </button>
             </li>)}</ul>
           </>}
-          <button className="secondary" type="button" onClick={() => { setPeopleQuery(""); setMode("usb"); }}>
-            Back to USB Scanner
-          </button>
         </div>
-        )}
         {scannerDiagnosticsEnabled && (
           <div className="scanner-diagnostics">
             <p>
@@ -847,7 +848,7 @@ function ScanPage() {
           </div>
         )}
       </section>
-      <ScanResultCard result={result} onWarningCleared={() => setResult(null)} />
+      <ScanResultCard result={result} />
     </div>
   );
 }
@@ -1708,6 +1709,57 @@ function TransactionsPage() {
   );
 }
 
+function StudentsNotEatingPanel() {
+  const [data, setData] = useState<StudentsNotEatingResponse | null>(null);
+  const [error, setError] = useState("");
+  const [clearingId, setClearingId] = useState<number | null>(null);
+
+  const load = async () => {
+    try {
+      setData(await api<StudentsNotEatingResponse>("/reports/students-not-eating"));
+      setError("");
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load students not eating.");
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  return <section className="stack">
+    <div>
+      <h3>Students Not Eating</h3>
+      <p className="muted">Students with no successful meal scan for at least the configured number of complete days.</p>
+    </div>
+    {error && <p className="error">{error}</p>}
+    {data?.mealTrackingMode !== "tally" && data && (
+      <p className="muted">This report is available when Meal Tracking is set to Tally Up.</p>
+    )}
+    {data?.mealTrackingMode === "tally" && (
+      <>
+        <p className="muted">Current warning threshold: <strong>{data.warningDays} complete day{data.warningDays === 1 ? "" : "s"}</strong></p>
+        {data.students.length === 0 ? <p>No students currently meet the warning threshold.</p> : (
+          <table>
+            <thead><tr><th>Name</th><th>Person ID</th><th>Complete Days Missed</th><th>Last Recorded Meal</th><th>Action</th></tr></thead>
+            <tbody>{data.students.map((student) => <tr key={student.id}>
+              <td>{student.firstName} {student.lastName}</td>
+              <td>{student.personId}</td>
+              <td>{student.missedDays}</td>
+              <td>{student.lastMealAt ? new Date(student.lastMealAt).toLocaleString() : "No recorded meal"}</td>
+              <td><button type="button" className="secondary" disabled={clearingId === student.id} onClick={() => {
+                setClearingId(student.id);
+                void api(`/reports/students-not-eating/${student.id}/clear`, { method: "POST" })
+                  .then(load)
+                  .catch((clearError) => setError(clearError instanceof Error ? clearError.message : "Unable to clear warning."))
+                  .finally(() => setClearingId(null));
+              }}>{clearingId === student.id ? "Clearing…" : "Clear Warning"}</button></td>
+            </tr>)}</tbody>
+          </table>
+        )}
+      </>
+    )}
+  </section>;
+}
+
 function ReportsPage() {
   const todayRange = useMemo(() => getRangeForPreset("today"), []);
   const [fromDate, setFromDate] = useState(todayRange.from);
@@ -1719,6 +1771,7 @@ function ReportsPage() {
   >("today");
   const [report, setReport] = useState<ReportsSummaryResponse | null>(null);
   const [error, setError] = useState("");
+  const [activeReportView, setActiveReportView] = useState<"meal-report" | "students-not-eating">("meal-report");
 
   async function loadReport(range?: { from: string; to: string }) {
     const selectedRange = range ?? { from: fromDate, to: toDate };
@@ -1764,9 +1817,21 @@ function ReportsPage() {
     endDate: appliedToDate,
   }).toString();
 
+  const reportTabs = <div className="button-row">
+    <button type="button" className={activeReportView === "meal-report" ? "primary" : "secondary"}
+      onClick={() => setActiveReportView("meal-report")}>Meal Report</button>
+    <button type="button" className={activeReportView === "students-not-eating" ? "primary" : "secondary"}
+      onClick={() => setActiveReportView("students-not-eating")}>Students Not Eating</button>
+  </div>;
+
+  if (activeReportView === "students-not-eating") {
+    return <div className="card stack"><h2>Reports</h2>{reportTabs}<StudentsNotEatingPanel /></div>;
+  }
+
   return (
     <div className="card stack">
       <h2>Reports</h2>
+      {reportTabs}
       <div className="stack report-controls">
         <div className="button-row">
           <button
