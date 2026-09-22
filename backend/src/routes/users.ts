@@ -39,7 +39,7 @@ router.post('/', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   const id = Number(req.params.id); if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid user id' });
-  const existing = await prisma.adminUser.findUnique({ where: { id } }); if (!existing) return res.status(404).json({ error: 'User not found' });
+  const existing = await prisma.adminUser.findUnique({ where: { id }, include: { pageAccess: true } }); if (!existing) return res.status(404).json({ error: 'User not found' });
   if (existing.role === 'OWNER' && !isOwnerSession(req)) return res.status(403).json({ error: 'Only OWNER can manage OWNER users' });
   const { password, role, allowedPages } = req.body as any;
   const requestedRole: UserRole = role === 'OWNER' ? 'OWNER' : role === 'SCANNER' ? 'SCANNER' : role === 'CUSTOM' ? 'CUSTOM' : role === 'ADMIN' ? 'ADMIN' : existing.role;
@@ -48,7 +48,9 @@ router.patch('/:id', async (req, res) => {
     const ownerCount = await prisma.adminUser.count({ where: { role: 'OWNER' } });
     if (ownerCount <= 1) return res.status(400).json({ error: 'Cannot demote the last OWNER' });
   }
-  const safePages = normalizePages(allowedPages);
+  const safePages = allowedPages === undefined
+    ? existing.pageAccess.map((entry) => entry.page)
+    : normalizePages(allowedPages);
   try {
   const updated = await prisma.$transaction(async (tx) => {
     const minPassword = requestedRole === 'SCANNER' ? 4 : 12;
