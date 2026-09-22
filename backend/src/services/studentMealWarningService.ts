@@ -55,7 +55,7 @@ export async function getStudentsNotEating(now = new Date()) {
       personId: student.personId,
       firstName: student.firstName,
       lastName: student.lastName,
-      missedDays: Math.max(calculatedMissedDays, settings.studentMealWarningDays),
+      missedDays: calculatedMissedDays,
       lastMealAt: latestMealByPerson.get(student.id)?.toISOString() ?? null,
       warningSince: student.mealWarningSince?.toISOString() ?? null
     }];

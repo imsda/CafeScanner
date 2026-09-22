@@ -46,6 +46,8 @@ test('Tally Up person types and meal limits', async (t) => {
   const { getStudentsNotEating, clearStudentMealWarning } = await import('../src/services/studentMealWarningService.js');
   const warningReport = await getStudentsNotEating();
   assert.equal(warningReport.students.some((row) => row.id === student.id), true);
+  assert.equal(warningReport.students.find((row) => row.id === student.id)?.missedDays, 0,
+    'An active warning stays listed but days missed must reflect the latest successful meal');
   await clearStudentMealWarning(student.id);
   assert.equal((await getStudentsNotEating()).students.some((row) => row.id === student.id), false);
   await prisma.person.update({ where: { id: student.id }, data: { mealWarningSince: null, mealWarningClearedAt: new Date() } });
