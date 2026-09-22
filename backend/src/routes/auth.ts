@@ -4,7 +4,7 @@ import { prisma } from '../db.js';
 
 const router = Router();
 const loginAttempts = new Map<string, { count: number; first: number }>();
-const ALL_PAGES = ['DASHBOARD', 'SCAN', 'PEOPLE', 'IMPORT', 'BADGES', 'TRANSACTIONS', 'REPORTS', 'SETTINGS', 'USER_MANAGEMENT'] as const;
+const ALL_PAGES = ['DASHBOARD', 'SCAN', 'PEOPLE', 'IMPORT', 'BADGES', 'TRANSACTIONS', 'REPORTS', 'HOME_LEAVES', 'SETTINGS', 'USER_MANAGEMENT'] as const;
 const SCANNER_PAGES = ['SCAN'] as const;
 
 function allowedPagesFor(role: 'OWNER' | 'ADMIN' | 'SCANNER' | 'CUSTOM', customPages: string[]): string[] {

@@ -40,6 +40,7 @@ enum AppPage {
   BADGES
   TRANSACTIONS
   REPORTS
+  HOME_LEAVES
   SETTINGS
   USER_MANAGEMENT
 }
@@ -149,6 +150,17 @@ model Setting {
   fullWipeTokenUsedAt      DateTime?
   fullWipeArmedByUserId    Int?
   updatedAt                DateTime         @updatedAt
+}
+
+model HomeLeave {
+  id        Int      @id @default(autoincrement())
+  name      String
+  startDate String
+  endDate   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([startDate, endDate])
 }
 
 model ScanTransaction {
