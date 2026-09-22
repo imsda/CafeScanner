@@ -1772,6 +1772,8 @@ function ReportsPage() {
   const [report, setReport] = useState<ReportsSummaryResponse | null>(null);
   const [error, setError] = useState("");
   const [activeReportView, setActiveReportView] = useState<"meal-report" | "students-not-eating">("meal-report");
+  const [reportSearch, setReportSearch] = useState("");
+  const [personTypeFilter, setPersonTypeFilter] = useState<"ALL" | "STUDENT" | "STAFF" | "GUEST">("ALL");
 
   async function loadReport(range?: { from: string; to: string }) {
     const selectedRange = range ?? { from: fromDate, to: toDate };
@@ -1803,6 +1805,7 @@ function ReportsPage() {
     setFromDate(range.from);
     setToDate(range.to);
     setActivePreset(preset);
+    void loadReport(range);
   }
 
   useEffect(() => {
@@ -1810,6 +1813,15 @@ function ReportsPage() {
   }, []);
 
   const mealTotals = report?.mealTotalsByPerson ?? report?.perPersonUsage ?? [];
+  const filteredMealTotals = useMemo(() => {
+    const query = reportSearch.trim().toLowerCase();
+    return mealTotals.filter((row) => {
+      if (personTypeFilter !== "ALL" && row.personType !== personTypeFilter) return false;
+      if (!query) return true;
+      return `${row.firstName} ${row.lastName}`.toLowerCase().includes(query)
+        || row.personId.toLowerCase().includes(query);
+    });
+  }, [mealTotals, personTypeFilter, reportSearch]);
   const exportQuery = new URLSearchParams({
     from: appliedFromDate,
     to: appliedToDate,
@@ -2006,10 +2018,29 @@ function ReportsPage() {
           </div>
           <section className="stack">
             <h3>Meal Totals by Person</h3>
+            <div className="filters-row">
+              <label>
+                Search
+                <input type="search" value={reportSearch} placeholder="Name or Person ID"
+                  onChange={(event) => setReportSearch(event.target.value)} />
+              </label>
+              <label>
+                Type
+                <select value={personTypeFilter}
+                  onChange={(event) => setPersonTypeFilter(event.target.value as "ALL" | "STUDENT" | "STAFF" | "GUEST")}>
+                  <option value="ALL">All types</option>
+                  <option value="STUDENT">Students</option>
+                  <option value="STAFF">Staff</option>
+                  <option value="GUEST">Guests</option>
+                </select>
+              </label>
+            </div>
             {mealTotals.length === 0 ? (
               <p className="muted">
                 No meals found for the selected date range.
               </p>
+            ) : filteredMealTotals.length === 0 ? (
+              <p className="muted">No people match the current search and type filter.</p>
             ) : (
               <table>
                 <thead>
@@ -2024,7 +2055,7 @@ function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {mealTotals.map((row) => (
+                  {filteredMealTotals.map((row) => (
                     <tr key={row.personId}>
                       <td>
                         {row.firstName} {row.lastName}

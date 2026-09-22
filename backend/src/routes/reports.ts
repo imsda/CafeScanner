@@ -138,16 +138,23 @@ router.get('/summary', async (req, res) => {
     { breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0 }
   );
 
-  const tallySummary = people.reduce(
-    (acc, person) => {
-      acc.breakfastCount += person.breakfastCount;
-      acc.lunchCount += person.lunchCount;
-      acc.dinnerCount += person.dinnerCount;
-      acc.totalMealsCount += person.totalMealsCount;
-      return acc;
-    },
-    { breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 }
-  );
+  const tallySummary = mealTrackingMode === MealTrackingMode.tally
+    ? {
+        breakfastCount: mealCounts.BREAKFAST,
+        lunchCount: mealCounts.LUNCH,
+        dinnerCount: mealCounts.DINNER,
+        totalMealsCount: mealCounts.BREAKFAST + mealCounts.LUNCH + mealCounts.DINNER
+      }
+    : people.reduce(
+        (acc, person) => {
+          acc.breakfastCount += person.breakfastCount;
+          acc.lunchCount += person.lunchCount;
+          acc.dinnerCount += person.dinnerCount;
+          acc.totalMealsCount += person.totalMealsCount;
+          return acc;
+        },
+        { breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 }
+      );
 
   res.json({
     from,

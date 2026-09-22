@@ -57,6 +57,17 @@ test('Tally Up person types and meal limits', async (t) => {
     for (let i = 0; i < 3; i++) assert.equal((await scan(personType)).ok, true);
     assert.equal((await prisma.person.findUniqueOrThrow({ where: { personId: personType } })).lunchCount, 3);
   }
+  const { getMealTotalsByPerson } = await import('../src/services/mealTotalsReport.js');
+  assert.deepEqual(await getMealTotalsByPerson({
+    from: new Date('2030-09-11T00:00:00Z'),
+    to: new Date('2030-09-11T23:59:59Z'),
+    mealTrackingMode: 'tally'
+  }), [], 'Tally reports must honor the selected date range instead of lifetime counters');
+  assert.ok((await getMealTotalsByPerson({
+    from: new Date('2030-09-12T00:00:00Z'),
+    to: new Date('2030-09-12T23:59:59Z'),
+    mealTrackingMode: 'tally'
+  })).length > 0);
   await prisma.person.create({ data: { firstName: 'Concurrent', lastName: 'Student', personId: 'concurrent', codeValue: 'concurrent', personType: 'STUDENT' } });
   const concurrent = await Promise.all([scan('concurrent'), scan('concurrent')]);
   assert.equal(concurrent.filter((result) => result.ok).length, 1);
