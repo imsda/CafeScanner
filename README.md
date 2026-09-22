@@ -450,6 +450,8 @@ Transaction logs, reports, Google Sheets LOG exports, and CSV exports include ea
 
 Reports includes a **Students Not Eating** view that proactively lists active students who meet the configured complete-day threshold, even if they have not returned to the scanner. Each warning can be cleared independently. The Scan Station keeps USB Scanner as its default while displaying name/ID search as a separate field; after selecting a person, focus returns to the search field for consecutive manual entries.
 
+An active missed-meal warning remains in Reports until manually cleared. Its **Complete Days Missed** value continues to recalculate from the student's latest successful meal, so a student who ate today shows `0` without automatically clearing the warning.
+
 When any students are flagged, the Scan Station shows only the anonymous notice **Please notify administration to check Reports for students.** This status is checked when the page opens and every minute; it does not depend on a student scanning. Scanner-only users are not shown names, missed-day details, or warning controls, and individual warnings can only be cleared from Reports.
 
 The Meal Report table can be searched by name or Person ID and filtered to Students, Staff, or Guests. Today, Last 7 Days, Current Week, Current Month, and Current Year apply immediately when selected; Custom Range dates still use **Apply Filter**.
