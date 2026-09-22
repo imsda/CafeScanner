@@ -21,36 +21,6 @@ function mapMealCount(mealType: MealType | null, row: MealTotalsRow): void {
 export async function getMealTotalsByPerson(params: { from: Date; to: Date; mealTrackingMode: MealTrackingMode }): Promise<MealTotalsRow[]> {
   const { from, to, mealTrackingMode } = params;
 
-  if (mealTrackingMode === MealTrackingMode.tally) {
-    const people = await prisma.person.findMany({
-      where: { active: true },
-      select: {
-        firstName: true,
-        lastName: true,
-        personId: true,
-        personType: true,
-        breakfastCount: true,
-        lunchCount: true,
-        dinnerCount: true,
-        totalMealsCount: true
-      }
-    });
-
-    return people
-      .map((person) => ({
-        personId: person.personId,
-        firstName: person.firstName,
-        lastName: person.lastName,
-        personType: person.personType,
-        breakfasts: person.breakfastCount,
-        lunches: person.lunchCount,
-        dinners: person.dinnerCount,
-        total: person.totalMealsCount
-      }))
-      .filter((person) => person.total > 0)
-      .sort((a, b) => b.total - a.total || a.lastName.localeCompare(b.lastName));
-  }
-
   if (mealTrackingMode === MealTrackingMode.camp_meeting) {
     const entitlements = await prisma.mealEntitlement.findMany({
       where: {
