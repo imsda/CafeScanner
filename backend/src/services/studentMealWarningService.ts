@@ -1,16 +1,6 @@
 import { MealTrackingMode, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
-
-function localDaySerial(date: Date, timezone: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
-  const value = (type: 'year' | 'month' | 'day') => Number(parts.find((part) => part.type === type)?.value || 0);
-  return Math.floor(Date.UTC(value('year'), value('month') - 1, value('day')) / 86_400_000);
-}
+import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 
 export async function getStudentsNotEating(now = new Date()) {
   const settings = await prisma.setting.findUniqueOrThrow({
@@ -41,13 +31,15 @@ export async function getStudentsNotEating(now = new Date()) {
     _max: { timestamp: true }
   });
   const latestMealByPerson = new Map(latestMeals.map((row) => [row.personId, row._max.timestamp]));
-  const today = localDaySerial(now, settings.timezone || 'Etc/UTC');
+  const homeLeaves = await prisma.homeLeave.findMany({ select: { startDate: true, endDate: true } });
 
   const warningStudents = students.flatMap((student) => {
     const candidates = [student.createdAt, student.mealWarningClearedAt, latestMealByPerson.get(student.id)]
       .filter((value): value is Date => Boolean(value));
     const baseline = candidates.reduce((latest, value) => value > latest ? value : latest);
-    const calculatedMissedDays = Math.max(0, today - localDaySerial(baseline, settings.timezone || 'Etc/UTC') - 1);
+    const calculatedMissedDays = countUnexcusedCompleteDays(
+      baseline, now, settings.timezone || 'Etc/UTC', homeLeaves
+    );
     const warningActive = Boolean(student.mealWarningSince) || calculatedMissedDays >= settings.studentMealWarningDays;
     if (!warningActive) return [];
     return [{

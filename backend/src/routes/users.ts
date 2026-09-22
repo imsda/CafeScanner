@@ -4,7 +4,7 @@ import { AppPage, UserRole } from '@prisma/client';
 import { prisma } from '../db.js';
 
 const router = Router();
-const ALL_PAGES: AppPage[] = [AppPage.DASHBOARD, AppPage.SCAN, AppPage.PEOPLE, AppPage.IMPORT, AppPage.BADGES, AppPage.TRANSACTIONS, AppPage.REPORTS, AppPage.SETTINGS, AppPage.USER_MANAGEMENT];
+const ALL_PAGES: AppPage[] = [AppPage.DASHBOARD, AppPage.SCAN, AppPage.PEOPLE, AppPage.IMPORT, AppPage.BADGES, AppPage.TRANSACTIONS, AppPage.REPORTS, AppPage.HOME_LEAVES, AppPage.SETTINGS, AppPage.USER_MANAGEMENT];
 const SCANNER_PAGES: AppPage[] = [AppPage.SCAN];
 
 function getAllowedPages(role: UserRole, customPages: AppPage[]): AppPage[] {

@@ -1,6 +1,7 @@
 import { MealDay, MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
+import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 
 function normalizeCampMeetingPersonId(value: string): string {
   return value.trim();
@@ -14,12 +15,6 @@ function localDateKey(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
   const value = (type: 'year' | 'month' | 'day') => parts.find((part) => part.type === type)?.value || '0';
   return `${value('year')}-${value('month')}-${value('day')}`;
-}
-
-function calendarDaysBetween(from: Date, to: Date, timezone: string): number {
-  const [fromYear, fromMonth, fromDay] = localDateKey(from, timezone).split('-').map(Number);
-  const [toYear, toMonth, toDay] = localDateKey(to, timezone).split('-').map(Number);
-  return Math.floor((Date.UTC(toYear, toMonth - 1, toDay) - Date.UTC(fromYear, fromMonth - 1, fromDay)) / 86_400_000);
 }
 
 function localMealDay(date: Date, timezone: string): MealDay {
@@ -546,7 +541,10 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       });
       const baselineCandidates = [person.createdAt, person.mealWarningClearedAt, lastMeal?.timestamp].filter((value): value is Date => Boolean(value));
       const baseline = baselineCandidates.reduce((latest, value) => value > latest ? value : latest);
-      const missedDays = Math.max(0, calendarDaysBetween(baseline, scanTime, settings.timezone || 'Etc/UTC') - 1);
+      const homeLeaves = await tx.homeLeave.findMany({ select: { startDate: true, endDate: true } });
+      const missedDays = countUnexcusedCompleteDays(
+        baseline, scanTime, settings.timezone || 'Etc/UTC', homeLeaves
+      );
       if (missedDays >= settings.studentMealWarningDays) {
         mealWarningSince = scanTime;
       }

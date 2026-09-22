@@ -16,6 +16,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import reportRoutes from './routes/reports.js';
 import systemRoutes from './routes/system.js';
 import usersRoutes from './routes/users.js';
+import homeLeaveRoutes from './routes/homeLeaves.js';
 import { requireAdmin, requireAuth, requirePageAccess } from './middleware/auth.js';
 import { configureSqlitePragmas } from './db.js';
 import { ensureSettingsInitialized } from './services/settingsService.js';
@@ -99,6 +100,7 @@ app.use('/api/transactions', requireAuth, requirePageAccess('TRANSACTIONS'), tra
 app.use('/api/import', requireAuth, requirePageAccess('IMPORT'), importRoutes);
 app.use('/api/dashboard', requireAuth, requirePageAccess('DASHBOARD'), dashboardRoutes);
 app.use('/api/reports', requireAuth, requirePageAccess('REPORTS'), reportRoutes);
+app.use('/api/home-leaves', requireAuth, requirePageAccess('HOME_LEAVES'), homeLeaveRoutes);
 app.use('/api/system', requireAuth, requirePageAccess('SETTINGS'), systemRoutes);
 app.use('/api/users', requireAuth, requireAdmin, usersRoutes);
 

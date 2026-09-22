@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 33033)
+Total output lines: 3527
+
 import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import Barcode from "react-barcode";
@@ -38,6 +41,7 @@ const PAGE_LABELS: Array<{ key: AppPage; path: string; label: string }> = [
   { key: "BADGES", path: "badges", label: "Badges" },
   { key: "TRANSACTIONS", path: "transactions", label: "Transactions" },
   { key: "REPORTS", path: "reports", label: "Reports" },
+  { key: "HOME_LEAVES", path: "home-leaves", label: "Home Leaves" },
   { key: "SETTINGS", path: "settings", label: "Settings" },
   { key: "USER_MANAGEMENT", path: "users", label: "User Management" },
 ];
@@ -1762,319 +1766,108 @@ function StudentsNotEatingPanel() {
 
 function ReportsPage() {
   const todayRange = useMemo(() => getRangeForPreset("today"), []);
-  const [fromDate, setFromDate] = useState(todayRange.from);
-  const [toDate, setToDate] = useState(todayRange.to);
-  const [appliedFromDate, setAppliedFromDate] = useState(todayRange.from);
-  const [appliedToDate, setAppliedToDate] = useState(todayRange.to);
-  const [activePreset, setActivePreset] = useState<
-    "custom" | "today" | "last7" | "week" | "month" | "year"
-  >("today");
-  const [report, setReport] = useState<ReportsSummaryResponse | null>(null);
-  const [error, setError] = useState("");
-  const [activeReportView, setActiveReportView] = useState<"meal-report" | "students-not-eating">("meal-report");
-  const [reportSearch, setReportSearch] = useState("");
-  const [personTypeFilter, setPersonTypeFilter] = useState<"ALL" | "STUDENT" | "STAFF" | "GUEST">("ALL");
-
-  async function loadReport(range?: { from: string; to: string }) {
-    const selectedRange = range ?? { from: fromDate, to: toDate };
-    try {
-      const query = new URLSearchParams({
-        from: selectedRange.from,
-        to: selectedRange.to,
-        startDate: selectedRange.from,
-        endDate: selectedRange.to,
-      });
-      const data = await api<ReportsSummaryResponse>(
-        `/reports/summary?${query.toString()}`,
-      );
-      setReport(data);
-      setAppliedFromDate(selectedRange.from);
-      setAppliedToDate(selectedRange.to);
-      setError("");
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to load report",
-      );
+  const [fromDate, setFromDate] = useS…3033 tokens truncated…ble to load home leaves");
     }
   }
 
-  function applyPreset(preset: "today" | "last7" | "week" | "month" | "year") {
-    const range = getRangeForPreset(preset);
-    setFromDate(range.from);
-    setToDate(range.to);
-    setActivePreset(preset);
-    void loadReport(range);
+  useEffect(() => { void loadHomeLeaves(); }, []);
+
+  function resetForm() {
+    setName("");
+    setStartDate("");
+    setEndDate("");
+    setEditingId(null);
   }
 
-  useEffect(() => {
-    void loadReport();
-  }, []);
+  async function saveHomeLeave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim() || !startDate || !endDate) {
+      setError("Name, start date, and end date are required.");
+      return;
+    }
+    if (endDate < startDate) {
+      setError("End date must be on or after start date.");
+      return;
+    }
+    try {
+      await api(editingId ? `/home-leaves/${editingId}` : "/home-leaves", {
+        method: editingId ? "PATCH" : "POST",
+        body: JSON.stringify({ name: name.trim(), startDate, endDate }),
+      });
+      setMessage(editingId ? "Home leave updated." : "Home leave added.");
+      setError("");
+      resetForm();
+      await loadHomeLeaves();
+    } catch (saveError) {
+      setMessage("");
+      setError(saveError instanceof Error ? saveError.message : "Unable to save home leave");
+    }
+  }
 
-  const mealTotals = report?.mealTotalsByPerson ?? report?.perPersonUsage ?? [];
-  const filteredMealTotals = useMemo(() => {
-    const query = reportSearch.trim().toLowerCase();
-    return mealTotals.filter((row) => {
-      if (personTypeFilter !== "ALL" && row.personType !== personTypeFilter) return false;
-      if (!query) return true;
-      return `${row.firstName} ${row.lastName}`.toLowerCase().includes(query)
-        || row.personId.toLowerCase().includes(query);
-    });
-  }, [mealTotals, personTypeFilter, reportSearch]);
-  const exportQuery = new URLSearchParams({
-    from: appliedFromDate,
-    to: appliedToDate,
-    startDate: appliedFromDate,
-    endDate: appliedToDate,
-  }).toString();
-
-  const reportTabs = <div className="button-row">
-    <button type="button" className={activeReportView === "meal-report" ? "primary" : "secondary"}
-      onClick={() => setActiveReportView("meal-report")}>Meal Report</button>
-    <button type="button" className={activeReportView === "students-not-eating" ? "primary" : "secondary"}
-      onClick={() => setActiveReportView("students-not-eating")}>Students Not Eating</button>
-  </div>;
-
-  if (activeReportView === "students-not-eating") {
-    return <div className="card stack"><h2>Reports</h2>{reportTabs}<StudentsNotEatingPanel /></div>;
+  async function deleteHomeLeave(homeLeave: HomeLeave) {
+    if (!window.confirm(`Delete “${homeLeave.name}”?`)) return;
+    try {
+      await api(`/home-leaves/${homeLeave.id}`, { method: "DELETE" });
+      if (editingId === homeLeave.id) resetForm();
+      setMessage("Home leave deleted.");
+      setError("");
+      await loadHomeLeaves();
+    } catch (deleteError) {
+      setMessage("");
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete home leave");
+    }
   }
 
   return (
-    <div className="card stack">
-      <h2>Reports</h2>
-      {reportTabs}
-      <div className="stack report-controls">
-        <div className="button-row">
-          <button
-            type="button"
-            className={activePreset === "today" ? "primary" : "secondary"}
-            onClick={() => applyPreset("today")}
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            className={activePreset === "last7" ? "primary" : "secondary"}
-            onClick={() => applyPreset("last7")}
-          >
-            Last 7 Days
-          </button>
-          <button
-            type="button"
-            className={activePreset === "week" ? "primary" : "secondary"}
-            onClick={() => applyPreset("week")}
-          >
-            Current Week
-          </button>
-          <button
-            type="button"
-            className={activePreset === "month" ? "primary" : "secondary"}
-            onClick={() => applyPreset("month")}
-          >
-            Current Month
-          </button>
-          <button
-            type="button"
-            className={activePreset === "year" ? "primary" : "secondary"}
-            onClick={() => applyPreset("year")}
-          >
-            Current Year
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setActivePreset("custom")}
-            disabled={activePreset === "custom"}
-          >
-            Custom Range
-          </button>
-        </div>
-        <div className="filters-row">
-          <label>
-            From{" "}
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setActivePreset("custom");
-              }}
-            />
-          </label>
-          <label>
-            To{" "}
-            <input
-              type="date"
-              value={toDate}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setActivePreset("custom");
-              }}
-            />
-          </label>
-          <button
-            className="primary"
-            type="button"
-            onClick={() => void loadReport()}
-          >
-            Apply Filter
-          </button>
-          <ButtonLink
-            className="btn-secondary"
-            href={`${API_BASE}/reports/export.csv?${exportQuery}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Export Transactions CSV
-          </ButtonLink>
-          <ButtonLink
-            className="btn-secondary"
-            href={`${API_BASE}/reports/meal-totals.csv?${exportQuery}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Export Meal Totals CSV
-          </ButtonLink>
-        </div>
+    <section className="card stack">
+      <div>
+        <h1>Home Leaves</h1>
+        <p className="muted">Add academy-wide leave periods. Inclusive leave dates do not count as missed meal days for students.</p>
       </div>
       {error && <p className="error">{error}</p>}
-      {report && (
-        <>
-          <p className="muted">
-            Active mode: <strong>{modeLabel(report.mealTrackingMode)}</strong>
-          </p>
-          <div className="stats-grid">
-            <div className="stat-card">
-              <p className="muted">Scans</p>
-              <p className="value">{report.stats.scans}</p>
-            </div>
-            <div className="stat-card">
-              <p className="muted">Failed Scans</p>
-              <p className="value">{report.stats.failedScans}</p>
-            </div>
-            {report.mealTrackingMode === "camp_meeting" ? (
-              <>
-                <div className="stat-card">
-                  <p className="muted">Total Entitlements</p>
-                  <p className="value">
-                    {report.entitlementSummary.totalEntitlements}
-                  </p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Total Redeemed</p>
-                  <p className="value">
-                    {report.entitlementSummary.totalRedeemed}
-                  </p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Unused Entitlements</p>
-                  <p className="value">
-                    {report.entitlementSummary.totalRemaining}
-                  </p>
-                </div>
-              </>
-            ) : report.mealTrackingMode === "countdown" ? (
-              <>
-                <div className="stat-card">
-                  <p className="muted">Breakfast Remaining</p>
-                  <p className="value">
-                    {report.remainingBalanceSummary.breakfastRemaining}
-                  </p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Lunch Remaining</p>
-                  <p className="value">
-                    {report.remainingBalanceSummary.lunchRemaining}
-                  </p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Dinner Remaining</p>
-                  <p className="value">
-                    {report.remainingBalanceSummary.dinnerRemaining}
-                  </p>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="stat-card">
-                  <p className="muted">Breakfast Tally</p>
-                  <p className="value">{report.tallySummary.breakfastCount}</p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Lunch Tally</p>
-                  <p className="value">{report.tallySummary.lunchCount}</p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Dinner Tally</p>
-                  <p className="value">{report.tallySummary.dinnerCount}</p>
-                </div>
-                <div className="stat-card">
-                  <p className="muted">Total Meals Tallied</p>
-                  <p className="value">{report.tallySummary.totalMealsCount}</p>
-                </div>
-              </>
-            )}
-          </div>
-          <section className="stack">
-            <h3>Meal Totals by Person</h3>
-            <div className="filters-row">
-              <label>
-                Search
-                <input type="search" value={reportSearch} placeholder="Name or Person ID"
-                  onChange={(event) => setReportSearch(event.target.value)} />
-              </label>
-              <label>
-                Type
-                <select value={personTypeFilter}
-                  onChange={(event) => setPersonTypeFilter(event.target.value as "ALL" | "STUDENT" | "STAFF" | "GUEST")}>
-                  <option value="ALL">All types</option>
-                  <option value="STUDENT">Students</option>
-                  <option value="STAFF">Staff</option>
-                  <option value="GUEST">Guests</option>
-                </select>
-              </label>
-            </div>
-            {mealTotals.length === 0 ? (
-              <p className="muted">
-                No meals found for the selected date range.
-              </p>
-            ) : filteredMealTotals.length === 0 ? (
-              <p className="muted">No people match the current search and type filter.</p>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Person ID</th>
-                    <th>Type</th>
-                    <th>Total Meals</th>
-                    <th>Breakfast</th>
-                    <th>Lunch</th>
-                    <th>Dinner</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredMealTotals.map((row) => (
-                    <tr key={row.personId}>
-                      <td>
-                        {row.firstName} {row.lastName}
-                      </td>
-                      <td>{row.personId}</td>
-                      <td>{formatMealLabel(row.personType)}</td>
-                      <td>{row.total}</td>
-                      <td>{row.breakfasts}</td>
-                      <td>{row.lunches}</td>
-                      <td>{row.dinners}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
-        </>
-      )}
-    </div>
+      {message && <p className="success">{message}</p>}
+      <form className="stack" onSubmit={saveHomeLeave}>
+        <div className="form-grid">
+          <label>
+            Leave name
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Christmas Break" maxLength={100} required />
+          </label>
+          <label>
+            Start date
+            <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required />
+          </label>
+          <label>
+            End date
+            <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} required />
+          </label>
+        </div>
+        <div className="actions">
+          <button type="submit">{editingId ? "Save Changes" : "Add Home Leave"}</button>
+          {editingId && <button type="button" className="secondary" onClick={resetForm}>Cancel</button>}
+        </div>
+      </form>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Start Date</th><th>End Date</th><th>Actions</th></tr></thead>
+          <tbody>
+            {homeLeaves.length === 0 ? (
+              <tr><td colSpan={4}>No home leaves have been added.</td></tr>
+            ) : homeLeaves.map((homeLeave) => (
+              <tr key={homeLeave.id}>
+                <td>{homeLeave.name}</td><td>{homeLeave.startDate}</td><td>{homeLeave.endDate}</td>
+                <td className="actions">
+                  <button type="button" className="secondary" onClick={() => {
+                    setEditingId(homeLeave.id); setName(homeLeave.name); setStartDate(homeLeave.startDate); setEndDate(homeLeave.endDate);
+                    setError(""); setMessage("");
+                  }}>Edit</button>
+                  <button type="button" className="danger" onClick={() => void deleteHomeLeave(homeLeave)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -3373,6 +3166,14 @@ export default function App() {
           element={
             <PermissionOnly page="SETTINGS">
               <SettingsPage />
+            </PermissionOnly>
+          }
+        />
+        <Route
+          path="/home-leaves"
+          element={
+            <PermissionOnly page="HOME_LEAVES">
+              <HomeLeavesPage />
             </PermissionOnly>
           }
         />
