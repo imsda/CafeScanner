@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { prisma } from '../db.js';
 import { Parser } from 'json2csv';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get('/', async (req, res) => {
   const { from, to, mealType, result, station, personId } = req.query;

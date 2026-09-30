@@ -1,12 +1,12 @@
 import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { endOfDay, startOfDay } from 'date-fns';
 import { Parser } from 'json2csv';
 import { prisma } from '../db.js';
 import { getMealTotalsByPerson } from '../services/mealTotalsReport.js';
 import { clearStudentMealWarning, getStudentsNotEating } from '../services/studentMealWarningService.js';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get('/students-not-eating', async (_req, res) => {
   res.json(await getStudentsNotEating());

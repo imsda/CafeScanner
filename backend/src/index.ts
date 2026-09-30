@@ -1,4 +1,6 @@
 import express from 'express';
+import { Prisma } from '@prisma/client';
+import { ZodError } from 'zod';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import session from 'express-session';
@@ -115,9 +117,25 @@ if (isProduction) {
 }
 
 app.use('/api', (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof ZodError) {
+    const details = error.issues.map((issue) => `${issue.path.join('.') || 'body'}: ${issue.message}`);
+    return res.status(400).json({ error: 'Invalid request.', details });
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+    return res.status(404).json({ error: 'Record not found.' });
+  }
+  // Errors raised by body-parser and similar middleware carry a 4xx status (e.g. malformed JSON).
+  const status = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : 500;
+  if (status >= 400 && status < 500) {
+    return res.status(status).json({ error: error instanceof Error ? error.message : 'Bad request.' });
+  }
   const message = error instanceof Error && error.message ? error.message : 'Internal server error';
   console.error('[API] Unhandled error.', error);
   res.status(500).json({ error: message });
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[PROCESS] Unhandled promise rejection.', reason);
 });
 
 if (isProduction) {

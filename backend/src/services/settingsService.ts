@@ -1,4 +1,4 @@
-import { MealTrackingMode } from '@prisma/client';
+import { MealTrackingMode, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 
 let settingsInitPromise: Promise<void> | null = null;
@@ -56,6 +56,40 @@ async function createSettingsIfMissing() {
   }
 }
 
+// Fields safe to return to clients. Excludes full-wipe token state.
+export const SETTINGS_PUBLIC_SELECT = {
+  id: true,
+  schoolName: true,
+  timezone: true,
+  breakfastStart: true,
+  breakfastEnd: true,
+  lunchStart: true,
+  lunchEnd: true,
+  dinnerStart: true,
+  dinnerEnd: true,
+  scannerCooldownSeconds: true,
+  scannerDiagnosticsEnabled: true,
+  stationName: true,
+  enableSounds: true,
+  allowManualMealOverride: true,
+  hideInactiveByDefault: true,
+  mealTrackingMode: true,
+  googleSheetsEnabled: true,
+  googleSheetId: true,
+  googleSheetTabName: true,
+  googleSyncIntervalMinutes: true,
+  googleAutoImportEnabled: true,
+  campMeetingAutoSelectFirstAvailable: true,
+  tallyWriteBackMode: true,
+  tallyWeeklyRawTabName: true,
+  tallyWeeklyViewTabName: true,
+  tallyWeekStartsOn: true,
+  studentMealWarningDays: true,
+  googleLastAutoImportAt: true,
+  googleLastAutoImportSummary: true,
+  updatedAt: true
+} satisfies Prisma.SettingSelect;
+
 export async function ensureSettingsInitialized() {
   if (!settingsInitPromise) {
     settingsInitPromise = createSettingsIfMissing().catch((error) => {
@@ -71,37 +105,7 @@ export async function getSettings() {
   await ensureSettingsInitialized();
   const settings = await prisma.setting.findUniqueOrThrow({
     where: { id: 1 },
-    select: {
-      id: true,
-      schoolName: true,
-      timezone: true,
-      breakfastStart: true,
-      breakfastEnd: true,
-      lunchStart: true,
-      lunchEnd: true,
-      dinnerStart: true,
-      dinnerEnd: true,
-      scannerCooldownSeconds: true,
-      scannerDiagnosticsEnabled: true,
-      stationName: true,
-      enableSounds: true,
-      allowManualMealOverride: true,
-      hideInactiveByDefault: true,
-      mealTrackingMode: true,
-      googleSheetsEnabled: true,
-      googleSheetId: true,
-      googleSheetTabName: true,
-      googleSyncIntervalMinutes: true,
-      googleAutoImportEnabled: true,
-      campMeetingAutoSelectFirstAvailable: true,
-      tallyWriteBackMode: true,
-      tallyWeeklyRawTabName: true,
-      tallyWeeklyViewTabName: true,
-      tallyWeekStartsOn: true,
-      googleLastAutoImportAt: true,
-      googleLastAutoImportSummary: true,
-      updatedAt: true
-    }
+    select: SETTINGS_PUBLIC_SELECT
   });
   const patch: Partial<typeof settings> = {};
   if (!settings.timezone) patch.timezone = DEFAULT_TIMEZONE;
@@ -110,7 +114,7 @@ export async function getSettings() {
     if (normalized !== settings[field]) patch[field] = normalized;
   }
   if (Object.keys(patch).length > 0) {
-    return prisma.setting.update({ where: { id: 1 }, data: patch });
+    return prisma.setting.update({ where: { id: 1 }, data: patch, select: SETTINGS_PUBLIC_SELECT });
   }
   return settings;
 }

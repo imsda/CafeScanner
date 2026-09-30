@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 
-const router = Router();
+const router = asyncRouter();
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const homeLeaveSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),

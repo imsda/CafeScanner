@@ -2294,6 +2294,7 @@ function SettingsPage() {
   const canManageGoogleSheets = user?.role === "OWNER" || user?.role === "ADMIN";
   const canManageBackups = user?.role === "OWNER" || user?.role === "ADMIN";
   const canManageUpdates = user?.role === "OWNER" || user?.role === "ADMIN";
+  const canManageData = user?.role === "OWNER" || user?.role === "ADMIN";
   const isCampMeetingMode = settings?.mealTrackingMode === "camp_meeting";
   const isGoogleSheetsSyncEnabled = Boolean(settings?.googleSheetsEnabled);
   const hasGoogleSheetId = Boolean(settings?.googleSheetId?.trim());
@@ -2494,8 +2495,8 @@ function SettingsPage() {
         <button type="button" className={activeSettingsSection === "scanner" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("scanner")}>Scanner</button>
         <button type="button" className={activeSettingsSection === "google-sheets-sync" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("google-sheets-sync")}>Google Sheets Sync</button>
         {canManageUpdates && <button type="button" className={activeSettingsSection === "updates" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("updates")}>Updates</button>}
-        <button type="button" className={activeSettingsSection === "data-reset-tools" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("data-reset-tools")}>Data Reset Tools</button>
-        <button type="button" className={activeSettingsSection === "danger-zone" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("danger-zone")}>Danger Zone</button>
+        {canManageData && <button type="button" className={activeSettingsSection === "data-reset-tools" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("data-reset-tools")}>Data Reset Tools</button>}
+        {canManageData && <button type="button" className={activeSettingsSection === "danger-zone" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("danger-zone")}>Danger Zone</button>}
       </div>
 
       {activeSettingsSection === "general" && (
@@ -2545,6 +2546,7 @@ function SettingsPage() {
           Meal tracking mode
           <select
             value={settings.mealTrackingMode}
+            disabled={!canManageData}
             onChange={(e) => {
               const selected = e.target.value as MealTrackingMode;
               if (selected === settings.mealTrackingMode) return;
@@ -3019,7 +3021,7 @@ function SettingsPage() {
         </section>
       )}
 
-      {activeSettingsSection === "data-reset-tools" && (<section className="card stack compact-card">
+      {canManageData && activeSettingsSection === "data-reset-tools" && (<section className="card stack compact-card">
         <h3>Data Reset Tools</h3>
         <label>
           Reset action
@@ -3044,7 +3046,7 @@ function SettingsPage() {
         </button>
       </section>)}
 
-      {activeSettingsSection === "danger-zone" && (
+      {canManageData && activeSettingsSection === "danger-zone" && (
         <>
       {canManageBackups ? (
         <section className="card stack compact-card">

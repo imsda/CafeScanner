@@ -1,5 +1,6 @@
 import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
+import { requireAdmin } from '../middleware/auth.js';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
@@ -9,7 +10,7 @@ import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSh
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from '../services/campMeetingImportService.js';
 
 const upload = multer({ storage: multer.memoryStorage() });
-const router = Router();
+const router = asyncRouter();
 
 type Row = Record<string, string>;
 
@@ -292,8 +293,7 @@ router.post('/google-sheet/import', async (_req, res) => {
   }
 });
 
-router.post('/google-sheet/write-back-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/write-back-now', requireAdmin, async (req, res) => {
   try {
   const mode = await getMode();
   let result;
@@ -316,8 +316,7 @@ router.post('/google-sheet/write-back-now', async (req, res) => {
   }
 });
 
-router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/write-weekly-tally-now', requireAdmin, async (req, res) => {
   const settings = await getSettings();
   if (!settings.googleSheetsEnabled) return res.status(400).json({ error: 'Google Sheets sync is disabled.' });
   if (!settings.googleSheetId?.trim()) return res.status(400).json({ error: 'Google Sheet ID is required.' });
@@ -343,8 +342,7 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   }
 });
 
-router.post('/google-sheet/write-log-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/write-log-now', requireAdmin, async (req, res) => {
   try {
     const result = await syncTransactionLogToSheet();
     return res.json({ ok: true, ...result });
@@ -355,8 +353,7 @@ router.post('/google-sheet/write-log-now', async (req, res) => {
   }
 });
 
-router.post('/google-sheet/rebuild-log-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/rebuild-log-now', requireAdmin, async (req, res) => {
   try {
     const result = await rebuildTransactionLogFromDatabase();
     return res.json({ ok: true, ...result });

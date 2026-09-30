@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { prisma } from '../db.js';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 
-const router = Router();
+const router = asyncRouter();
 const DELETE_CONFIRMATION_PHRASE = 'DELETE USER';
 
 function localMealDay(timezone: string): 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' {

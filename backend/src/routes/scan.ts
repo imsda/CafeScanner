@@ -1,5 +1,5 @@
 import { MealType } from '@prisma/client';
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { processScan } from '../services/scanService.js';
@@ -7,7 +7,7 @@ import { getStudentsNotEating } from '../services/studentMealWarningService.js';
 
 import { searchPeople } from '../services/searchPeople.js';
 
-const router = Router();
+const router = asyncRouter();
 
 // These routes inherit SCAN access, not administrative SETTINGS access.
 router.get('/settings', async (req, res) => {

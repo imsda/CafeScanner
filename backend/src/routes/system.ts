@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { prisma } from '../db.js';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireAdmin, requireOwner } from '../middleware/auth.js';
 import { acquireOperationLock, pauseScheduler, releaseOperationLock, resumeScheduler, waitForOperationsToFinish } from '../services/operationLockService.js';
 
-const router = Router();
+const router = asyncRouter();
 let activeUpdatePromise: Promise<{ ok: boolean; output: string; startedAt: string; finishedAt: string; error?: string }> | null = null;
 
 const backendRouteDir = path.dirname(fileURLToPath(import.meta.url));
@@ -86,11 +86,6 @@ async function getUpdateScriptDiagnostics(): Promise<UpdateScriptDiagnostics> {
   return { cwd, repoRoot, resolvedScriptPath, exists, executable, statMode };
 }
 
-function requireOwner(req: any, res: any, next: any) {
-  if (req.session?.role !== 'OWNER') return res.status(403).json({ error: 'Owner access required' });
-  next();
-}
-
 async function readGitRef(command: string[]) {
   const repoRoot = await resolveRepoRoot();
   return new Promise<string | null>((resolve) => {
@@ -101,7 +96,7 @@ async function readGitRef(command: string[]) {
     proc.on('error', () => resolve(null));
   });
 }
-const backupRouter = Router();
+const backupRouter = asyncRouter();
 const dbUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }
@@ -160,75 +155,61 @@ async function clearOperationalMealData(clearPeople: boolean) {
   };
 }
 
-router.post('/clear-database', async (req, res) => {
-  const actedBy = req.session.adminUserId;
+type ResetAction = 'clear-database' | 'clear-meal-data' | 'clear-people-import-data' | 'reset-meal-tracking-data';
 
-  try {
-    pauseScheduler();
-    console.log('[RESET] waiting for import to finish');
-    await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
-    const deleted = await clearOperationalMealData(true);
-    console.log(`[ADMIN_ACTION] clear-database (legacy route) executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-    return res.json({ ok: true, action: 'clear-database', deleted, message: 'Meal tracking operational data cleared. Users, credentials, roles, account status, and page permissions were preserved.' });
-  } catch (error) {
-    console.error('[SYSTEM] clear-database failed', error);
-    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to clear database data.' });
+const RESET_ACTIONS: Record<ResetAction, { clearPeople: boolean; message: string; failure: string }> = {
+  'clear-database': {
+    clearPeople: true,
+    message: 'Meal tracking operational data cleared. Users, credentials, roles, account status, and page permissions were preserved.',
+    failure: 'Failed to clear database data.'
+  },
+  'clear-meal-data': {
+    clearPeople: false,
+    message: 'Meal data cleared (transactions + meal entitlements). Users and permissions were preserved.',
+    failure: 'Failed to clear meal data.'
+  },
+  'clear-people-import-data': {
+    clearPeople: true,
+    message: 'People/import data cleared (people + imports + dependent meal data). Users and permissions were preserved.',
+    failure: 'Failed to clear people/import data.'
+  },
+  'reset-meal-tracking-data': {
+    clearPeople: true,
+    message: 'Meal tracking data reset. Users, credentials, roles, account status, and page permissions were preserved.',
+    failure: 'Failed to reset meal tracking data.'
   }
-});
+};
 
-router.post('/clear-meal-data', async (req, res) => {
-  const actedBy = req.session.adminUserId;
+async function clearMealDataOnly() {
+  const transactions = await prisma.scanTransaction.deleteMany({});
+  const mealEntitlements = await prisma.mealEntitlement.deleteMany({});
+  return { transactions: transactions.count, mealEntitlements: mealEntitlements.count, people: 0, importRows: 0 };
+}
 
-  try {
-    const transactions = await prisma.scanTransaction.deleteMany({});
-    const mealEntitlements = await prisma.mealEntitlement.deleteMany({});
-    const deleted = { transactions: transactions.count, mealEntitlements: mealEntitlements.count, people: 0, importRows: 0 };
-    console.log(`[ADMIN_ACTION] clear-meal-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-    return res.json({ ok: true, action: 'clear-meal-data', deleted, message: 'Meal data cleared (transactions + meal entitlements). Users and permissions were preserved.' });
-  } catch (error) {
-    console.error('[SYSTEM] clear-meal-data failed', error);
-    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to clear meal data.' });
-  }
-});
+for (const [action, config] of Object.entries(RESET_ACTIONS) as [ResetAction, (typeof RESET_ACTIONS)[ResetAction]][]) {
+  router.post(`/${action}`, requireAdmin, async (req, res) => {
+    const actedBy = req.session.adminUserId;
 
-router.post('/clear-people-import-data', async (req, res) => {
-  const actedBy = req.session.adminUserId;
+    if (!acquireOperationLock('reset')) {
+      return res.status(409).json({ ok: false, error: 'Reset already in progress.' });
+    }
 
-  try {
-    pauseScheduler();
-    console.log('[RESET] waiting for import to finish');
-    await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
-    const deleted = await clearOperationalMealData(true);
-    console.log(`[ADMIN_ACTION] clear-people-import-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-    return res.json({ ok: true, action: 'clear-people-import-data', deleted, message: 'People/import data cleared (people + imports + dependent meal data). Users and permissions were preserved.' });
-  } catch (error) {
-    console.error('[SYSTEM] clear-people-import-data failed', error);
-    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to clear people/import data.' });
-  }
-});
-
-router.post('/reset-meal-tracking-data', async (req, res) => {
-  const actedBy = req.session.adminUserId;
-
-  if (!acquireOperationLock('reset')) {
-    return res.status(409).json({ ok: false, error: 'Reset already in progress.' });
-  }
-
-  try {
-    pauseScheduler();
-    console.log('[RESET] waiting for import to finish');
-    await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
-    const deleted = await clearOperationalMealData(true);
-    console.log(`[ADMIN_ACTION] reset-meal-tracking-data executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
-    return res.json({ ok: true, action: 'reset-meal-tracking-data', deleted, message: 'Meal tracking data reset. Users, credentials, roles, account status, and page permissions were preserved.' });
-  } catch (error) {
-    console.error('[SYSTEM] reset-meal-tracking-data failed', error);
-    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Failed to reset meal tracking data.' });
-  } finally {
-    releaseOperationLock('reset');
-    resumeScheduler();
-  }
-});
+    try {
+      pauseScheduler();
+      console.log('[RESET] waiting for import to finish');
+      await waitForOperationsToFinish(['import', 'writeback'], '[RESET] wait');
+      const deleted = config.clearPeople ? await clearOperationalMealData(true) : await clearMealDataOnly();
+      console.log(`[ADMIN_ACTION] ${action} executed by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
+      return res.json({ ok: true, action, deleted, message: config.message });
+    } catch (error) {
+      console.error(`[SYSTEM] ${action} failed`, error);
+      return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : config.failure });
+    } finally {
+      releaseOperationLock('reset');
+      resumeScheduler();
+    }
+  });
+}
 
 backupRouter.get('/download', async (_req, res) => {
   const dbPath = await resolveSqliteDbPath();

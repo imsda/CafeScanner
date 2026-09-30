@@ -1,13 +1,14 @@
 import { MealTrackingMode } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
-import { getSettings } from '../services/settingsService.js';
+import { getSettings, SETTINGS_PUBLIC_SELECT } from '../services/settingsService.js';
+import { requireAdmin, requireOwner } from '../middleware/auth.js';
 import { getGoogleSheetsSchedulerStatus, runGoogleSheetsSyncSchedulerCheckNow } from '../services/campMeetingSheetSyncService.js';
 
-const router = Router();
+const router = asyncRouter();
 const MODE_SWITCH_CONFIRMATION = 'SWITCH MODE';
 const DEFAULT_TIMEZONE = 'America/Chicago';
 const TIME_FIELDS = ['breakfastStart', 'breakfastEnd', 'lunchStart', 'lunchEnd', 'dinnerStart', 'dinnerEnd'] as const;
@@ -82,8 +83,7 @@ router.get('/google-sheets/scheduler-status', async (_req, res) => {
   res.json(await getGoogleSheetsSchedulerStatus());
 });
 
-router.post('/google-sheets/run-scheduled-check-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheets/run-scheduled-check-now', requireAdmin, async (_req, res) => {
   const result = await runGoogleSheetsSyncSchedulerCheckNow();
   res.json({ ok: true, ...result });
 });
@@ -119,14 +119,13 @@ router.put('/', async (req, res) => {
     }
   }
   await getSettings();
-  const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload }));
+  const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload, select: SETTINGS_PUBLIC_SELECT }));
   console.log('[SETTINGS] Updated settings payload keys:', Object.keys(payload));
   res.json(updated);
 });
 
 
-router.post('/full-wipe/arm', async (req, res) => {
-  if (req.session.role !== 'OWNER') return res.status(403).json({ error: 'OWNER access required' });
+router.post('/full-wipe/arm', requireOwner, async (req, res) => {
   const payload = armFullWipeSchema.parse(req.body);
   if (payload.confirmationPhrase !== 'ARM FULL WIPE') return res.status(400).json({ error: 'Confirmation phrase must exactly match ARM FULL WIPE.' });
   const token = crypto.randomBytes(32).toString('hex');
@@ -136,7 +135,7 @@ router.post('/full-wipe/arm', async (req, res) => {
   return res.json({ ok: true, token, expiresAt });
 });
 
-router.put('/meal-tracking-mode', async (req, res) => {
+router.put('/meal-tracking-mode', requireAdmin, async (req, res) => {
   const payload = switchModeSchema.parse(req.body);
 
   if (payload.confirmationPhrase !== MODE_SWITCH_CONFIRMATION) {

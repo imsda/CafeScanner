@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { startOfDay } from 'date-fns';
 import { prisma } from '../db.js';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get('/summary', async (_req, res) => {
   const today = startOfDay(new Date());
