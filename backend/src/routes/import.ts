@@ -1,6 +1,7 @@
 import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
 import { asyncRouter } from '../utils/asyncRouter.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { normalizeCampMeetingPersonId } from '../utils/personId.js';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
@@ -29,10 +30,6 @@ type ParsedPersonName = {
   firstName: string;
   lastName: string;
 };
-
-function normalizeCampMeetingPersonId(value: string): string {
-  return value.trim().toUpperCase();
-}
 
 function parseBool(v: string) {
   return ['1', 'true', 'yes', 'y'].includes((v || '').toLowerCase());

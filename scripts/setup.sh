@@ -337,13 +337,15 @@ is_sqlite_database_url() {
 resolve_sqlite_db_path() {
   local database_url="$1"
   local sqlite_target="${database_url#file:}"
+  sqlite_target="${sqlite_target%%\?*}"
 
   if [[ "$sqlite_target" == /* ]]; then
     printf '%s\n' "$sqlite_target"
     return
   fi
 
-  printf '%s\n' "backend/${sqlite_target#./}"
+  # Prisma resolves relative SQLite paths against the schema directory (backend/prisma).
+  printf '%s\n' "backend/prisma/${sqlite_target#./}"
 }
 
 run_prisma_status_check() {

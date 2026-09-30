@@ -2,14 +2,8 @@ import { MealDay, MealTrackingMode, MealType, ScanResult } from '@prisma/client'
 import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
+import { normalizeCampMeetingPersonId, normalizePersonId } from '../utils/personId.js';
 
-function normalizeCampMeetingPersonId(value: string): string {
-  return value.trim();
-}
-
-function normalizePersonId(value: string): string {
-  return value.trim();
-}
 
 function localDateKey(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
@@ -160,7 +154,20 @@ async function redeemCampMeetingEntitlement(params: {
     }
   });
 
-  if (!entitlement) {
+  // Conditional update: only one scan can flip an entitlement to redeemed.
+  const redeemed = entitlement
+    ? await tx.mealEntitlement.updateMany({
+      where: { id: entitlement.id, redeemed: false },
+      data: {
+        redeemed: true,
+        redeemedAt: new Date(),
+        redeemedBy: entitlement.personName || null,
+        sheetSyncedAt: null
+      }
+    })
+    : { count: 0 };
+
+  if (!entitlement || redeemed.count !== 1) {
     await tx.scanTransaction.create({
       data: {
         scannedValue: personIdValue,
@@ -180,16 +187,6 @@ async function redeemCampMeetingEntitlement(params: {
   }
 
   const linkedPerson = await tx.person.findUnique({ where: { personId: personIdValue } });
-
-  await tx.mealEntitlement.update({
-    where: { id: entitlement.id },
-    data: {
-      redeemed: true,
-      redeemedAt: new Date(),
-      redeemedBy: entitlement.personName || null,
-      sheetSyncedAt: null
-    }
-  });
 
   await tx.scanTransaction.create({
     data: {
@@ -252,7 +249,30 @@ async function redeemCampMeetingEntitlement(params: {
   };
 }
 
-export async function processScan(rawPersonId: string, options?: { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number }) {
+type ProcessScanOptions = { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number };
+
+// Scans of the same ID are processed one at a time so the cooldown check and the
+// redemption/decrement cannot interleave (e.g. a double read from a USB scanner or
+// two stations). The key is case-insensitive so it covers every mode's normalisation.
+const scanQueues = new Map<string, Promise<unknown>>();
+
+async function withScanLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = scanQueues.get(key) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  const tail = run.catch(() => undefined);
+  scanQueues.set(key, tail);
+  try {
+    return await run;
+  } finally {
+    if (scanQueues.get(key) === tail) scanQueues.delete(key);
+  }
+}
+
+export async function processScan(rawPersonId: string, options?: ProcessScanOptions) {
+  return withScanLock(normalizeCampMeetingPersonId(rawPersonId), () => processScanUnlocked(rawPersonId, options));
+}
+
+async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOptions) {
   const scanTime = new Date();
   const originalScannedValue = rawPersonId.trim();
   const settings = await prisma.setting.findUnique({ where: { id: 1 } });
@@ -473,7 +493,14 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
     if (mode === MealTrackingMode.countdown) {
       const remainingField = remainingFieldByMeal[detectedMeal];
-      if (!remainingField || person[remainingField] <= 0) {
+      // Conditional decrement so a balance can never go below zero.
+      const decremented = remainingField && person[remainingField] > 0
+        ? await tx.person.updateMany({
+          where: { id: person.id, [remainingField]: { gt: 0 } },
+          data: { [remainingField]: { decrement: 1 } }
+        })
+        : { count: 0 };
+      if (!remainingField || decremented.count !== 1) {
         await tx.scanTransaction.create({
           data: {
             scannedValue: personIdValue,
@@ -493,10 +520,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         };
       }
 
-      const updated = await tx.person.update({
-        where: { id: person.id },
-        data: { [remainingField]: { decrement: 1 } }
-      });
+      const updated = await tx.person.findUniqueOrThrow({ where: { id: person.id } });
 
       await tx.scanTransaction.create({
         data: {

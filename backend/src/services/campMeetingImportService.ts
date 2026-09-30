@@ -1,6 +1,7 @@
 import { MealDay, MealType } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
+import { normalizeCampMeetingPersonId } from '../utils/personId.js';
 
 const REQUIRED_HEADERS = ['ticket_id', 'reg_id', 'guest_name', 'meal_type', 'meal_day', 'meal_date', 'ticket_type', 'price', 'redeemed', 'redeemed_at', 'redeemed_by', 'notes'] as const;
 
@@ -47,10 +48,6 @@ type ImportRunOptions = ImportOptions & { batchSize?: number };
 
 function normalizeHeaderName(value: string): string {
   return String(value || '').trim().toLowerCase();
-}
-
-function normalizePersonId(value: string): string {
-  return String(value || '').trim().toUpperCase();
 }
 
 function normalizeMealType(value: string): MealType | null {
@@ -141,7 +138,7 @@ export function normalizeCampMeetingRows(inputRows: RawInputRow[], options: Norm
 
   inputRows.forEach((raw, idx) => {
     const rowNumber = idx + 2;
-    const personId = normalizePersonId(raw.reg_id);
+    const personId = normalizeCampMeetingPersonId(raw.reg_id);
     const personName = String(raw.guest_name || '').trim();
     const mealType = normalizeMealType(raw.meal_type);
     const mealDay = normalizeMealDay(raw.meal_day);

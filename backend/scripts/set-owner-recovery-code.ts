@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
-import { promptHidden, promptText } from './lib/prompt';
+import { promptHidden, promptText } from './lib/prompt.js';
 
 dotenv.config();
 
