@@ -249,3 +249,16 @@ select {
   .badge-grid { grid-template-columns: repeat(3, 1fr); }
   .badge { break-inside: avoid; page-break-inside: avoid; }
 }
+
+/* Reports → Meals by Person Type */
+.type-totals td { text-align: right; font-variant-numeric: tabular-nums; }
+.type-totals th[scope="row"] { text-align: left; }
+.type-totals .summary-row { background: #f6f9fe; font-weight: 600; }
+.type-totals .selected-row { outline: 2px solid #adc5e5; outline-offset: -2px; }
+.link-button { border: none; background: none; padding: 0; color: #1f5da8; font: inherit; font-weight: inherit; cursor: pointer; text-decoration: underline; }
+.link-button:hover { background: none; }
+
+/* Sortable table headers */
+.sort-button { border: none; background: none; padding: 0; font: inherit; font-weight: 600; color: inherit; cursor: pointer; gap: 0.35rem; }
+.sort-button:hover { background: none; text-decoration: underline; }
+.sort-indicator { font-size: 0.75em; opacity: 0.7; }
