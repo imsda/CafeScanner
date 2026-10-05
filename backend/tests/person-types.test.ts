@@ -54,6 +54,14 @@ test('Tally Up person types and meal limits', async (t) => {
   const clearedStudent = await prisma.person.findUniqueOrThrow({ where: { id: student.id } });
   assert.equal(clearedStudent.mealWarningSince, null);
 
+  // Village students follow the same student rules as dorm students: one scan per meal and missed-meal warnings.
+  const village = await prisma.person.create({ data: { firstName: 'Test', lastName: 'Village', personId: 'village', codeValue: 'village', personType: 'VILLAGE_STUDENT' } });
+  const villageWarnings = await getStudentsNotEating();
+  assert.equal(villageWarnings.students.find((row) => row.id === village.id)?.personType, 'VILLAGE_STUDENT');
+  assert.equal((await scan('village')).ok, true);
+  const villageDuplicate = await scan('village');
+  assert.equal('reason' in villageDuplicate && villageDuplicate.reason, 'STUDENT_MEAL_ALREADY_SCANNED');
+
   for (const personType of ['STAFF', 'GUEST'] as const) {
     await prisma.person.create({ data: { firstName: 'Test', lastName: personType, personId: personType, codeValue: personType, personType } });
     for (let i = 0; i < 3; i++) assert.equal((await scan(personType)).ok, true);
@@ -91,9 +99,13 @@ test('Tally Up person types and meal limits', async (t) => {
   const { peopleSheetRows, parsePersonType } = await import('../src/services/peopleSheetRows.js');
   const { importPeopleFromRows, writeBackTallyCounts } = await import('../src/services/campMeetingSheetSyncService.js');
   const { searchPeople } = await import('../src/services/searchPeople.js');
-  for (const [value, expected] of [['1', 'STUDENT'], ['student', 'STUDENT'], ['2', 'STAFF'], ['Staff', 'STAFF'], ['3', 'GUEST'], ['guest', 'GUEST']]) assert.equal(parsePersonType(value), expected);
+  for (const [value, expected] of [
+    ['1', 'STUDENT'], ['student', 'STUDENT'], ['Dorm Student', 'STUDENT'], ['dorm', 'STUDENT'],
+    ['2', 'STAFF'], ['Staff', 'STAFF'], ['3', 'GUEST'], ['guest', 'GUEST'],
+    ['4', 'VILLAGE_STUDENT'], ['Village Student', 'VILLAGE_STUDENT'], ['village_student', 'VILLAGE_STUDENT'], ['village', 'VILLAGE_STUDENT']
+  ]) assert.equal(parsePersonType(value), expected);
   assert.equal(parsePersonType(' '), undefined);
-  assert.throws(() => parsePersonType('4'));
+  assert.throws(() => parsePersonType('5'));
   assert.throws(() => peopleSheetRows([['Wrong header']]));
   const rows = peopleSheetRows([
     ['Name', 'User Type', 'ID', 'Total', 'Dinner', 'Lunch', 'Breakfast'],

@@ -51,9 +51,10 @@ enum ScanResult {
 }
 
 enum PersonType {
-  STUDENT
+  STUDENT // Dorm student (User Type 1)
   STAFF
   GUEST
+  VILLAGE_STUDENT // Village student (User Type 4); same meal rules as STUDENT
 }
 
 enum MealTrackingMode {

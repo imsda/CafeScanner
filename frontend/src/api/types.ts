@@ -1,9 +1,11 @@
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
 export type MealTrackingMode = 'camp_meeting' | 'countdown' | 'tally';
 export type MealDay = 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
+// STUDENT is a dorm student; VILLAGE_STUDENT follows the same student rules.
+export type PersonType = 'STUDENT' | 'STAFF' | 'GUEST' | 'VILLAGE_STUDENT';
 
 export interface ScanPerson {
-  personType?: 'STUDENT' | 'STAFF' | 'GUEST';
+  personType?: PersonType;
   id?: number;
   firstName: string;
   lastName: string;
@@ -135,7 +137,7 @@ export interface ReportsSummaryResponse {
     personId: string;
     firstName: string;
     lastName: string;
-    personType: 'STUDENT' | 'STAFF' | 'GUEST';
+    personType: PersonType;
     breakfasts: number;
     lunches: number;
     dinners: number;
@@ -145,7 +147,7 @@ export interface ReportsSummaryResponse {
     personId: string;
     firstName: string;
     lastName: string;
-    personType: 'STUDENT' | 'STAFF' | 'GUEST';
+    personType: PersonType;
     breakfasts: number;
     lunches: number;
     dinners: number;
@@ -179,7 +181,7 @@ export interface ReportsSummaryResponse {
       firstName: string;
       lastName: string;
       personId: string;
-      personType: 'STUDENT' | 'STAFF' | 'GUEST';
+      personType: PersonType;
     };
   }>;
 }
@@ -192,6 +194,7 @@ export interface StudentsNotEatingResponse {
     personId: string;
     firstName: string;
     lastName: string;
+    personType: PersonType;
     missedDays: number;
     lastMealAt: string | null;
     warningSince: string | null;

@@ -2,6 +2,7 @@ import { asyncRouter } from '../utils/asyncRouter.js';
 import { prisma } from '../db.js';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
+import { PERSON_TYPE_VALUES } from '../utils/personType.js';
 
 const router = asyncRouter();
 const DELETE_CONFIRMATION_PHRASE = 'DELETE USER';
@@ -27,7 +28,7 @@ function localMealDay(timezone: string): 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' |
 
 
 const personSchema = z.object({
-  personType: z.enum(['STUDENT', 'STAFF', 'GUEST']).default('GUEST'),
+  personType: z.enum(PERSON_TYPE_VALUES).default('GUEST'),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   personId: z.string().min(1),

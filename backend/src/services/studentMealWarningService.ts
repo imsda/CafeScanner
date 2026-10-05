@@ -1,6 +1,7 @@
 import { MealTrackingMode, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
+import { STUDENT_PERSON_TYPES } from '../utils/personType.js';
 
 export async function getStudentsNotEating(now = new Date()) {
   const settings = await prisma.setting.findUniqueOrThrow({
@@ -13,12 +14,13 @@ export async function getStudentsNotEating(now = new Date()) {
   }
 
   const students = await prisma.person.findMany({
-    where: { active: true, personType: 'STUDENT' },
+    where: { active: true, personType: { in: STUDENT_PERSON_TYPES } },
     select: {
       id: true,
       personId: true,
       firstName: true,
       lastName: true,
+      personType: true,
       createdAt: true,
       mealWarningSince: true,
       mealWarningClearedAt: true
@@ -47,6 +49,7 @@ export async function getStudentsNotEating(now = new Date()) {
       personId: student.personId,
       firstName: student.firstName,
       lastName: student.lastName,
+      personType: student.personType,
       missedDays: calculatedMissedDays,
       lastMealAt: latestMealByPerson.get(student.id)?.toISOString() ?? null,
       warningSince: student.mealWarningSince?.toISOString() ?? null
@@ -58,7 +61,7 @@ export async function getStudentsNotEating(now = new Date()) {
 
 export async function clearStudentMealWarning(personId: number) {
   return prisma.person.update({
-    where: { id: personId, personType: 'STUDENT' },
+    where: { id: personId, personType: { in: STUDENT_PERSON_TYPES } },
     data: { mealWarningSince: null, mealWarningClearedAt: new Date() },
     select: { id: true, mealWarningSince: true, mealWarningClearedAt: true }
   });

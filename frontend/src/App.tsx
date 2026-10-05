@@ -6,6 +6,7 @@ import { ApiNetworkError, api, API_BASE } from "./api/client";
 import type {
   MealTrackingMode,
   MealType,
+  PersonType,
   ReportsSummaryResponse,
   StudentsNotEatingResponse,
   ScanPerson,
@@ -86,6 +87,24 @@ function renderStoredTimeValue(timeValue: string): string {
 
 function formatMealLabel(meal: string): string {
   return meal.charAt(0) + meal.slice(1).toLowerCase();
+}
+
+// Ordered by the numeric User Type codes used in People and Google Sheets.
+const PERSON_TYPE_OPTIONS: Array<{ value: PersonType; code: number; label: string }> = [
+  { value: "STUDENT", code: 1, label: "Dorm Student" },
+  { value: "STAFF", code: 2, label: "Staff" },
+  { value: "GUEST", code: 3, label: "Guest" },
+  { value: "VILLAGE_STUDENT", code: 4, label: "Village Student" },
+];
+
+function formatPersonType(personType: string): string {
+  return PERSON_TYPE_OPTIONS.find((option) => option.value === personType)?.label ?? formatMealLabel(personType);
+}
+
+function PersonTypeOptions() {
+  return <>{PERSON_TYPE_OPTIONS.map((option) => (
+    <option key={option.value} value={option.value}>{option.code}: {option.label}</option>
+  ))}</>;
 }
 
 function modeLabel(mode: MealTrackingMode): string {
@@ -773,7 +792,7 @@ function ScanPage() {
           {peopleMatches.length > 0 && <>
             <p className="muted">Select Scan to record a meal. Shared IDs use the normal ticket selection rules. Showing up to 20 matches.</p>
             <ul>{peopleMatches.map((person, index) => <li key={`${person.personId}-${index}`}>
-              <strong>{person.name}</strong> — ID: {person.personId} {person.personType ? `(${person.personType})` : ''}{" "}
+              <strong>{person.name}</strong> — ID: {person.personId} {person.personType ? `(${formatPersonType(person.personType)})` : ''}{" "}
               <button type="button" disabled={isSubmitting} onClick={() => {
                 setPeopleQuery("");
                 void submitScan(person.personId).finally(() => window.setTimeout(() => peopleSearchInputRef.current?.focus(), 0));
@@ -855,7 +874,7 @@ function ScanPage() {
 }
 
 type PersonRecord = {
-  personType: "STUDENT" | "STAFF" | "GUEST";
+  personType: PersonType;
   id: number;
   firstName: string;
   lastName: string;
@@ -1100,9 +1119,7 @@ function PeoplePage() {
         ))}
         {isTally && <label>User type
           <select value={String(form.personType)} onChange={(e) => setForm({ ...form, personType: e.target.value })}>
-            <option value="STUDENT">1: Student</option>
-            <option value="STAFF">2: Staff</option>
-            <option value="GUEST">3: Guest</option>
+            <PersonTypeOptions />
           </select>
         </label>}
         <button className="primary add-person-btn">Add</button>
@@ -1198,9 +1215,7 @@ function PeoplePage() {
                     <select aria-label={`User type for ${personDisplayName(p)}`} value={p.personType}
                       onChange={(e) => setPeople((curr) => curr.map((row) => row.id === p.id
                         ? { ...row, personType: e.target.value as PersonRecord['personType'] } : row))}>
-                      <option value="STUDENT">1: Student</option>
-                      <option value="STAFF">2: Staff</option>
-                      <option value="GUEST">3: Guest</option>
+                      <PersonTypeOptions />
                     </select>
                   </td>}
                   {hasAnyGrade && <td>{(p.grade || "").trim() || null}</td>}
@@ -1700,7 +1715,7 @@ function TransactionsPage() {
                     ? `${r.person.firstName} ${r.person.lastName}`
                     : "-")}
               </td>
-              <td>{r.person?.personType ? formatMealLabel(r.person.personType) : "-"}</td>
+              <td>{r.person?.personType ? formatPersonType(r.person.personType) : "-"}</td>
               <td>{r.stationName || "-"}</td>
             </tr>
           ))}
@@ -1740,10 +1755,11 @@ function StudentsNotEatingPanel() {
         <p className="muted">Current warning threshold: <strong>{data.warningDays} complete day{data.warningDays === 1 ? "" : "s"}</strong></p>
         {data.students.length === 0 ? <p>No students currently meet the warning threshold.</p> : (
           <table>
-            <thead><tr><th>Name</th><th>Person ID</th><th>Complete Days Missed</th><th>Last Recorded Meal</th><th>Action</th></tr></thead>
+            <thead><tr><th>Name</th><th>Person ID</th><th>Type</th><th>Complete Days Missed</th><th>Last Recorded Meal</th><th>Action</th></tr></thead>
             <tbody>{data.students.map((student) => <tr key={student.id}>
               <td>{student.firstName} {student.lastName}</td>
               <td>{student.personId}</td>
+              <td>{formatPersonType(student.personType)}</td>
               <td>{student.missedDays}</td>
               <td>{student.lastMealAt ? new Date(student.lastMealAt).toLocaleString() : "No recorded meal"}</td>
               <td><button type="button" className="secondary" disabled={clearingId === student.id} onClick={() => {
@@ -1774,7 +1790,7 @@ function ReportsPage() {
   const [error, setError] = useState("");
   const [activeReportView, setActiveReportView] = useState<"meal-report" | "students-not-eating">("meal-report");
   const [reportSearch, setReportSearch] = useState("");
-  const [personTypeFilter, setPersonTypeFilter] = useState<"ALL" | "STUDENT" | "STAFF" | "GUEST">("ALL");
+  const [personTypeFilter, setPersonTypeFilter] = useState<"ALL" | "ALL_STUDENTS" | PersonType>("ALL");
 
   async function loadReport(range?: { from: string; to: string }) {
     const selectedRange = range ?? { from: fromDate, to: toDate };
@@ -1817,7 +1833,9 @@ function ReportsPage() {
   const filteredMealTotals = useMemo(() => {
     const query = reportSearch.trim().toLowerCase();
     return mealTotals.filter((row) => {
-      if (personTypeFilter !== "ALL" && row.personType !== personTypeFilter) return false;
+      if (personTypeFilter === "ALL_STUDENTS") {
+        if (row.personType !== "STUDENT" && row.personType !== "VILLAGE_STUDENT") return false;
+      } else if (personTypeFilter !== "ALL" && row.personType !== personTypeFilter) return false;
       if (!query) return true;
       return `${row.firstName} ${row.lastName}`.toLowerCase().includes(query)
         || row.personId.toLowerCase().includes(query);
@@ -2028,9 +2046,11 @@ function ReportsPage() {
               <label>
                 Type
                 <select value={personTypeFilter}
-                  onChange={(event) => setPersonTypeFilter(event.target.value as "ALL" | "STUDENT" | "STAFF" | "GUEST")}>
+                  onChange={(event) => setPersonTypeFilter(event.target.value as "ALL" | "ALL_STUDENTS" | PersonType)}>
                   <option value="ALL">All types</option>
-                  <option value="STUDENT">Students</option>
+                  <option value="ALL_STUDENTS">All students</option>
+                  <option value="STUDENT">Dorm students</option>
+                  <option value="VILLAGE_STUDENT">Village students</option>
                   <option value="STAFF">Staff</option>
                   <option value="GUEST">Guests</option>
                 </select>
@@ -2062,7 +2082,7 @@ function ReportsPage() {
                         {row.firstName} {row.lastName}
                       </td>
                       <td>{row.personId}</td>
-                      <td>{formatMealLabel(row.personType)}</td>
+                      <td>{formatPersonType(row.personType)}</td>
                       <td>{row.total}</td>
                       <td>{row.breakfasts}</td>
                       <td>{row.lunches}</td>
@@ -2760,7 +2780,7 @@ function SettingsPage() {
               ) : null}
           </>
           {settings.mealTrackingMode === "tally" && <p className="muted">
-            Add a User Type column to your sheet: 1 or Student, 2 or Staff, 3 or Guest.
+            Add a User Type column to your sheet: 1 or Dorm Student (or Student), 2 or Staff, 3 or Guest, 4 or Village Student.
             Blank cells preserve existing types; new people with a blank type default to Guest.
             Import the sheet to apply type changes. Google Sheets owns the user roster. Write-back updates meal counts only for users already in the sheet.
           </p>}
