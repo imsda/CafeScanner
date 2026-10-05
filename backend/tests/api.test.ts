@@ -238,6 +238,27 @@ test('people, transactions and imports validate input and export safe CSV', asyn
   assert.equal((await request(`/api/people/${person.id}`, { method: 'DELETE', cookie: admin, json: { confirmationPhrase: 'DELETE PERSON' } })).status, 200);
 });
 
+test('meal totals CSV can be filtered by person type', async () => {
+  const admin = await login('admin');
+  const people = [
+    ['dorm-csv', 'STUDENT'], ['village-csv', 'VILLAGE_STUDENT'], ['staff-csv', 'STAFF'], ['guest-csv', 'GUEST']
+  ] as const;
+  for (const [personId, personType] of people) {
+    const person = await prisma.person.create({ data: { firstName: personId, lastName: 'Csv', personId, codeValue: personId, personType } });
+    await prisma.scanTransaction.create({ data: { scannedValue: personId, personId: person.id, mealType: 'LUNCH', result: 'SUCCESS' } });
+  }
+  const exportFor = async (personType?: string) => {
+    const query = new URLSearchParams({ from: '2000-01-01', ...(personType ? { personType } : {}) });
+    const response = await request(`/api/reports/meal-totals.csv?${query}`, { cookie: admin });
+    assert.equal(response.status, 200);
+    return (await response.text()).split('\r\n').filter((line) => line.includes('-csv'));
+  };
+  assert.equal((await exportFor()).length, 4);
+  assert.deepEqual((await exportFor('VILLAGE_STUDENT')).map((line) => line.split(',')[1]), ['village-csv']);
+  assert.deepEqual((await exportFor('ALL_STUDENTS')).map((line) => line.split(',')[1]).sort(), ['dorm-csv', 'village-csv']);
+  assert.equal((await request('/api/reports/meal-totals.csv?personType=ALIEN', { cookie: admin })).status, 400);
+});
+
 // Runs last: it exhausts the login rate limit for 127.0.0.1 in this process.
 test('login attempts are rate limited per client IP', async () => {
   let lastStatus = 0;

@@ -1,10 +1,46 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, API_BASE } from "../api/client";
-import type { PersonType, ReportsSummaryResponse } from "../api/types";
+import type { ReportsSummaryResponse } from "../api/types";
 import { ButtonLink } from "../components/ButtonLink";
 import { StudentsNotEatingPanel } from "../components/StudentsNotEatingPanel";
 import { getRangeForPreset } from "../lib/dates";
 import { formatPersonType, modeLabel } from "../lib/format";
+import {
+  matchesPersonTypeFilter,
+  mealTotalsByPersonType,
+  personTypeSortRank,
+  PERSON_TYPE_FILTER_OPTIONS,
+  personTypeFilterLabel,
+  sumMealTotals,
+} from "../lib/personTypeTotals";
+import type { PersonTypeFilter } from "../lib/personTypeTotals";
+
+type MealTotalsSortKey = "name" | "personId" | "type" | "total" | "breakfasts" | "lunches" | "dinners";
+
+const SORT_OPTIONS: Array<{ key: MealTotalsSortKey; label: string; defaultDirection: "asc" | "desc" }> = [
+  { key: "name", label: "Name", defaultDirection: "asc" },
+  { key: "personId", label: "Person ID", defaultDirection: "asc" },
+  { key: "type", label: "Type", defaultDirection: "asc" },
+  { key: "total", label: "Total Meals", defaultDirection: "desc" },
+  { key: "breakfasts", label: "Breakfast", defaultDirection: "desc" },
+  { key: "lunches", label: "Lunch", defaultDirection: "desc" },
+  { key: "dinners", label: "Dinner", defaultDirection: "desc" },
+];
+
+type MealTotalsRow = ReportsSummaryResponse["mealTotalsByPerson"][number];
+
+const byName = (a: MealTotalsRow, b: MealTotalsRow) =>
+  `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`, undefined, { sensitivity: "base" });
+
+function compareMealTotals(a: MealTotalsRow, b: MealTotalsRow, key: MealTotalsSortKey): number {
+  switch (key) {
+    case "name": return byName(a, b);
+    case "personId": return a.personId.localeCompare(b.personId, undefined, { numeric: true });
+    // Group by type, then alphabetical by name within each type.
+    case "type": return personTypeSortRank(a.personType) - personTypeSortRank(b.personType) || byName(a, b);
+    default: return a[key] - b[key] || byName(a, b);
+  }
+}
 
 export function ReportsPage() {
   const todayRange = useMemo(() => getRangeForPreset("today"), []);
@@ -19,7 +55,9 @@ export function ReportsPage() {
   const [error, setError] = useState("");
   const [activeReportView, setActiveReportView] = useState<"meal-report" | "students-not-eating">("meal-report");
   const [reportSearch, setReportSearch] = useState("");
-  const [personTypeFilter, setPersonTypeFilter] = useState<"ALL" | "ALL_STUDENTS" | PersonType>("ALL");
+  const [sortKey, setSortKey] = useState<MealTotalsSortKey>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [personTypeFilter, setPersonTypeFilter] = useState<PersonTypeFilter>("ALL");
 
   async function loadReport(range?: { from: string; to: string }) {
     const selectedRange = range ?? { from: fromDate, to: toDate };
@@ -61,20 +99,53 @@ export function ReportsPage() {
   const mealTotals = report?.mealTotalsByPerson ?? report?.perPersonUsage ?? [];
   const filteredMealTotals = useMemo(() => {
     const query = reportSearch.trim().toLowerCase();
+    const direction = sortDirection === "asc" ? 1 : -1;
     return mealTotals.filter((row) => {
-      if (personTypeFilter === "ALL_STUDENTS") {
-        if (row.personType !== "STUDENT" && row.personType !== "VILLAGE_STUDENT") return false;
-      } else if (personTypeFilter !== "ALL" && row.personType !== personTypeFilter) return false;
+      if (!matchesPersonTypeFilter(row.personType, personTypeFilter)) return false;
       if (!query) return true;
       return `${row.firstName} ${row.lastName}`.toLowerCase().includes(query)
         || row.personId.toLowerCase().includes(query);
-    });
-  }, [mealTotals, personTypeFilter, reportSearch]);
+    }).sort((a, b) => direction * compareMealTotals(a, b, sortKey));
+  }, [mealTotals, personTypeFilter, reportSearch, sortKey, sortDirection]);
+
+  // Clicking the active column flips the direction; a new column starts in its natural direction.
+  function sortBy(key: MealTotalsSortKey) {
+    if (key === sortKey) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(SORT_OPTIONS.find((option) => option.key === key)?.defaultDirection ?? "asc");
+  }
+
+  const sortHeader = (key: MealTotalsSortKey, label: string) => (
+    <th key={key} aria-sort={sortKey === key ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" className="sort-button" onClick={() => sortBy(key)}>
+        {label}
+        <span aria-hidden="true" className="sort-indicator">
+          {sortKey === key ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+  // Totals for the selected person type over the date range (search does not narrow them).
+  const selectedTypeTotals = useMemo(
+    () => sumMealTotals(mealTotals.filter((row) => matchesPersonTypeFilter(row.personType, personTypeFilter))),
+    [mealTotals, personTypeFilter],
+  );
+  const typeBreakdown = useMemo(() => mealTotalsByPersonType(mealTotals), [mealTotals]);
   const exportQuery = new URLSearchParams({
     from: appliedFromDate,
     to: appliedToDate,
     startDate: appliedFromDate,
     endDate: appliedToDate,
+  }).toString();
+  const mealTotalsExportQuery = new URLSearchParams({
+    from: appliedFromDate,
+    to: appliedToDate,
+    startDate: appliedFromDate,
+    endDate: appliedToDate,
+    ...(personTypeFilter !== "ALL" ? { personType: personTypeFilter } : {}),
   }).toString();
 
   const reportTabs = <div className="button-row">
@@ -161,6 +232,15 @@ export function ReportsPage() {
               }}
             />
           </label>
+          <label>
+            Person type
+            <select value={personTypeFilter}
+              onChange={(event) => setPersonTypeFilter(event.target.value as PersonTypeFilter)}>
+              {PERSON_TYPE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
           <button
             className="primary"
             type="button"
@@ -178,7 +258,7 @@ export function ReportsPage() {
           </ButtonLink>
           <ButtonLink
             className="btn-secondary"
-            href={`${API_BASE}/reports/meal-totals.csv?${exportQuery}`}
+            href={`${API_BASE}/reports/meal-totals.csv?${mealTotalsExportQuery}`}
             target="_blank"
             rel="noreferrer"
           >
@@ -192,6 +272,51 @@ export function ReportsPage() {
           <p className="muted">
             Active mode: <strong>{modeLabel(report.mealTrackingMode)}</strong>
           </p>
+          <section className="stack" aria-live="polite">
+            <h3>Meals Served — {personTypeFilterLabel(personTypeFilter)}</h3>
+            <div className="stats-grid">
+              <div className="stat-card"><p className="muted">People Served</p><p className="value">{selectedTypeTotals.people}</p></div>
+              <div className="stat-card"><p className="muted">Breakfasts</p><p className="value">{selectedTypeTotals.breakfasts}</p></div>
+              <div className="stat-card"><p className="muted">Lunches</p><p className="value">{selectedTypeTotals.lunches}</p></div>
+              <div className="stat-card"><p className="muted">Dinners</p><p className="value">{selectedTypeTotals.dinners}</p></div>
+              <div className="stat-card"><p className="muted">Total Meals</p><p className="value">{selectedTypeTotals.total}</p></div>
+            </div>
+          </section>
+          <section className="stack">
+            <h3>Meals by Person Type</h3>
+            <div className="table-scroll">
+              <table className="type-totals">
+                <thead>
+                  <tr>
+                    <th>Person type</th>
+                    <th>People served</th>
+                    <th>Breakfast</th>
+                    <th>Lunch</th>
+                    <th>Dinner</th>
+                    <th>Total meals</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {typeBreakdown.map((row) => (
+                    <tr key={row.filter} className={[row.summary ? "summary-row" : "", row.filter === personTypeFilter ? "selected-row" : ""].join(" ").trim() || undefined}>
+                      <th scope="row">
+                        <button type="button" className="link-button" onClick={() => setPersonTypeFilter(row.filter)}
+                          aria-pressed={row.filter === personTypeFilter}>
+                          {row.label}
+                        </button>
+                      </th>
+                      <td>{row.totals.people}</td>
+                      <td>{row.totals.breakfasts}</td>
+                      <td>{row.totals.lunches}</td>
+                      <td>{row.totals.dinners}</td>
+                      <td>{row.totals.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <h3>{report.mealTrackingMode === "camp_meeting" ? "Entitlements" : report.mealTrackingMode === "countdown" ? "Balances" : "Tally"} — All types</h3>
           <div className="stats-grid">
             <div className="stat-card">
               <p className="muted">Scans</p>
@@ -265,7 +390,7 @@ export function ReportsPage() {
             )}
           </div>
           <section className="stack">
-            <h3>Meal Totals by Person</h3>
+            <h3>Meal Totals by Person{personTypeFilter !== "ALL" ? ` — ${personTypeFilterLabel(personTypeFilter)}` : ""}</h3>
             <div className="filters-row">
               <label>
                 Search
@@ -275,13 +400,25 @@ export function ReportsPage() {
               <label>
                 Type
                 <select value={personTypeFilter}
-                  onChange={(event) => setPersonTypeFilter(event.target.value as "ALL" | "ALL_STUDENTS" | PersonType)}>
-                  <option value="ALL">All types</option>
-                  <option value="ALL_STUDENTS">All students</option>
-                  <option value="STUDENT">Dorm students</option>
-                  <option value="VILLAGE_STUDENT">Village students</option>
-                  <option value="STAFF">Staff</option>
-                  <option value="GUEST">Guests</option>
+                  onChange={(event) => setPersonTypeFilter(event.target.value as PersonTypeFilter)}>
+                  {PERSON_TYPE_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Sort by
+                <select value={sortKey} onChange={(event) => sortBy(event.target.value as MealTotalsSortKey)}>
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.key} value={option.key}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Order
+                <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value as "asc" | "desc")}>
+                  <option value="asc">{sortKey === "name" || sortKey === "personId" || sortKey === "type" ? "A → Z" : "Lowest first"}</option>
+                  <option value="desc">{sortKey === "name" || sortKey === "personId" || sortKey === "type" ? "Z → A" : "Highest first"}</option>
                 </select>
               </label>
             </div>
@@ -292,16 +429,11 @@ export function ReportsPage() {
             ) : filteredMealTotals.length === 0 ? (
               <p className="muted">No people match the current search and type filter.</p>
             ) : (
+              <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Person ID</th>
-                    <th>Type</th>
-                    <th>Total Meals</th>
-                    <th>Breakfast</th>
-                    <th>Lunch</th>
-                    <th>Dinner</th>
+                    {SORT_OPTIONS.map((option) => sortHeader(option.key, option.label))}
                   </tr>
                 </thead>
                 <tbody>
@@ -320,6 +452,7 @@ export function ReportsPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </section>
         </>

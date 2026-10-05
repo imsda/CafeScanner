@@ -2,6 +2,7 @@ import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { requireAdmin } from '../middleware/auth.js';
+import { STUDENT_PERSON_TYPES } from '../utils/personType.js';
 import { toCsv } from '../utils/csv.js';
 import { endOfLocalDay, localDateKey, parseQueryDate, resolveTimezone } from '../utils/timezone.js';
 import { prisma } from '../db.js';
@@ -163,7 +164,19 @@ router.get('/summary', async (req, res) => {
   });
 });
 
+// Optional ?personType= filter for the meal totals export (matches the Reports page filter).
+const mealTotalsFilterSchema = z.object({
+  personType: z.enum(['ALL', 'ALL_STUDENTS', 'STUDENT', 'VILLAGE_STUDENT', 'STAFF', 'GUEST']).default('ALL')
+});
+
+function matchesPersonTypeFilter(personType: string, filter: z.infer<typeof mealTotalsFilterSchema>['personType']) {
+  if (filter === 'ALL') return true;
+  if (filter === 'ALL_STUDENTS') return STUDENT_PERSON_TYPES.includes(personType as (typeof STUDENT_PERSON_TYPES)[number]);
+  return personType === filter;
+}
+
 router.get('/meal-totals.csv', async (req, res) => {
+  const { personType: personTypeFilter } = mealTotalsFilterSchema.parse(req.query);
   const { from, to } = await resolveDateRange(req.query as Record<string, unknown>);
   const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
   const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
@@ -182,7 +195,7 @@ router.get('/meal-totals.csv', async (req, res) => {
     console.log('[reports/meal-totals.csv] rows', reportRows.length);
   }
 
-  const rows = reportRows.map((row) => ({
+  const rows = reportRows.filter((row) => matchesPersonTypeFilter(row.personType, personTypeFilter)).map((row) => ({
     name: `${row.firstName} ${row.lastName}`.trim(),
     personId: row.personId,
     personType: row.personType,
@@ -194,7 +207,7 @@ router.get('/meal-totals.csv', async (req, res) => {
 
   const csv = toCsv(rows, ['name', 'personId', 'personType', 'totalMeals', 'breakfast', 'lunch', 'dinner']);
   res.header('Content-Type', 'text/csv');
-  res.attachment('meal-totals-by-person.csv');
+  res.attachment(personTypeFilter === 'ALL' ? 'meal-totals-by-person.csv' : `meal-totals-by-person-${personTypeFilter.toLowerCase().replace(/_/g, '-')}.csv`);
   res.send(csv);
 });
 
