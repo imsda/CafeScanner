@@ -2,8 +2,8 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import path from 'path';
-import { confirmExact } from './lib/prompt';
+import { confirmExact } from './lib/prompt.js';
+import { resolveSqliteDbPath, SQLITE_SIDECAR_SUFFIXES } from '../src/utils/sqlitePath.js';
 
 dotenv.config();
 const prisma = new PrismaClient();
@@ -30,12 +30,13 @@ if (!token) {
     await prisma.setting.update({ where: { id: 1 }, data: { fullWipeTokenUsedAt: new Date() } });
     await prisma.$disconnect();
 
-    const dbUrl = process.env.DATABASE_URL || 'file:./prisma/dev.db';
-    const dbPath = path.resolve(process.cwd(), dbUrl.replace('file:', ''));
-    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+    const dbPath = resolveSqliteDbPath();
+    if (!fs.existsSync(dbPath)) throw new Error(`Database file not found at ${dbPath}; nothing was deleted.`);
+    for (const suffix of ['', ...SQLITE_SIDECAR_SUFFIXES]) {
       const fp = dbPath + suffix;
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
     }
+    console.log(`Deleted ${dbPath}`);
 
     console.log('Full wipe complete. Run ./scripts/setup.sh, then npm run create-admin -w backend, then npm run promote-owner -w backend.');
   } catch (e) {

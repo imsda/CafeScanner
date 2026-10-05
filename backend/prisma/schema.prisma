@@ -51,9 +51,10 @@ enum ScanResult {
 }
 
 enum PersonType {
-  STUDENT
+  STUDENT // Dorm student (User Type 1)
   STAFF
   GUEST
+  VILLAGE_STUDENT // Village student (User Type 4); same meal rules as STUDENT
 }
 
 enum MealTrackingMode {
@@ -143,6 +144,7 @@ model Setting {
   tallyWeeklyViewTabName   String?
   tallyWeekStartsOn        String           @default("MONDAY")
   studentMealWarningDays   Int              @default(1)
+  villageStudentMealWarningsEnabled Boolean @default(true)
   googleLastAutoImportAt   DateTime?
   googleLastAutoImportSummary String?
   fullWipeTokenHash        String?
@@ -181,6 +183,8 @@ model ScanTransaction {
 
   @@index([entitlementId])
   @@index([personId, mealType, result, timestamp])
+  @@index([scannedValue, timestamp])
+  @@index([timestamp])
 }
 
 

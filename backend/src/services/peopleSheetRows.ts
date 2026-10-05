@@ -1,11 +1,19 @@
 import type { PersonType } from '@prisma/client';
 
+const PERSON_TYPE_CODES: Record<string, PersonType> = {
+  '1': 'STUDENT', STUDENT: 'STUDENT', DORM: 'STUDENT', DORMSTUDENT: 'STUDENT',
+  '2': 'STAFF', STAFF: 'STAFF',
+  '3': 'GUEST', GUEST: 'GUEST',
+  '4': 'VILLAGE_STUDENT', VILLAGE: 'VILLAGE_STUDENT', VILLAGESTUDENT: 'VILLAGE_STUDENT'
+};
+
 export function parsePersonType(value: string): PersonType | undefined {
-  const normalized = value.trim().toUpperCase();
+  // Case-insensitive; spaces, underscores and hyphens are ignored ("Village Student" = "village_student").
+  const normalized = value.trim().toUpperCase().replace(/[\s_-]/g, '');
   if (!normalized) return undefined;
-  const types: Record<string, PersonType> = { '1': 'STUDENT', STUDENT: 'STUDENT', '2': 'STAFF', STAFF: 'STAFF', '3': 'GUEST', GUEST: 'GUEST' };
-  if (!types[normalized]) throw new Error('User Type must be 1/Student, 2/Staff, or 3/Guest.');
-  return types[normalized];
+  const type = PERSON_TYPE_CODES[normalized];
+  if (!type) throw new Error('User Type must be 1/Student (Dorm), 2/Staff, 3/Guest, or 4/Village Student.');
+  return type;
 }
 
 // Canonicalize by header so old sheets and reordered columns remain usable.

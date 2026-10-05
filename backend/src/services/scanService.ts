@@ -2,39 +2,10 @@ import { MealDay, MealTrackingMode, MealType, ScanResult } from '@prisma/client'
 import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
+import { normalizeCampMeetingPersonId, normalizePersonId } from '../utils/personId.js';
+import { isMealWarningEligible, isStudentType } from '../utils/personType.js';
+import { localMealDay, resolveTimezone } from '../utils/timezone.js';
 
-function normalizeCampMeetingPersonId(value: string): string {
-  return value.trim();
-}
-
-function normalizePersonId(value: string): string {
-  return value.trim();
-}
-
-function localDateKey(date: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
-  const value = (type: 'year' | 'month' | 'day') => parts.find((part) => part.type === type)?.value || '0';
-  return `${value('year')}-${value('month')}-${value('day')}`;
-}
-
-function localMealDay(date: Date, timezone: string): MealDay {
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short'
-  }).format(date).toUpperCase();
-
-  const mealDayMap: Record<string, MealDay> = {
-    SUN: MealDay.SUN,
-    MON: MealDay.MON,
-    TUE: MealDay.TUE,
-    WED: MealDay.WED,
-    THU: MealDay.THU,
-    FRI: MealDay.FRI,
-    SAT: MealDay.SAT
-  };
-
-  return mealDayMap[weekday] ?? MealDay.SUN;
-}
 
 function deriveDisplayName(personName?: string | null): { firstName: string; lastName: string } {
   const normalized = (personName || '').trim().replace(/\s+/g, ' ');
@@ -160,7 +131,20 @@ async function redeemCampMeetingEntitlement(params: {
     }
   });
 
-  if (!entitlement) {
+  // Conditional update: only one scan can flip an entitlement to redeemed.
+  const redeemed = entitlement
+    ? await tx.mealEntitlement.updateMany({
+      where: { id: entitlement.id, redeemed: false },
+      data: {
+        redeemed: true,
+        redeemedAt: new Date(),
+        redeemedBy: entitlement.personName || null,
+        sheetSyncedAt: null
+      }
+    })
+    : { count: 0 };
+
+  if (!entitlement || redeemed.count !== 1) {
     await tx.scanTransaction.create({
       data: {
         scannedValue: personIdValue,
@@ -180,16 +164,6 @@ async function redeemCampMeetingEntitlement(params: {
   }
 
   const linkedPerson = await tx.person.findUnique({ where: { personId: personIdValue } });
-
-  await tx.mealEntitlement.update({
-    where: { id: entitlement.id },
-    data: {
-      redeemed: true,
-      redeemedAt: new Date(),
-      redeemedBy: entitlement.personName || null,
-      sheetSyncedAt: null
-    }
-  });
 
   await tx.scanTransaction.create({
     data: {
@@ -252,7 +226,30 @@ async function redeemCampMeetingEntitlement(params: {
   };
 }
 
-export async function processScan(rawPersonId: string, options?: { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number }) {
+type ProcessScanOptions = { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number };
+
+// Scans of the same ID are processed one at a time so the cooldown check and the
+// redemption/decrement cannot interleave (e.g. a double read from a USB scanner or
+// two stations). The key is case-insensitive so it covers every mode's normalisation.
+const scanQueues = new Map<string, Promise<unknown>>();
+
+async function withScanLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = scanQueues.get(key) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  const tail = run.catch(() => undefined);
+  scanQueues.set(key, tail);
+  try {
+    return await run;
+  } finally {
+    if (scanQueues.get(key) === tail) scanQueues.delete(key);
+  }
+}
+
+export async function processScan(rawPersonId: string, options?: ProcessScanOptions) {
+  return withScanLock(normalizeCampMeetingPersonId(rawPersonId), () => processScanUnlocked(rawPersonId, options));
+}
+
+async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOptions) {
   const scanTime = new Date();
   const originalScannedValue = rawPersonId.trim();
   const settings = await prisma.setting.findUnique({ where: { id: 1 } });
@@ -311,7 +308,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
   return prisma.$transaction(async (tx) => {
     if (mode === MealTrackingMode.camp_meeting) {
       const now = new Date();
-      const timezone = settings.timezone || 'Etc/UTC';
+      const timezone = resolveTimezone(settings.timezone);
       const todayMealDay = localMealDay(now, timezone);
       const matchingEntitlements: CampMeetingEntitlementForScan[] = (await tx.mealEntitlement.findMany({
         where: {
@@ -473,7 +470,14 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
 
     if (mode === MealTrackingMode.countdown) {
       const remainingField = remainingFieldByMeal[detectedMeal];
-      if (!remainingField || person[remainingField] <= 0) {
+      // Conditional decrement so a balance can never go below zero.
+      const decremented = remainingField && person[remainingField] > 0
+        ? await tx.person.updateMany({
+          where: { id: person.id, [remainingField]: { gt: 0 } },
+          data: { [remainingField]: { decrement: 1 } }
+        })
+        : { count: 0 };
+      if (!remainingField || decremented.count !== 1) {
         await tx.scanTransaction.create({
           data: {
             scannedValue: personIdValue,
@@ -493,10 +497,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
         };
       }
 
-      const updated = await tx.person.update({
-        where: { id: person.id },
-        data: { [remainingField]: { decrement: 1 } }
-      });
+      const updated = await tx.person.findUniqueOrThrow({ where: { id: person.id } });
 
       await tx.scanTransaction.create({
         data: {
@@ -512,14 +513,14 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
     }
 
-    if (person.personType === 'STUDENT') {
+    if (isStudentType(person.personType)) {
       // Keep the check and counter update in the same SQLite write transaction.
       const previousMeal = await tx.scanTransaction.findFirst({
         where: { personId: person.id, mealType: detectedMeal, result: ScanResult.SUCCESS },
         orderBy: { timestamp: 'desc' }
       });
       const localDate = new Intl.DateTimeFormat('en-CA', {
-        timeZone: settings.timezone || 'Etc/UTC', year: 'numeric', month: '2-digit', day: '2-digit'
+        timeZone: resolveTimezone(settings.timezone), year: 'numeric', month: '2-digit', day: '2-digit'
       });
       if (previousMeal && localDate.format(previousMeal.timestamp) === localDate.format(scanTime)) {
         await tx.scanTransaction.create({ data: {
@@ -533,7 +534,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
     }
 
     let mealWarningSince = person.mealWarningSince;
-    if (person.personType === 'STUDENT' && !mealWarningSince) {
+    if (isMealWarningEligible(person.personType, settings.villageStudentMealWarningsEnabled) && !mealWarningSince) {
       const lastMeal = await tx.scanTransaction.findFirst({
         where: { personId: person.id, result: ScanResult.SUCCESS },
         orderBy: { timestamp: 'desc' },
@@ -543,7 +544,7 @@ export async function processScan(rawPersonId: string, options?: { manualMealOve
       const baseline = baselineCandidates.reduce((latest, value) => value > latest ? value : latest);
       const homeLeaves = await tx.homeLeave.findMany({ select: { startDate: true, endDate: true } });
       const missedDays = countUnexcusedCompleteDays(
-        baseline, scanTime, settings.timezone || 'Etc/UTC', homeLeaves
+        baseline, scanTime, resolveTimezone(settings.timezone), homeLeaves
       );
       if (missedDays >= settings.studentMealWarningDays) {
         mealWarningSince = scanTime;

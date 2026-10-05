@@ -1,5 +1,9 @@
 import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
+import { requireAdmin } from '../middleware/auth.js';
+import type { Request, Response } from 'express';
+import { acquireOperationLock, isResetInProgress, releaseOperationLock } from '../services/operationLockService.js';
+import { normalizeCampMeetingPersonId } from '../utils/personId.js';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
@@ -8,8 +12,18 @@ import { getMealTrackingMode, getSettings } from '../services/settingsService.js
 import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts, writeBackWeeklyTallyNow, syncTransactionLogToSheet, rebuildTransactionLogFromDatabase } from '../services/campMeetingSheetSyncService.js';
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from '../services/campMeetingImportService.js';
 
-const upload = multer({ storage: multer.memoryStorage() });
-const router = Router();
+// CSV uploads are parsed in memory, so cap their size.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+
+// Malformed CSV is a client error (400), not a server failure.
+function parseCsv<T>(text: string, options: Parameters<typeof parse>[1]): T {
+  try {
+    return parse(text, options) as T;
+  } catch (error) {
+    throw Object.assign(new Error(`Could not read CSV file: ${error instanceof Error ? error.message : 'invalid format'}`), { status: 400 });
+  }
+}
+const router = asyncRouter();
 
 type Row = Record<string, string>;
 
@@ -28,10 +42,6 @@ type ParsedPersonName = {
   firstName: string;
   lastName: string;
 };
-
-function normalizeCampMeetingPersonId(value: string): string {
-  return value.trim().toUpperCase();
-}
 
 function parseBool(v: string) {
   return ['1', 'true', 'yes', 'y'].includes((v || '').toLowerCase());
@@ -191,7 +201,7 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
 }
 
 function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
-  const rows = parse(text, { columns: false, skip_empty_lines: true, trim: false }) as string[][];
+  const rows = parseCsv<string[][]>(text, { columns: false, skip_empty_lines: true, trim: false });
   const rowsWithoutHeader = rows.length > 0 && isCampMeetingHeaderRow(rows[0]) ? rows.slice(1) : rows;
 
   return rowsWithoutHeader.map((cols, idx) => {
@@ -292,8 +302,7 @@ router.post('/google-sheet/import', async (_req, res) => {
   }
 });
 
-router.post('/google-sheet/write-back-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/write-back-now', requireAdmin, async (req, res) => {
   try {
   const mode = await getMode();
   let result;
@@ -316,8 +325,7 @@ router.post('/google-sheet/write-back-now', async (req, res) => {
   }
 });
 
-router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/write-weekly-tally-now', requireAdmin, async (req, res) => {
   const settings = await getSettings();
   if (!settings.googleSheetsEnabled) return res.status(400).json({ error: 'Google Sheets sync is disabled.' });
   if (!settings.googleSheetId?.trim()) return res.status(400).json({ error: 'Google Sheet ID is required.' });
@@ -343,8 +351,7 @@ router.post('/google-sheet/write-weekly-tally-now', async (req, res) => {
   }
 });
 
-router.post('/google-sheet/write-log-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/write-log-now', requireAdmin, async (req, res) => {
   try {
     const result = await syncTransactionLogToSheet();
     return res.json({ ok: true, ...result });
@@ -355,8 +362,7 @@ router.post('/google-sheet/write-log-now', async (req, res) => {
   }
 });
 
-router.post('/google-sheet/rebuild-log-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheet/rebuild-log-now', requireAdmin, async (req, res) => {
   try {
     const result = await rebuildTransactionLogFromDatabase();
     return res.json({ ok: true, ...result });
@@ -376,7 +382,7 @@ router.post('/preview', upload.single('file'), async (req, res) => {
     return res.json({ total: preview.length, mode, preview });
   }
 
-  const rows = parse(text, { columns: true, skip_empty_lines: true }) as Row[];
+  const rows = parseCsv<Row[]>(text, { columns: true, skip_empty_lines: true });
   const preview = rows.map((row, idx) => {
     const errors: string[] = [];
     if (!row.firstName) errors.push('firstName is required');
@@ -387,12 +393,23 @@ router.post('/preview', upload.single('file'), async (req, res) => {
   return res.json({ total: rows.length, mode, preview });
 });
 
+// Takes the shared import lock so resets and Google Sheets syncs cannot interleave with a CSV import.
 router.post('/commit', upload.single('file'), async (req, res) => {
+  if (isResetInProgress()) return res.status(409).json({ error: 'A reset is in progress. Try again after it completes.' });
+  if (!acquireOperationLock('import')) return res.status(409).json({ error: 'Another import or sync is in progress. Try again shortly.' });
+  try {
+    return await commitCsvImport(req, res);
+  } finally {
+    releaseOperationLock('import');
+  }
+});
+
+async function commitCsvImport(req: Request, res: Response) {
   const mode = await getMode();
 
   if (mode === MealTrackingMode.camp_meeting) {
     const text = req.file?.buffer.toString('utf-8') || '';
-    const rawRows = parse(text, { columns: false, skip_empty_lines: true, trim: false }) as string[][];
+    const rawRows = parseCsv<string[][]>(text, { columns: false, skip_empty_lines: true, trim: false });
     const { inputRows, errors: headerErrors } = mapRowsToCampMeetingInput(rawRows);
     if (headerErrors.length) return res.status(400).json({ error: headerErrors.join('; '), mode });
     const replaceExisting = req.body.replaceExisting === 'true';
@@ -440,7 +457,7 @@ router.post('/commit', upload.single('file'), async (req, res) => {
 
   const generateMissingCodes = req.body.generateMissingCodes === 'true';
   const text = req.file?.buffer.toString('utf-8') || '';
-  const rows = parse(text, { columns: true, skip_empty_lines: true }) as Row[];
+  const rows = parseCsv<Row[]>(text, { columns: true, skip_empty_lines: true });
   let successRows = 0;
   const errors: Array<{ row: number; error: string }> = [];
 
@@ -507,6 +524,6 @@ router.post('/commit', upload.single('file'), async (req, res) => {
   });
 
   return res.json({ totalRows: rows.length, successRows, failedRows: errors.length, errors, mode });
-});
+}
 
 export default router;

@@ -1,21 +1,10 @@
-import { MealTrackingMode } from '@prisma/client';
+import { MealTrackingMode, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { DEFAULT_TIMEZONE } from '../utils/timezone.js';
+import { normalizeTimeValue } from '../utils/time.js';
 
 let settingsInitPromise: Promise<void> | null = null;
 const TIME_FIELDS = ['breakfastStart', 'breakfastEnd', 'lunchStart', 'lunchEnd', 'dinnerStart', 'dinnerEnd'] as const;
-const DEFAULT_TIMEZONE = 'America/Chicago';
-
-function normalizeTimeValue(value: string): string {
-  const trimmed = value.trim();
-  if (/^\d{2}:\d{2}$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
-  if (!match) return trimmed;
-  const hour12 = Number(match[1]);
-  const minute = Number(match[2]);
-  const suffix = match[3].toUpperCase();
-  const hour24 = (hour12 % 12) + (suffix === 'PM' ? 12 : 0);
-  return `${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-}
 
 function isKnownPrismaError(error: unknown, code: string): error is { code: string } {
   return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === code);
@@ -36,7 +25,7 @@ async function createSettingsIfMissing() {
         breakfastEnd: '10:00',
         lunchStart: '11:00',
         lunchEnd: '14:00',
-        dinnerStart: '15:00',
+        dinnerStart: '17:00',
         dinnerEnd: '19:00',
         googleAutoImportEnabled: true,
         campMeetingAutoSelectFirstAvailable: true,
@@ -56,6 +45,41 @@ async function createSettingsIfMissing() {
   }
 }
 
+// Fields safe to return to clients. Excludes full-wipe token state.
+export const SETTINGS_PUBLIC_SELECT = {
+  id: true,
+  schoolName: true,
+  timezone: true,
+  breakfastStart: true,
+  breakfastEnd: true,
+  lunchStart: true,
+  lunchEnd: true,
+  dinnerStart: true,
+  dinnerEnd: true,
+  scannerCooldownSeconds: true,
+  scannerDiagnosticsEnabled: true,
+  stationName: true,
+  enableSounds: true,
+  allowManualMealOverride: true,
+  hideInactiveByDefault: true,
+  mealTrackingMode: true,
+  googleSheetsEnabled: true,
+  googleSheetId: true,
+  googleSheetTabName: true,
+  googleSyncIntervalMinutes: true,
+  googleAutoImportEnabled: true,
+  campMeetingAutoSelectFirstAvailable: true,
+  tallyWriteBackMode: true,
+  tallyWeeklyRawTabName: true,
+  tallyWeeklyViewTabName: true,
+  tallyWeekStartsOn: true,
+  studentMealWarningDays: true,
+  villageStudentMealWarningsEnabled: true,
+  googleLastAutoImportAt: true,
+  googleLastAutoImportSummary: true,
+  updatedAt: true
+} satisfies Prisma.SettingSelect;
+
 export async function ensureSettingsInitialized() {
   if (!settingsInitPromise) {
     settingsInitPromise = createSettingsIfMissing().catch((error) => {
@@ -71,37 +95,7 @@ export async function getSettings() {
   await ensureSettingsInitialized();
   const settings = await prisma.setting.findUniqueOrThrow({
     where: { id: 1 },
-    select: {
-      id: true,
-      schoolName: true,
-      timezone: true,
-      breakfastStart: true,
-      breakfastEnd: true,
-      lunchStart: true,
-      lunchEnd: true,
-      dinnerStart: true,
-      dinnerEnd: true,
-      scannerCooldownSeconds: true,
-      scannerDiagnosticsEnabled: true,
-      stationName: true,
-      enableSounds: true,
-      allowManualMealOverride: true,
-      hideInactiveByDefault: true,
-      mealTrackingMode: true,
-      googleSheetsEnabled: true,
-      googleSheetId: true,
-      googleSheetTabName: true,
-      googleSyncIntervalMinutes: true,
-      googleAutoImportEnabled: true,
-      campMeetingAutoSelectFirstAvailable: true,
-      tallyWriteBackMode: true,
-      tallyWeeklyRawTabName: true,
-      tallyWeeklyViewTabName: true,
-      tallyWeekStartsOn: true,
-      googleLastAutoImportAt: true,
-      googleLastAutoImportSummary: true,
-      updatedAt: true
-    }
+    select: SETTINGS_PUBLIC_SELECT
   });
   const patch: Partial<typeof settings> = {};
   if (!settings.timezone) patch.timezone = DEFAULT_TIMEZONE;
@@ -110,7 +104,7 @@ export async function getSettings() {
     if (normalized !== settings[field]) patch[field] = normalized;
   }
   if (Object.keys(patch).length > 0) {
-    return prisma.setting.update({ where: { id: 1 }, data: patch });
+    return prisma.setting.update({ where: { id: 1 }, data: patch, select: SETTINGS_PUBLIC_SELECT });
   }
   return settings;
 }

@@ -1,42 +1,18 @@
 import { MealTrackingMode } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { Router } from 'express';
+import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
-import { getSettings } from '../services/settingsService.js';
+import { getSettings, SETTINGS_PUBLIC_SELECT } from '../services/settingsService.js';
+import { requireAdmin, requireOwner } from '../middleware/auth.js';
+import { DEFAULT_TIMEZONE, isValidTimezone } from '../utils/timezone.js';
+import { isHHmm, normalizeTimeValue } from '../utils/time.js';
 import { getGoogleSheetsSchedulerStatus, runGoogleSheetsSyncSchedulerCheckNow } from '../services/campMeetingSheetSyncService.js';
 
-const router = Router();
+const router = asyncRouter();
 const MODE_SWITCH_CONFIRMATION = 'SWITCH MODE';
-const DEFAULT_TIMEZONE = 'America/Chicago';
 const TIME_FIELDS = ['breakfastStart', 'breakfastEnd', 'lunchStart', 'lunchEnd', 'dinnerStart', 'dinnerEnd'] as const;
-
-function normalizeTimeValue(value: string): string {
-  const trimmed = value.trim();
-  if (/^\d{2}:\d{2}$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
-  if (!match) return trimmed;
-  const hour12 = Number(match[1]);
-  const minute = Number(match[2]);
-  const suffix = match[3].toUpperCase();
-  if (Number.isNaN(hour12) || Number.isNaN(minute) || hour12 < 1 || hour12 > 12 || minute < 0 || minute > 59) return trimmed;
-  const hour24 = (hour12 % 12) + (suffix === 'PM' ? 12 : 0);
-  return `${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-}
-
-function isHHmm(value: string): boolean {
-  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-}
-
-function isValidTimezone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 const settingsSchema = z.object({
   schoolName: z.string().min(1).optional(),
@@ -63,7 +39,8 @@ const settingsSchema = z.object({
   tallyWeeklyRawTabName: z.string().min(1).optional(),
   tallyWeeklyViewTabName: z.string().nullable().optional(),
   tallyWeekStartsOn: z.enum(['SUNDAY', 'MONDAY']).optional(),
-  studentMealWarningDays: z.number().int().min(1).max(365).optional()
+  studentMealWarningDays: z.number().int().min(1).max(365).optional(),
+  villageStudentMealWarningsEnabled: z.boolean().optional()
 });
 
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });
@@ -82,8 +59,7 @@ router.get('/google-sheets/scheduler-status', async (_req, res) => {
   res.json(await getGoogleSheetsSchedulerStatus());
 });
 
-router.post('/google-sheets/run-scheduled-check-now', async (req, res) => {
-  if (req.session.role !== 'OWNER' && req.session.role !== 'ADMIN') return res.status(403).json({ error: 'OWNER or ADMIN required.' });
+router.post('/google-sheets/run-scheduled-check-now', requireAdmin, async (_req, res) => {
   const result = await runGoogleSheetsSyncSchedulerCheckNow();
   res.json({ ok: true, ...result });
 });
@@ -119,14 +95,13 @@ router.put('/', async (req, res) => {
     }
   }
   await getSettings();
-  const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload }));
+  const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload, select: SETTINGS_PUBLIC_SELECT }));
   console.log('[SETTINGS] Updated settings payload keys:', Object.keys(payload));
   res.json(updated);
 });
 
 
-router.post('/full-wipe/arm', async (req, res) => {
-  if (req.session.role !== 'OWNER') return res.status(403).json({ error: 'OWNER access required' });
+router.post('/full-wipe/arm', requireOwner, async (req, res) => {
   const payload = armFullWipeSchema.parse(req.body);
   if (payload.confirmationPhrase !== 'ARM FULL WIPE') return res.status(400).json({ error: 'Confirmation phrase must exactly match ARM FULL WIPE.' });
   const token = crypto.randomBytes(32).toString('hex');
@@ -136,7 +111,7 @@ router.post('/full-wipe/arm', async (req, res) => {
   return res.json({ ok: true, token, expiresAt });
 });
 
-router.put('/meal-tracking-mode', async (req, res) => {
+router.put('/meal-tracking-mode', requireAdmin, async (req, res) => {
   const payload = switchModeSchema.parse(req.body);
 
   if (payload.confirmationPhrase !== MODE_SWITCH_CONFIRMATION) {

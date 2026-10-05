@@ -21,7 +21,8 @@ export function pauseScheduler() { state.schedulerPaused = true; }
 export function resumeScheduler() { state.schedulerPaused = false; }
 
 export function acquireOperationLock(key: OperationKey): boolean {
-  if (key !== 'reset' && (state.importInProgress || state.writebackInProgress)) return false;
+  // Imports and write-backs never start while any other data operation, including a reset, is running.
+  if (key !== 'reset' && (state.importInProgress || state.writebackInProgress || state.resetInProgress)) return false;
   const flag = keyToFlag(key);
   if (state[flag]) return false;
   state[flag] = true;

@@ -1,14 +1,26 @@
 import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
-import { Router } from 'express';
-import { endOfDay, startOfDay } from 'date-fns';
-import { Parser } from 'json2csv';
+import { asyncRouter } from '../utils/asyncRouter.js';
+import { z } from 'zod';
+import { requireAdmin } from '../middleware/auth.js';
+import { toCsv } from '../utils/csv.js';
+import { endOfLocalDay, localDateKey, parseQueryDate, resolveTimezone } from '../utils/timezone.js';
 import { prisma } from '../db.js';
 import { getMealTotalsByPerson } from '../services/mealTotalsReport.js';
 import { clearStudentMealWarning, getStudentsNotEating } from '../services/studentMealWarningService.js';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get('/students-not-eating', async (_req, res) => {
+  res.json(await getStudentsNotEating());
+});
+
+const warningSettingsSchema = z.object({ villageStudentMealWarningsEnabled: z.boolean() });
+
+// Admin-only switch shown on the Reports page; also editable via PUT /api/settings.
+router.put('/students-not-eating/settings', requireAdmin, async (req, res) => {
+  const { villageStudentMealWarningsEnabled } = warningSettingsSchema.parse(req.body);
+  await prisma.setting.update({ where: { id: 1 }, data: { villageStudentMealWarningsEnabled } });
+  console.log(`[ADMIN_ACTION] villageStudentMealWarningsEnabled=${villageStudentMealWarningsEnabled} by userId=${req.session.adminUserId ?? 'unknown'}`);
   res.json(await getStudentsNotEating());
 });
 
@@ -22,47 +34,18 @@ router.post('/students-not-eating/:personId/clear', async (req, res) => {
   }
 });
 
-function parseDate(value: unknown, fallback: Date): Date {
-  if (typeof value !== 'string' || value.length === 0) {
-    return fallback;
-  }
-
-  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (dateOnlyMatch) {
-    const [, yearRaw, monthRaw, dayRaw] = dateOnlyMatch;
-    const year = Number(yearRaw);
-    const monthIndex = Number(monthRaw) - 1;
-    const day = Number(dayRaw);
-    const parsedLocal = new Date(year, monthIndex, day);
-
-    if (
-      Number.isNaN(parsedLocal.getTime())
-      || parsedLocal.getFullYear() !== year
-      || parsedLocal.getMonth() !== monthIndex
-      || parsedLocal.getDate() !== day
-    ) {
-      return fallback;
-    }
-
-    return parsedLocal;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
-}
-
-function resolveDateRange(query: Record<string, unknown>): { from: Date; to: Date } {
-  const fromQuery = query.startDate ?? query.from;
-  const toQuery = query.endDate ?? query.to;
-
-  const from = startOfDay(parseDate(fromQuery, new Date(0)));
-  const to = endOfDay(parseDate(toQuery, new Date()));
-
+// Date-only startDate/endDate (or from/to) values are whole days in the school timezone.
+// Defaults: from the beginning of records until the end of today.
+async function resolveDateRange(query: Record<string, unknown>): Promise<{ from: Date; to: Date }> {
+  const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { timezone: true } });
+  const timezone = resolveTimezone(settings?.timezone);
+  const from = parseQueryDate(query.startDate ?? query.from, timezone, 'start') ?? new Date(0);
+  const to = parseQueryDate(query.endDate ?? query.to, timezone, 'end') ?? endOfLocalDay(localDateKey(new Date(), timezone), timezone);
   return { from, to };
 }
 
 router.get('/summary', async (req, res) => {
-  const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
+  const { from, to } = await resolveDateRange(req.query as Record<string, unknown>);
 
   const [transactions, people, settings, entitlementAgg] = await Promise.all([
     prisma.scanTransaction.findMany({
@@ -181,7 +164,7 @@ router.get('/summary', async (req, res) => {
 });
 
 router.get('/meal-totals.csv', async (req, res) => {
-  const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
+  const { from, to } = await resolveDateRange(req.query as Record<string, unknown>);
   const settings = await prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } });
   const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
 
@@ -209,18 +192,14 @@ router.get('/meal-totals.csv', async (req, res) => {
     dinner: row.dinners
   }));
 
-  const parser = new Parser({
-    fields: ['name', 'personId', 'personType', 'totalMeals', 'breakfast', 'lunch', 'dinner']
-  });
-
-  const csv = parser.parse(rows as unknown as Record<string, unknown>[]);
+  const csv = toCsv(rows, ['name', 'personId', 'personType', 'totalMeals', 'breakfast', 'lunch', 'dinner']);
   res.header('Content-Type', 'text/csv');
   res.attachment('meal-totals-by-person.csv');
   res.send(csv);
 });
 
 router.get('/export.csv', async (req, res) => {
-  const { from, to } = resolveDateRange(req.query as Record<string, unknown>);
+  const { from, to } = await resolveDateRange(req.query as Record<string, unknown>);
 
   const rows = await prisma.scanTransaction.findMany({
     where: { timestamp: { gte: from, lte: to } },
@@ -228,24 +207,10 @@ router.get('/export.csv', async (req, res) => {
     orderBy: { timestamp: 'desc' }
   });
 
-  const parser = new Parser({
-    fields: [
-      'timestamp',
-      'scannedValue',
-      'mealType',
-      'result',
-      'failureReason',
-      'stationName',
-      'entitlementId',
-      'entitlementPersonName',
-      'person.firstName',
-      'person.lastName',
-      'person.personId',
-      'person.personType'
-    ]
-  });
-
-  const csv = parser.parse(rows as unknown as Record<string, unknown>[]);
+  const csv = toCsv(rows, [
+    'timestamp', 'scannedValue', 'mealType', 'result', 'failureReason', 'stationName',
+    'entitlementId', 'entitlementPersonName', 'person.firstName', 'person.lastName', 'person.personId', 'person.personType'
+  ]);
   res.header('Content-Type', 'text/csv');
   res.attachment('report-transactions.csv');
   res.send(csv);

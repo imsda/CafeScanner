@@ -77,7 +77,23 @@ Use the Users/Admin flows to:
 - `PORT` (default `4000`)
 - `BACKEND_HOST` (default `0.0.0.0`)
 - `CLIENT_ORIGIN`
-- `BACKUP_DIR` (optional, default `backend/backups`)
+
+### Optional backend env values
+
+These are listed (commented out) at the bottom of `backend/.env.example`.
+
+- `BACKUP_DIR` (default `backend/backups`, relative to the repository root)
+- `TRUST_PROXY`: which reverse proxies to trust for the client IP and HTTPS detection.
+  - Unset or `loopback` (default): trust only a proxy on the same host (nginx/Traefik forwarding to `127.0.0.1:4000`).
+  - `true`: trust one proxy hop, e.g. Traefik running in another container.
+  - `false`: trust no proxy.
+  - You can also give an IP/CIDR list.
+  - The login cookie is marked `Secure` only when the request arrived over HTTPS (directly or via a trusted proxy), so plain `http://SERVER-IP:4000` access works.
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`: Google Sheets sync credentials.
+
+### SQLite database location
+
+Prisma resolves a relative `DATABASE_URL` against `backend/prisma/`, so the default `file:./prisma/dev.db` is stored at `backend/prisma/prisma/dev.db`. The setup, backup, restore, update and full-wipe tools all use this same rule.
 
 ### Backup/Restore storage
 
@@ -183,15 +199,24 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 ./scripts/start.sh
 ```
 
-### Docker Compose persistence recommendation
+### Docker Compose
 
-If you use `compose.yaml`, persist both SQLite data and backups:
-
-```yaml
-volumes:
-  - ./backend/prisma:/app/backend/prisma
-  - ./backend/backups:/app/backend/backups
+```bash
+cp backend/.env.example backend/.env   # then set SESSION_SECRET and CLIENT_ORIGIN
+mkdir -p backend/backups backend/data
+sudo chown -R 1000:1000 backend/prisma backend/backups backend/data
+docker compose up -d --build
 ```
+
+- `compose.yaml` reads `backend/.env` and serves the app on port 4000.
+- It mounts three host folders:
+  - `backend/prisma`: the SQLite database
+  - `backend/backups`: in-app backups
+  - `backend/data`: login sessions
+- The container runs as the unprivileged `node` user (uid 1000), so those host folders must be writable by uid 1000. That is what the `chown` above does.
+- Migrations and seeding run on every container start.
+- A healthcheck polls `/api/health`.
+- If a reverse proxy in another container terminates HTTPS, set `TRUST_PROXY=true`.
 
 ## Production Service Setup
 
@@ -222,6 +247,8 @@ Restart:
 ```bash
 ./scripts/service-restart.sh
 ```
+
+`install-service.sh` installs dependencies, applies migrations, and builds as the service user, even when run with `sudo`. Only the systemd steps use root.
 
 ### Service update/build permissions
 
@@ -290,12 +317,10 @@ Template download:
   - `tally-up-google-sheet-template.csv`
   - `count-down-google-sheet-template.csv`
 
-Service-account configuration (recommended):
+Service-account configuration (in `backend/.env`):
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
-- `GOOGLE_SHEETS_SPREADSHEET_ID`
-- Optional: `GOOGLE_SHEETS_RANGE` (default `Sheet1!A:L`)
-- Optional: `GOOGLE_SHEETS_TAB` (default `Sheet1`)
+- The spreadsheet ID and tab name are set in **Settings → Google Sheets Sync**, not in env vars.
 
 ### Switching meal tracking mode
 
@@ -326,7 +351,7 @@ Admins can delete one specific person record from **People** without clearing th
 
 - This action is **admin-only** in both frontend visibility and backend authorization.
 - The delete confirmation modal shows the person name and `personId`.
-- Confirmation requires typing the exact phrase: `DELETE USER`.
+- Confirmation requires typing the exact phrase: `DELETE PERSON`.
 - The action deletes only the selected person and related scan transaction records tied to that person.
 - The action does **not** delete:
   - other people,
@@ -426,13 +451,13 @@ Destructive reset flows are admin-initiated app actions only (for explicit maint
 
 ### Tally Up user types
 
-In **People**, select **1: Student**, **2: Staff**, or **3: Guest** when adding a person. For an existing person, change **User type** and click **Save**. Students can scan once for each meal per local calendar day, using the timezone in Settings. Duplicate student scans are logged as failures and do not increase tallies. Staff and guests have no per-meal limit; the configured scanner cooldown still applies to all types. Countdown and Camp Meeting behavior is unchanged.
+In **People**, select **1: Dorm Student**, **2: Staff**, **3: Guest**, or **4: Village Student** when adding a person. For an existing person, change **User type** and click **Save**. Dorm and village students follow identical student rules; the distinction is a label shown in People, Transactions, Reports, exports and the Students Not Eating list, and Reports can filter by all students, dorm students, or village students. Students can scan once for each meal per local calendar day, using the timezone in Settings. Duplicate student scans are logged as failures and do not increase tallies. Staff and guests have no per-meal limit; the configured scanner cooldown still applies to all types. Countdown and Camp Meeting behavior is unchanged.
 
 Apply database migrations before starting the updated app (`npm run db:migrate`). Existing people and imports without a type default to Guest to preserve their previous unlimited Tally Up behavior; assign Student or Staff on the People page. New people added through the Tally Up form default to Student. Resetting tally counters does not clear scan history or allow a student to repeat a meal.
 
 ### Google Sheets user types and scan lookup
 
-For Tally Up, add **User Type** in column G (or another column with that header). Use `1` or `Student`, `2` or `Staff`, and `3` or `Guest`; names are case-insensitive. The downloaded Tally Up template includes this column. Manual and automatic imports apply the types. Blank or missing type cells preserve existing assignments; newly imported people default to Guest. Invalid types skip the row and appear in the import errors. Existing six-column sheets continue to work. Google Sheets owns the user roster. Meal-count write-back preserves existing type cells and never adds database-only people to the sheet.
+For Tally Up, add **User Type** in column G (or another column with that header). Use `1` or `Student` / `Dorm Student`, `2` or `Staff`, `3` or `Guest`, and `4` or `Village Student`; names are case-insensitive and spaces, underscores and hyphens are ignored. Existing sheets using `1`/`Student` keep working and are treated as dorm students. The downloaded Tally Up template includes this column. Manual and automatic imports apply the types. Blank or missing type cells preserve existing assignments; newly imported people default to Guest. Invalid types skip the row and appear in the import errors. Existing six-column sheets continue to work. Google Sheets owns the user roster. Meal-count write-back preserves existing type cells and never adds database-only people to the sheet.
 
 On the scan station, **Find a person by ID or name** shows up to 20 matches. Click **Scan ID** to submit the usual scan, including cooldowns and student limits. Searching alone does not count a meal. Camp Meeting names search ticket records; scanning a shared ID follows the existing ticket selection rules.
 
@@ -446,11 +471,11 @@ Lifetime and weekly count updates are batched and unchanged cells are skipped. S
 
 Scanner accounts have a second page, **My Scanner Settings**, where they can save a personal delay between repeat scans of the same ID (0.5–10 seconds), or use the school default. The preference belongs to the signed-in account, applies to USB and camera scanning, and is enforced by the server. It does not change anyone else's setting or student meal limits. Apply migration `0023_personal_scan_delay` before starting this version.
 
-Transaction logs, reports, Google Sheets LOG exports, and CSV exports include each person's Student, Staff, or Guest type. In Tally Up mode, Settings controls how many complete local calendar days a student may go without a recorded meal before the scanner shows an anonymous notification. Authorized Reports users can review student details and manually clear individual warnings.
+Transaction logs, reports, Google Sheets LOG exports, and CSV exports include each person's type (`STUDENT` for dorm students, `VILLAGE_STUDENT`, `STAFF`, or `GUEST` in raw exports). In Tally Up mode, Settings controls how many complete local calendar days a student may go without a recorded meal before the scanner shows an anonymous notification. Authorized Reports users can review student details and manually clear individual warnings.
 
 The permission-controlled **Home Leaves** tab manages any number of named, academy-wide leave periods. Start and end dates are inclusive, and those dates are excluded from missed-meal warning calculations. Home leaves affect both the Reports warning list and scan-time warning activation. Apply migrations `0024_student_meal_warnings` and `0025_home_leaves` before starting this version.
 
-Reports includes a **Students Not Eating** view that proactively lists active students who meet the configured complete-day threshold, even if they have not returned to the scanner. Each warning can be cleared independently. The Scan Station keeps USB Scanner as its default while displaying name/ID search as a separate field; after selecting a person, focus returns to the search field for consecutive manual entries.
+Reports includes a **Students Not Eating** view that proactively lists active students who meet the configured complete-day threshold, even if they have not returned to the scanner. Each warning can be cleared independently. OWNER/ADMIN users also see an **Include village students in meal warnings** checkbox there (on by default). Unticking it removes village students from the list and stops scans from starting new warnings for them; dorm students are unaffected, and village students keep the one-scan-per-meal limit. The same setting is `villageStudentMealWarningsEnabled` in the settings API. Apply migration `0026_village_student_meal_warnings` before starting this version. The Scan Station keeps USB Scanner as its default while displaying name/ID search as a separate field; after selecting a person, focus returns to the search field for consecutive manual entries.
 
 An active missed-meal warning remains in Reports until manually cleared. Its **Complete Days Missed** value continues to recalculate from the student's latest successful meal, so a student who ate today shows `0` without automatically clearing the warning.
 
