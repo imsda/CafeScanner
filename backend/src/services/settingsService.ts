@@ -85,6 +85,7 @@ export const SETTINGS_PUBLIC_SELECT = {
   tallyWeeklyViewTabName: true,
   tallyWeekStartsOn: true,
   studentMealWarningDays: true,
+  villageStudentMealWarningsEnabled: true,
   googleLastAutoImportAt: true,
   googleLastAutoImportSummary: true,
   updatedAt: true

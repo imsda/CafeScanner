@@ -62,6 +62,20 @@ test('Tally Up person types and meal limits', async (t) => {
   const villageDuplicate = await scan('village');
   assert.equal('reason' in villageDuplicate && villageDuplicate.reason, 'STUDENT_MEAL_ALREADY_SCANNED');
 
+  // Admins can exclude village students from meal warnings; dorm students are unaffected
+  // and village students keep their once-per-meal limit.
+  await prisma.setting.update({ where: { id: 1 }, data: { villageStudentMealWarningsEnabled: false } });
+  const withoutVillage = await getStudentsNotEating();
+  assert.equal(withoutVillage.villageStudentMealWarningsEnabled, false);
+  assert.equal(withoutVillage.students.some((row) => row.id === village.id), false);
+  const quietVillage = await prisma.person.create({ data: { firstName: 'Quiet', lastName: 'Village', personId: 'village-2', codeValue: 'village-2', personType: 'VILLAGE_STUDENT' } });
+  assert.equal((await scan('village-2', 'DINNER')).ok, true);
+  assert.equal((await prisma.person.findUniqueOrThrow({ where: { id: quietVillage.id } })).mealWarningSince, null,
+    'a scan must not start a warning for a village student while village warnings are disabled');
+  assert.equal((await scan('village-2', 'DINNER')).ok, false);
+  await prisma.setting.update({ where: { id: 1 }, data: { villageStudentMealWarningsEnabled: true } });
+  assert.equal((await getStudentsNotEating()).students.some((row) => row.id === village.id), true);
+
   for (const personType of ['STAFF', 'GUEST'] as const) {
     await prisma.person.create({ data: { firstName: 'Test', lastName: personType, personId: personType, codeValue: personType, personType } });
     for (let i = 0; i < 3; i++) assert.equal((await scan(personType)).ok, true);

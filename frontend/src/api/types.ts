@@ -189,6 +189,7 @@ export interface ReportsSummaryResponse {
 export interface StudentsNotEatingResponse {
   mealTrackingMode: MealTrackingMode;
   warningDays: number;
+  villageStudentMealWarningsEnabled: boolean;
   students: Array<{
     id: number;
     personId: string;

@@ -144,6 +144,7 @@ model Setting {
   tallyWeeklyViewTabName   String?
   tallyWeekStartsOn        String           @default("MONDAY")
   studentMealWarningDays   Int              @default(1)
+  villageStudentMealWarningsEnabled Boolean @default(true)
   googleLastAutoImportAt   DateTime?
   googleLastAutoImportSummary String?
   fullWipeTokenHash        String?

@@ -1,20 +1,20 @@
 import { MealTrackingMode, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
-import { STUDENT_PERSON_TYPES } from '../utils/personType.js';
+import { mealWarningPersonTypes, STUDENT_PERSON_TYPES } from '../utils/personType.js';
 
 export async function getStudentsNotEating(now = new Date()) {
   const settings = await prisma.setting.findUniqueOrThrow({
     where: { id: 1 },
-    select: { mealTrackingMode: true, studentMealWarningDays: true, timezone: true }
+    select: { mealTrackingMode: true, studentMealWarningDays: true, timezone: true, villageStudentMealWarningsEnabled: true }
   });
 
   if (settings.mealTrackingMode !== MealTrackingMode.tally) {
-    return { mealTrackingMode: settings.mealTrackingMode, warningDays: settings.studentMealWarningDays, students: [] };
+    return { mealTrackingMode: settings.mealTrackingMode, warningDays: settings.studentMealWarningDays, villageStudentMealWarningsEnabled: settings.villageStudentMealWarningsEnabled, students: [] };
   }
 
   const students = await prisma.person.findMany({
-    where: { active: true, personType: { in: STUDENT_PERSON_TYPES } },
+    where: { active: true, personType: { in: mealWarningPersonTypes(settings.villageStudentMealWarningsEnabled) } },
     select: {
       id: true,
       personId: true,
@@ -56,7 +56,7 @@ export async function getStudentsNotEating(now = new Date()) {
     }];
   });
 
-  return { mealTrackingMode: settings.mealTrackingMode, warningDays: settings.studentMealWarningDays, students: warningStudents };
+  return { mealTrackingMode: settings.mealTrackingMode, warningDays: settings.studentMealWarningDays, villageStudentMealWarningsEnabled: settings.villageStudentMealWarningsEnabled, students: warningStudents };
 }
 
 export async function clearStudentMealWarning(personId: number) {

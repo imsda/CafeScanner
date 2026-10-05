@@ -2,11 +2,30 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { StudentsNotEatingResponse } from "../api/types";
 import { formatPersonType } from "../lib/format";
+import { useAuth } from "../context/AuthContext";
 
 export function StudentsNotEatingPanel() {
   const [data, setData] = useState<StudentsNotEatingResponse | null>(null);
   const [error, setError] = useState("");
   const [clearingId, setClearingId] = useState<number | null>(null);
+  const [savingVillageSetting, setSavingVillageSetting] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "OWNER" || user?.role === "ADMIN";
+
+  const setVillageWarnings = async (enabled: boolean) => {
+    setSavingVillageSetting(true);
+    try {
+      setData(await api<StudentsNotEatingResponse>("/reports/students-not-eating/settings", {
+        method: "PUT",
+        body: JSON.stringify({ villageStudentMealWarningsEnabled: enabled }),
+      }));
+      setError("");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to update village student warnings.");
+    } finally {
+      setSavingVillageSetting(false);
+    }
+  };
 
   const load = async () => {
     try {
@@ -31,6 +50,19 @@ export function StudentsNotEatingPanel() {
     {data?.mealTrackingMode === "tally" && (
       <>
         <p className="muted">Current warning threshold: <strong>{data.warningDays} complete day{data.warningDays === 1 ? "" : "s"}</strong></p>
+        {isAdmin ? (
+          <label>
+            <input
+              type="checkbox"
+              checked={data.villageStudentMealWarningsEnabled}
+              disabled={savingVillageSetting}
+              onChange={(event) => void setVillageWarnings(event.target.checked)}
+            />
+            Include village students in meal warnings
+          </label>
+        ) : !data.villageStudentMealWarningsEnabled && (
+          <p className="muted">Village students are excluded from meal warnings.</p>
+        )}
         {data.students.length === 0 ? <p>No students currently meet the warning threshold.</p> : (
           <table>
             <thead><tr><th>Name</th><th>Person ID</th><th>Type</th><th>Complete Days Missed</th><th>Last Recorded Meal</th><th>Action</th></tr></thead>

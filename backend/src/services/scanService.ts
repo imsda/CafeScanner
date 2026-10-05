@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 import { normalizeCampMeetingPersonId, normalizePersonId } from '../utils/personId.js';
-import { isStudentType } from '../utils/personType.js';
+import { isMealWarningEligible, isStudentType } from '../utils/personType.js';
 
 
 function localDateKey(date: Date, timezone: string): string {
@@ -558,7 +558,7 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
     }
 
     let mealWarningSince = person.mealWarningSince;
-    if (isStudentType(person.personType) && !mealWarningSince) {
+    if (isMealWarningEligible(person.personType, settings.villageStudentMealWarningsEnabled) && !mealWarningSince) {
       const lastMeal = await tx.scanTransaction.findFirst({
         where: { personId: person.id, result: ScanResult.SUCCESS },
         orderBy: { timestamp: 'desc' },

@@ -51,6 +51,9 @@ button:disabled, .btn.disabled, .btn[aria-disabled='true'] { opacity: 0.6; curso
 
 label { display: grid; gap: 0.35rem; font-size: 0.92rem; color: #244; }
 input { width: 100%; border: 1px solid #bdd0e8; border-radius: 8px; padding: 0.58rem 0.65rem; font-size: 0.95rem; }
+/* Checkboxes and radios sit inline with their label text instead of stretching full width. */
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display: flex; align-items: center; gap: 0.5rem; }
 .scan-input { font-size: 1.2rem; padding: 0.9rem; border-width: 2px; }
 
 .error { color: #b1002d; margin: 0; }

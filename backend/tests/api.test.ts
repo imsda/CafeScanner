@@ -119,6 +119,21 @@ test('user management validation', async () => {
   assert.equal((await request('/api/users/abc', { method: 'DELETE', cookie: admin })).status, 400);
 });
 
+test('village student meal warnings can be toggled by admins only', async () => {
+  const customCookie = await login('custom');
+  const body = { villageStudentMealWarningsEnabled: false };
+  assert.equal((await request('/api/reports/students-not-eating/settings', { method: 'PUT', cookie: customCookie, json: body })).status, 403);
+
+  const admin = await login('admin');
+  const off = await request('/api/reports/students-not-eating/settings', { method: 'PUT', cookie: admin, json: body });
+  assert.equal(off.status, 200);
+  assert.equal((await off.json()).villageStudentMealWarningsEnabled, false);
+  assert.equal((await (await request('/api/settings', { cookie: admin })).json()).villageStudentMealWarningsEnabled, false);
+  assert.equal((await request('/api/reports/students-not-eating/settings', { method: 'PUT', cookie: admin, json: { villageStudentMealWarningsEnabled: 'no' } })).status, 400);
+  const on = await request('/api/reports/students-not-eating/settings', { method: 'PUT', cookie: admin, json: { villageStudentMealWarningsEnabled: true } });
+  assert.equal((await on.json()).villageStudentMealWarningsEnabled, true);
+});
+
 test('meta and badges endpoints work without SETTINGS or PEOPLE access', async () => {
   const admin = await login('admin');
   await request(`/api/users/${custom.id}`, { method: 'PATCH', cookie: admin, json: { role: 'CUSTOM', allowedPages: ['BADGES'] } });

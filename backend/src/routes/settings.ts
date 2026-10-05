@@ -64,7 +64,8 @@ const settingsSchema = z.object({
   tallyWeeklyRawTabName: z.string().min(1).optional(),
   tallyWeeklyViewTabName: z.string().nullable().optional(),
   tallyWeekStartsOn: z.enum(['SUNDAY', 'MONDAY']).optional(),
-  studentMealWarningDays: z.number().int().min(1).max(365).optional()
+  studentMealWarningDays: z.number().int().min(1).max(365).optional(),
+  villageStudentMealWarningsEnabled: z.boolean().optional()
 });
 
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });

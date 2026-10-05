@@ -1,5 +1,7 @@
 import { MealTrackingMode, MealType, ScanResult } from '@prisma/client';
 import { asyncRouter } from '../utils/asyncRouter.js';
+import { z } from 'zod';
+import { requireAdmin } from '../middleware/auth.js';
 import { endOfDay, startOfDay } from 'date-fns';
 import { Parser } from 'json2csv';
 import { prisma } from '../db.js';
@@ -9,6 +11,16 @@ import { clearStudentMealWarning, getStudentsNotEating } from '../services/stude
 const router = asyncRouter();
 
 router.get('/students-not-eating', async (_req, res) => {
+  res.json(await getStudentsNotEating());
+});
+
+const warningSettingsSchema = z.object({ villageStudentMealWarningsEnabled: z.boolean() });
+
+// Admin-only switch shown on the Reports page; also editable via PUT /api/settings.
+router.put('/students-not-eating/settings', requireAdmin, async (req, res) => {
+  const { villageStudentMealWarningsEnabled } = warningSettingsSchema.parse(req.body);
+  await prisma.setting.update({ where: { id: 1 }, data: { villageStudentMealWarningsEnabled } });
+  console.log(`[ADMIN_ACTION] villageStudentMealWarningsEnabled=${villageStudentMealWarningsEnabled} by userId=${req.session.adminUserId ?? 'unknown'}`);
   res.json(await getStudentsNotEating());
 });
 
