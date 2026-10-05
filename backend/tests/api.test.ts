@@ -41,6 +41,22 @@ test('login validates input and never crashes the server', async () => {
   assert.equal((await request('/api/auth/me', { cookie })).status, 401);
 });
 
+test('CORS: same-origin requests are always allowed; foreign origins are rejected in production', async () => {
+  assert.equal((await request('/api/health', { headers: { Origin: client.base } })).status, 200);
+  process.env.NODE_ENV = 'production';
+  process.env.SESSION_SECRET = 'test-secret';
+  const productionApp = await startTestApp();
+  try {
+    // Browsers send Origin on same-origin module requests; the app must accept its own origin.
+    assert.equal((await productionApp.request('/api/health', { headers: { Origin: productionApp.base } })).status, 200);
+    const foreign = await productionApp.request('/api/health', { headers: { Origin: 'https://evil.example' } });
+    assert.equal(foreign.status, 403);
+  } finally {
+    delete process.env.NODE_ENV;
+    await productionApp.close();
+  }
+});
+
 test('unknown API routes return JSON 404', async () => {
   const cookie = await login('admin');
   const response = await request('/api/does-not-exist', { cookie });

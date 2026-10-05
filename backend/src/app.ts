@@ -21,7 +21,7 @@ import homeLeaveRoutes from './routes/homeLeaves.js';
 import metaRoutes from './routes/meta.js';
 import { refreshSessionUser, requireAdmin, requireAuth, requirePageAccess } from './middleware/auth.js';
 
-const isProduction = process.env.NODE_ENV === 'production';
+const isProductionEnv = () => process.env.NODE_ENV === 'production';
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const frontendDistDir = path.resolve(currentDir, '../../frontend/dist');
 const frontendIndexPath = path.join(frontendDistDir, 'index.html');
@@ -54,7 +54,7 @@ function createSqliteSessionStore(): session.Store {
 
 function sessionSecret(): string {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  if (isProduction) throw new Error('SESSION_SECRET is required in production');
+  if (isProductionEnv()) throw new Error('SESSION_SECRET is required in production');
   return 'change-me';
 }
 
@@ -90,25 +90,32 @@ export type CreateAppOptions = {
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
+  const isProduction = isProductionEnv();
   const serveFrontend = options.serveFrontend ?? isProduction;
   const configuredOrigins = (process.env.CLIENT_ORIGIN || '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  app.use(
-    cors({
-      credentials: true,
-      origin(origin, callback) {
-        // Same-origin requests carry no Origin header; development allows any origin.
-        if (!origin || !isProduction || configuredOrigins.includes(origin)) {
-          callback(null, true);
-          return;
-        }
-        callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  // CORS only matters for the API; static assets are always served same-origin.
+  // Browsers send an Origin header even on same-origin module/script requests, so a
+  // request whose Origin matches the Host it was sent to is always allowed.
+  app.use('/api', cors((req, callback) => {
+    const origin = req.headers.origin;
+    const sameOrigin = origin !== undefined && (() => {
+      try {
+        return new URL(origin).host === req.headers.host;
+      } catch {
+        return false;
       }
-    })
-  );
+    })();
+    const allowed = !origin || sameOrigin || !isProduction || configuredOrigins.includes(origin);
+    if (!allowed) {
+      callback(Object.assign(new Error(`Origin ${origin} is not allowed by CORS`), { status: 403 }));
+      return;
+    }
+    callback(null, { origin: true, credentials: true });
+  }));
   app.use(express.json());
   app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 
