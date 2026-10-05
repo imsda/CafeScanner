@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# All paths below are relative to the repository root, so run from there regardless of the caller's cwd.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 MIN_NODE_MAJOR="${MIN_NODE_MAJOR:-20}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 
@@ -75,24 +78,23 @@ ensure_openssl() {
 }
 
 setup_nodesource_repo() {
-  local apt_cmd=()
-  if [[ "${EUID}" -eq 0 ]]; then
-    apt_cmd=(apt-get)
-  else
-    apt_cmd=(sudo apt-get)
+  # Writing under /etc needs root; prefix privileged commands with sudo when not root.
+  local as_root=()
+  if [[ "${EUID}" -ne 0 ]]; then
+    as_root=(sudo)
   fi
 
-  "${apt_cmd[@]}" install -y ca-certificates curl gnupg
-  install -m 0755 -d /etc/apt/keyrings
+  "${as_root[@]}" apt-get install -y ca-certificates curl gnupg
+  "${as_root[@]}" install -m 0755 -d /etc/apt/keyrings
 
   if [[ ! -f /etc/apt/keyrings/nodesource.gpg ]]; then
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-    chmod 0644 /etc/apt/keyrings/nodesource.gpg
+      | "${as_root[@]}" gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    "${as_root[@]}" chmod 0644 /etc/apt/keyrings/nodesource.gpg
   fi
 
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
-    > /etc/apt/sources.list.d/nodesource.list
+    | "${as_root[@]}" tee /etc/apt/sources.list.d/nodesource.list > /dev/null
 }
 
 ensure_node_toolchain() {

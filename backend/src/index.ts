@@ -30,7 +30,17 @@ const app = express();
 const port = Number(process.env.PORT || 4000);
 const host = process.env.BACKEND_HOST || process.env.HOST || '0.0.0.0';
 const isProduction = process.env.NODE_ENV === 'production';
-const behindProxy = (process.env.TRUST_PROXY || 'true').toLowerCase() !== 'false';
+// TRUST_PROXY: "true" trusts one proxy hop, "false" trusts none, anything else is passed
+// to Express as-is (e.g. "loopback", an IP or CIDR list). The default only trusts a
+// reverse proxy on the same host, so direct clients cannot spoof X-Forwarded-For.
+function parseTrustProxy(value: string | undefined): boolean | number | string {
+  const normalized = (value ?? '').trim();
+  if (!normalized) return 'loopback';
+  if (normalized.toLowerCase() === 'true') return 1;
+  if (normalized.toLowerCase() === 'false') return false;
+  return normalized;
+}
+const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
 
 const configuredOrigins = (process.env.CLIENT_ORIGIN || '')
   .split(',')
@@ -80,7 +90,7 @@ app.use(
   })
 );
 app.use(express.json());
-if (behindProxy) app.set('trust proxy', 1);
+app.set('trust proxy', trustProxy);
 
 app.use(
   session({
@@ -88,7 +98,9 @@ app.use(
     secret: process.env.SESSION_SECRET || (isProduction ? (()=>{throw new Error('SESSION_SECRET is required in production');})() : 'change-me'),
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, maxAge: 1000 * 60 * 60 * 8, sameSite: 'lax', secure: isProduction && behindProxy }
+    // 'auto' marks the cookie Secure only on HTTPS requests (directly or via a trusted
+    // proxy's X-Forwarded-Proto), so plain-HTTP LAN access on :4000 still works.
+    cookie: { httpOnly: true, maxAge: 1000 * 60 * 60 * 8, sameSite: 'lax', secure: isProduction ? 'auto' : false }
   })
 );
 

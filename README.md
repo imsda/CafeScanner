@@ -77,7 +77,23 @@ Use the Users/Admin flows to:
 - `PORT` (default `4000`)
 - `BACKEND_HOST` (default `0.0.0.0`)
 - `CLIENT_ORIGIN`
-- `BACKUP_DIR` (optional, default `backend/backups`)
+
+### Optional backend env values
+
+These are listed (commented out) at the bottom of `backend/.env.example`.
+
+- `BACKUP_DIR` (default `backend/backups`, relative to the repository root)
+- `TRUST_PROXY`: which reverse proxies to trust for the client IP and HTTPS detection.
+  - Unset or `loopback` (default): trust only a proxy on the same host (nginx/Traefik forwarding to `127.0.0.1:4000`).
+  - `true`: trust one proxy hop, e.g. Traefik running in another container.
+  - `false`: trust no proxy.
+  - You can also give an IP/CIDR list.
+  - The login cookie is marked `Secure` only when the request arrived over HTTPS (directly or via a trusted proxy), so plain `http://SERVER-IP:4000` access works.
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`: Google Sheets sync credentials.
+
+### SQLite database location
+
+Prisma resolves a relative `DATABASE_URL` against `backend/prisma/`, so the default `file:./prisma/dev.db` is stored at `backend/prisma/prisma/dev.db`. The setup, backup, restore, update and full-wipe tools all use this same rule.
 
 ### Backup/Restore storage
 
@@ -183,15 +199,24 @@ The script prints local + LAN frontend URLs and whether HTTPS is enabled.
 ./scripts/start.sh
 ```
 
-### Docker Compose persistence recommendation
+### Docker Compose
 
-If you use `compose.yaml`, persist both SQLite data and backups:
-
-```yaml
-volumes:
-  - ./backend/prisma:/app/backend/prisma
-  - ./backend/backups:/app/backend/backups
+```bash
+cp backend/.env.example backend/.env   # then set SESSION_SECRET and CLIENT_ORIGIN
+mkdir -p backend/backups backend/data
+sudo chown -R 1000:1000 backend/prisma backend/backups backend/data
+docker compose up -d --build
 ```
+
+- `compose.yaml` reads `backend/.env` and serves the app on port 4000.
+- It mounts three host folders:
+  - `backend/prisma`: the SQLite database
+  - `backend/backups`: in-app backups
+  - `backend/data`: login sessions
+- The container runs as the unprivileged `node` user (uid 1000), so those host folders must be writable by uid 1000. That is what the `chown` above does.
+- Migrations and seeding run on every container start.
+- A healthcheck polls `/api/health`.
+- If a reverse proxy in another container terminates HTTPS, set `TRUST_PROXY=true`.
 
 ## Production Service Setup
 
@@ -222,6 +247,8 @@ Restart:
 ```bash
 ./scripts/service-restart.sh
 ```
+
+`install-service.sh` installs dependencies, applies migrations, and builds as the service user, even when run with `sudo`. Only the systemd steps use root.
 
 ### Service update/build permissions
 
@@ -290,12 +317,10 @@ Template download:
   - `tally-up-google-sheet-template.csv`
   - `count-down-google-sheet-template.csv`
 
-Service-account configuration (recommended):
+Service-account configuration (in `backend/.env`):
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
-- `GOOGLE_SHEETS_SPREADSHEET_ID`
-- Optional: `GOOGLE_SHEETS_RANGE` (default `Sheet1!A:L`)
-- Optional: `GOOGLE_SHEETS_TAB` (default `Sheet1`)
+- The spreadsheet ID and tab name are set in **Settings → Google Sheets Sync**, not in env vars.
 
 ### Switching meal tracking mode
 

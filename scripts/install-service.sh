@@ -36,18 +36,36 @@ ensure_arm64_rollup_compat() {
   # updater/install scripts; this is a runtime compatibility fix only.
   if is_linux_arm64; then
     echo "[UPDATE] ARM64 detected; ensuring Rollup native dependency exists."
-    npm install --no-save @rollup/rollup-linux-arm64-gnu || {
+    as_service_user npm install --no-save @rollup/rollup-linux-arm64-gnu || {
       echo "[UPDATE] ERROR: Failed to install @rollup/rollup-linux-arm64-gnu on ARM64." >&2
       exit 1
     }
   fi
 }
 
-run_step "npm install" npm install
+# Build as the service user, not root: root-owned node_modules/dist would make
+# later runs of update-service.sh (which runs as the service user) refuse to proceed.
+as_service_user() {
+  if [[ "$(id -un)" == "${SERVICE_USER}" ]]; then
+    "$@"
+  else
+    sudo -u "${SERVICE_USER}" -H env "PATH=${PATH}" "$@"
+  fi
+}
+
+cd "${PROJECT_ROOT}"
+run_step "npm install" as_service_user npm install
 run_step "ensure ARM64 Rollup compatibility dependency" ensure_arm64_rollup_compat
+run_step "apply database migrations" as_service_user npm run db:migrate
 
 echo "Building full app for production (frontend + backend)..."
-npm run build
+run_step "npm run build" as_service_user npm run build
+
+NPM_BIN="$(command -v npm || true)"
+if [[ -z "${NPM_BIN}" ]]; then
+  echo "[UPDATE] ERROR: npm not found on PATH." >&2
+  exit 1
+fi
 
 SERVICE_FILE="/etc/systemd/system/cafescanner.service"
 
@@ -61,7 +79,7 @@ After=network.target
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${PROJECT_ROOT}
-ExecStart=/usr/bin/npm run start -w backend
+ExecStart=${NPM_BIN} run start -w backend
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production

@@ -1,0 +1,13 @@
+# Keep host state and secrets out of the image build context.
+.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+backend/.env
+frontend/.env
+.env
+backend/prisma/*.db*
+backend/prisma/prisma/
+backend/backups/
+backend/data/
+certs/

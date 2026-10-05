@@ -1,10 +1,14 @@
 services:
   cafescanner:
     build: .
+    restart: unless-stopped
     ports:
       - "4000:4000"
-      - "5173:5173"
+    env_file:
+      - ./backend/.env
     volumes:
+      # SQLite database (DATABASE_URL="file:./prisma/dev.db" lives at backend/prisma/prisma/dev.db).
       - ./backend/prisma:/app/backend/prisma
       - ./backend/backups:/app/backend/backups
-      - ./.env:/app/.env
+      # Login sessions, so restarts/recreates do not sign everyone out.
+      - ./backend/data:/app/backend/data
