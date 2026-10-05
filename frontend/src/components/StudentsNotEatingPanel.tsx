@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { StudentsNotEatingResponse } from "../api/types";
-import { formatPersonType } from "../lib/format";
+import { formatDateTime, formatPersonType } from "../lib/format";
+import { useSchoolMeta } from "../hooks/useSchoolMeta";
 import { useAuth } from "../context/AuthContext";
 
 export function StudentsNotEatingPanel() {
@@ -10,10 +11,13 @@ export function StudentsNotEatingPanel() {
   const [clearingId, setClearingId] = useState<number | null>(null);
   const [savingVillageSetting, setSavingVillageSetting] = useState(false);
   const { user } = useAuth();
+  const { meta } = useSchoolMeta();
   const isAdmin = user?.role === "OWNER" || user?.role === "ADMIN";
 
   const setVillageWarnings = async (enabled: boolean) => {
     setSavingVillageSetting(true);
+    // Reflect the click immediately; the server response (or a failure) settles the final state.
+    setData((current) => (current ? { ...current, villageStudentMealWarningsEnabled: enabled } : current));
     try {
       setData(await api<StudentsNotEatingResponse>("/reports/students-not-eating/settings", {
         method: "PUT",
@@ -21,6 +25,7 @@ export function StudentsNotEatingPanel() {
       }));
       setError("");
     } catch (saveError) {
+      setData((current) => (current ? { ...current, villageStudentMealWarningsEnabled: !enabled } : current));
       setError(saveError instanceof Error ? saveError.message : "Unable to update village student warnings.");
     } finally {
       setSavingVillageSetting(false);
@@ -71,7 +76,7 @@ export function StudentsNotEatingPanel() {
               <td>{student.personId}</td>
               <td>{formatPersonType(student.personType)}</td>
               <td>{student.missedDays}</td>
-              <td>{student.lastMealAt ? new Date(student.lastMealAt).toLocaleString() : "No recorded meal"}</td>
+              <td>{student.lastMealAt ? formatDateTime(student.lastMealAt, meta?.timezone) : "No recorded meal"}</td>
               <td><button type="button" className="secondary" disabled={clearingId === student.id} onClick={() => {
                 setClearingId(student.id);
                 void api(`/reports/students-not-eating/${student.id}/clear`, { method: "POST" })

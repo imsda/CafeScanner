@@ -1,4 +1,6 @@
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
+// Transactions can also record MANUAL overrides and NONE (scans outside any meal window).
+export type TransactionMealType = MealType | 'MANUAL' | 'NONE';
 export type MealTrackingMode = 'camp_meeting' | 'countdown' | 'tally';
 export type MealDay = 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
 // STUDENT is a dorm student; VILLAGE_STUDENT follows the same student rules.

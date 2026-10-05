@@ -1,11 +1,12 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import type { AppPage } from "../context/AuthContext";
+import { homePathFor } from "../lib/pages";
 
 export function AdminOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (user?.role !== "ADMIN" && user?.role !== "OWNER")
-    return <Navigate to="/scan" replace />;
+    return <Navigate to={homePathFor(user?.allowedPages) ?? "/"} replace />;
   return <>{children}</>;
 }
 

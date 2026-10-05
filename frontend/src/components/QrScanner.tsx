@@ -45,6 +45,15 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
   const lastScanRef = useRef<{ value: string; timestamp: number } | null>(null);
   const [status, setStatus] = useState<ScannerStatus>('not-started');
   const [startupError, setStartupError] = useState('');
+  // Bumped on every start/stop/unmount; an in-flight start that sees a newer value
+  // knows it was cancelled and must release the camera it just opened.
+  const generationRef = useRef(0);
+  // The decode callback is registered once per start, so read the latest handlers through refs
+  // (otherwise it keeps the onResult closure, and its isSubmitting guard, from when the camera started).
+  const onResultRef = useRef(onResult);
+  const onErrorRef = useRef(onError);
+  onResultRef.current = onResult;
+  onErrorRef.current = onError;
 
   const codeReader = useMemo(() => {
     const hints = new Map([[DecodeHintType.POSSIBLE_FORMATS, SUPPORTED_FORMATS]]);
@@ -71,6 +80,7 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
   }, []);
 
   const stopScanner = useCallback(() => {
+    generationRef.current += 1;
     controlsRef.current?.stop();
     controlsRef.current = null;
     releaseVideoStream();
@@ -100,6 +110,8 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
     }
 
     stopScanner();
+    const generation = generationRef.current;
+    const cancelled = () => generation !== generationRef.current;
     setStatus('requesting-permission');
 
     try {
@@ -111,8 +123,10 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
       });
 
       probeStream.getTracks().forEach((track) => track.stop());
+      if (cancelled()) return;
 
       const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+      if (cancelled()) return;
       if (!devices.length) {
         setStatus('no-camera');
         onError('No camera was found on this device. Use USB scanner / manual entry mode.');
@@ -137,19 +151,26 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
 
           lastScanRef.current = { value: text, timestamp: now };
           setStatus('scan-success');
-          onResult(text);
+          onResultRef.current(text);
           return;
         }
 
         if (error && !(error instanceof NotFoundException)) {
           setStatus('scan-error');
-          onError('Scanner had trouble reading the camera feed. Try better lighting, then try again.');
+          onErrorRef.current('Scanner had trouble reading the camera feed. Try better lighting, then try again.');
         }
       });
 
+      if (cancelled()) {
+        // Stopped or unmounted while the camera was starting: shut it down immediately.
+        controls.stop();
+        releaseVideoStream();
+        return;
+      }
       controlsRef.current = controls;
       setStatus('scanner-ready');
     } catch (error) {
+      if (cancelled()) return;
       const domError = error instanceof DOMException ? error.name : '';
       const originalMessage = error instanceof Error ? error.message : String(error);
       const message = originalMessage.toLowerCase();
@@ -176,18 +197,18 @@ export default function QrScanner({ onResult, onError, cooldownMs = 1000, diagno
       setStatus('scan-error');
       onError(`Scanner failed to start. ${originalMessage || 'Unknown error.'}`);
     }
-  }, [codeReader, cooldownMs, onError, onResult, releaseVideoStream, stopScanner]);
+  }, [codeReader, cooldownMs, onError, releaseVideoStream, stopScanner]);
 
   useEffect(() => () => stopScanner(), [stopScanner]);
 
   return (
     <div className="scanner-card">
       <div className="button-row">
-        <button type="button" className="primary" onClick={() => void startScanner()}>Start Camera Scanner</button>
+        <button type="button" className="primary" disabled={status === 'requesting-permission'} onClick={() => void startScanner()}>Start Camera Scanner</button>
         <button type="button" className="secondary" onClick={stopScanner}>Stop Camera Scanner</button>
       </div>
       <video ref={videoRef} className="scanner-video" muted autoPlay playsInline controls={false} />
-      <p className="scanner-status">
+      <p className="scanner-status" role="status" aria-live="polite">
         {status === 'not-started' && 'Camera not started. Tap Start Camera Scanner to request permission and use the rear camera when available.'}
         {status === 'insecure-context' && 'Camera scan is unavailable on this page right now. Use USB scanner / manual entry mode.'}
         {status === 'api-unavailable' && 'Camera scan is unavailable in this browser right now. Use USB scanner / manual entry mode.'}

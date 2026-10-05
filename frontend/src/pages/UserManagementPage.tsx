@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { api } from "../api/client";
+import { api, errorMessage } from "../api/client";
+import { useConfirm } from "../components/useConfirm";
 import { useAuth } from "../context/AuthContext";
 import type { AppPage } from "../context/AuthContext";
-import { PAGE_LABELS } from "../lib/pages";
+import { CUSTOM_ASSIGNABLE_PAGE_LABELS, PAGE_LABELS } from "../lib/pages";
 
 export function UserManagementPage() {
   const { user } = useAuth();
@@ -20,7 +21,55 @@ export function UserManagementPage() {
   const [userError, setUserError] = useState("");
   const [userMessage, setUserMessage] = useState("");
 
-  const loadUsers = () => api<any[]>("/users").then(setUsers);
+  const { confirm, dialog } = useConfirm();
+  const loadUsers = () => api<any[]>("/users")
+    .then(setUsers)
+    .catch((loadError) => setUserError(errorMessage(loadError, "Unable to load users.")));
+
+  // Runs a user-management request and reports success or failure on the page.
+  async function runUserAction(action: () => Promise<unknown>, successMessage: string, failureMessage: string) {
+    setUserError("");
+    setUserMessage("");
+    try {
+      await action();
+      setUserMessage(successMessage);
+      await loadUsers();
+      return true;
+    } catch (actionError) {
+      setUserError(errorMessage(actionError, failureMessage));
+      return false;
+    }
+  }
+
+  async function resetPassword(target: { id: number; username: string; role: string }) {
+    const minLength = target.role === "SCANNER" ? 4 : 12;
+    const next = await confirm({
+      title: `Reset password for ${target.username}`,
+      input: { label: `New password (min ${minLength} characters)`, type: "password", minLength },
+      confirmLabel: "Reset Password",
+    });
+    if (next === null) return;
+    await runUserAction(
+      () => api(`/users/${target.id}`, { method: "PATCH", body: JSON.stringify({ password: next }) }),
+      `Password reset for ${target.username}.`,
+      "Unable to reset password.",
+    );
+  }
+
+  async function deleteUser(target: { id: number; username: string }) {
+    const confirmed = await confirm({
+      title: `Delete ${target.username}?`,
+      message: "This login account will be removed permanently.",
+      confirmLabel: "Delete User",
+      danger: true,
+    });
+    if (confirmed === null) return;
+    await runUserAction(
+      () => api(`/users/${target.id}`, { method: "DELETE" }),
+      `Deleted ${target.username}.`,
+      "Unable to delete user.",
+    );
+  }
   useEffect(() => {
     void loadUsers();
   }, []);
@@ -87,20 +136,24 @@ export function UserManagementPage() {
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          void api("/users", {
-            method: "POST",
-            body: JSON.stringify({
-              username,
-              password,
-              role,
-              allowedPages: effectivePages,
+          void runUserAction(
+            () => api("/users", {
+              method: "POST",
+              body: JSON.stringify({
+                username,
+                password,
+                role,
+                allowedPages: effectivePages,
+              }),
             }),
-          }).then(() => {
+            `Created ${username}.`,
+            "Unable to create user.",
+          ).then((created) => {
+            if (!created) return;
             setUsername("");
             setPassword("");
             setRole("SCANNER");
             setAllowedPages(["SCAN"]);
-            return loadUsers();
           });
         }}
       >
@@ -139,7 +192,7 @@ export function UserManagementPage() {
           <div>
             <p className="muted">Allowed tabs</p>
             <div className="permission-grid">
-              {PAGE_LABELS.map((entry) => (
+              {CUSTOM_ASSIGNABLE_PAGE_LABELS.map((entry) => (
                 <label key={entry.key} className="permission-option">
                   <input
                     type="checkbox"
@@ -172,7 +225,7 @@ export function UserManagementPage() {
             <div>
               <p className="muted">Allowed tabs</p>
               <div className="permission-grid">
-                {PAGE_LABELS.map((entry) => (
+                {CUSTOM_ASSIGNABLE_PAGE_LABELS.map((entry) => (
                   <label key={entry.key} className="permission-option">
                     <input
                       type="checkbox"
@@ -221,26 +274,15 @@ export function UserManagementPage() {
                 <button
                   className="secondary"
                   type="button"
-                  onClick={() => {
-                    const next = prompt(`New password for ${u.username}`);
-                    if (next)
-                      void api(`/users/${u.id}`, {
-                        method: "PATCH",
-                        body: JSON.stringify({ password: next }),
-                      }).then(loadUsers);
-                  }}
+                  onClick={() => void resetPassword(u)}
                 >
                   Reset Password
                 </button>{" "}
                 <button
-                  className="secondary"
+                  className="danger"
                   type="button"
-                  onClick={() => {
-                    if (confirm(`Delete ${u.username}?`))
-                      void api(`/users/${u.id}`, { method: "DELETE" }).then(
-                        loadUsers,
-                      );
-                  }}
+                  disabled={u.id === user?.id}
+                  onClick={() => void deleteUser(u)}
                 >
                   Delete
                 </button>
@@ -249,6 +291,7 @@ export function UserManagementPage() {
           ))}
         </tbody>
       </table>
+      {dialog}
     </div>
   );
 }

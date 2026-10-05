@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import { api } from "../api/client";
+import { ApiError, api, errorMessage } from "../api/client";
 import type { MealTrackingMode, MealType, ScanResponse, Settings } from "../api/types";
 import QrScanner from "../components/QrScanner";
 import { ScanResultCard } from "../components/ScanResultCard";
@@ -73,19 +73,23 @@ export function ScanPage() {
   }, [mode]);
 
   useEffect(() => {
-    void api<Settings>("/scan/settings").then((s) => {
+    api<Settings>("/scan/settings").then((s) => {
       setMealTrackingMode(s.mealTrackingMode);
       setScanCooldownSeconds(
         Math.min(10, Math.max(0.5, s.scannerCooldownSeconds || 1)),
       );
       setScannerDiagnosticsEnabled(Boolean(s.scannerDiagnosticsEnabled));
+    }).catch((loadError) => {
+      setLastScannerError(errorMessage(loadError, "Unable to load scanner settings; using defaults."));
     });
   }, []);
 
   useEffect(() => {
     const refreshWarningStatus = () => {
-      void api<{ hasWarnings: boolean }>("/scan/warnings/status")
-        .then((status) => setHasStudentMealWarnings(status.hasWarnings));
+      api<{ hasWarnings: boolean }>("/scan/warnings/status")
+        .then((status) => setHasStudentMealWarnings(status.hasWarnings))
+        // Keep the last known state; the next poll retries.
+        .catch(() => undefined);
     };
     refreshWarningStatus();
     const interval = window.setInterval(refreshWarningStatus, 60_000);
@@ -93,6 +97,9 @@ export function ScanPage() {
   }, []);
 
   useEffect(() => () => clearAutoSubmitTimeout(), []);
+
+  const clearSubmittedInput = (submitted: string) =>
+    setManual((current) => (current.trim() === submitted ? "" : current));
 
   const submitScan = async (code: string, entitlementId?: number) => {
     const trimmed = code.trim();
@@ -125,7 +132,7 @@ export function ScanPage() {
           options: response.options,
         });
         setResult(null);
-        setManual("");
+        clearSubmittedInput(trimmed);
         scannerLikeInputRef.current = false;
         focusUsbInput();
         return;
@@ -151,7 +158,7 @@ export function ScanPage() {
       setPendingSelection(null);
       setMealTrackingMode(response.mealTrackingMode);
       setLastScannerError("");
-      setManual("");
+      clearSubmittedInput(trimmed);
       scannerLikeInputRef.current = false;
       focusUsbInput();
     } catch (error) {
@@ -162,7 +169,10 @@ export function ScanPage() {
       setResult({ ok: false, error: failureMessage });
       setLastScannerError(failureMessage);
       setPendingSelection(null);
-      setManual("");
+      clearSubmittedInput(trimmed);
+      // A scan the server rejected (4xx: cooldown, no meals left…) stays de-duplicated, but a network or
+      // server failure must not block an immediate retry of the same ID.
+      if (!(error instanceof ApiError && error.status < 500)) lastSubmissionRef.current = null;
       scannerLikeInputRef.current = false;
       focusUsbInput();
     } finally {
@@ -384,7 +394,10 @@ export function ScanPage() {
           </div>
         )}
       </section>
-      <ScanResultCard result={result} />
+      {/* Live region so screen readers announce each scan outcome. */}
+      <div role="status" aria-live="polite">
+        <ScanResultCard result={result} />
+      </div>
     </div>
   );
 }

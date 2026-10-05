@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import Barcode from "react-barcode";
 import { QRCodeSVG } from "qrcode.react";
-import { api } from "../api/client";
+import { api, errorMessage } from "../api/client";
 
 export type BadgeCodeType = "barcode" | "qr" | "auto";
 
@@ -13,14 +13,18 @@ export function resolveBadgeCodeType(type: BadgeCodeType, value: string): "barco
 }
 
 export function BadgesPage() {
-  const [people, setPeople] = useState<any[]>([]);
+  const [people, setPeople] = useState<Array<{ id: number; firstName: string; lastName: string; personId: string; codeValue: string | null }>>([]);
+  const [error, setError] = useState("");
   const [codeType, setCodeType] = useState<BadgeCodeType>(() => {
     const stored = window.localStorage.getItem(BADGE_CODE_TYPE_STORAGE_KEY);
     return stored === "barcode" || stored === "qr" || stored === "auto" ? stored : "barcode";
   });
 
   useEffect(() => {
-    void api<any[]>("/people?showInactive=true").then(setPeople);
+    // /meta/badges only needs Badges access (not People).
+    api<typeof people>("/meta/badges")
+      .then(setPeople)
+      .catch((loadError) => setError(errorMessage(loadError, "Unable to load badges.")));
   }, []);
 
   useEffect(() => {
@@ -30,7 +34,8 @@ export function BadgesPage() {
   return (
     <div className="card">
       <h2>Printable Badges</h2>
-      <div className="button-row">
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="button-row no-print">
         <label>
           Code Type
           <select value={codeType} onChange={(e) => setCodeType(e.target.value as BadgeCodeType)}>
@@ -39,7 +44,7 @@ export function BadgesPage() {
             <option value="auto">Auto (recommended)</option>
           </select>
         </label>
-        <button className="secondary" onClick={() => window.print()}>
+        <button type="button" className="secondary" onClick={() => window.print()}>
           Print Sheet
         </button>
       </div>

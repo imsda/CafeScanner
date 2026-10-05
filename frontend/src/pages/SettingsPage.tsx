@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import { ApiNetworkError, api, API_BASE } from "../api/client";
+import { ApiNetworkError, api, apiUpload, API_BASE, errorMessage } from "../api/client";
+import { useConfirm } from "../components/useConfirm";
+import { invalidateSchoolMeta } from "../hooks/useSchoolMeta";
 import type { MealTrackingMode, Settings, GoogleSheetsSchedulerStatus, SystemUpdateResult, SystemUpdateStatus } from "../api/types";
 import { useAuth } from "../context/AuthContext";
-import { renderStoredTimeValue, modeLabel } from "../lib/format";
+import { formatDateTime, renderStoredTimeValue, modeLabel } from "../lib/format";
 import { TIMEZONE_OPTIONS, normalizeSettingsForTimeAndTimezone } from "../lib/settings";
+import { Modal } from "../components/Modal";
 
 export function SettingsPage() {
   const { user } = useAuth();
+  const { confirm, dialog } = useConfirm();
   const [settings, setSettings] = useState<Settings>();
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -54,14 +58,22 @@ export function SettingsPage() {
   const [showResetSuccessModal, setShowResetSuccessModal] = useState(false);
   const [resetErrorMessage, setResetErrorMessage] = useState('');
   const [showResetErrorModal, setShowResetErrorModal] = useState(false);
-  const formatDateTimeSafe = (value?: string | null, fallback = "Never") => {
-    if (!value) return fallback;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? fallback : parsed.toLocaleString();
-  };
+  const formatDateTimeSafe = (value?: string | null, fallback = "Never") =>
+    value ? formatDateTime(value, settings?.timezone) : fallback;
+
+  const [loadError, setLoadError] = useState("");
 
   const load = async () => {
-    const loaded = await api<Settings>("/settings");
+    let loaded: Settings;
+    try {
+      loaded = await api<Settings>("/settings");
+      setLoadError("");
+    } catch (settingsError) {
+      setLoadError(errorMessage(settingsError, "Unable to load settings."));
+      return;
+    }
+    // Mode, timezone and school name are cached for other pages; refresh them after any change.
+    invalidateSchoolMeta();
     setSettings(normalizeSettingsForTimeAndTimezone(loaded));
     setSavedGoogleSheetsSettings({
       googleSheetsEnabled: loaded.googleSheetsEnabled,
@@ -75,10 +87,13 @@ export function SettingsPage() {
       tallyWeekStartsOn: loaded.tallyWeekStartsOn ?? 'MONDAY',
     });
     if (user?.role === "OWNER" || user?.role === "ADMIN") {
-      const status = await api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status");
-      setSchedulerStatus(status);
-      const updateStatusResponse = await api<SystemUpdateStatus>("/system/update-status");
-      setUpdateStatus(updateStatusResponse);
+      // Secondary panels: a failure here (e.g. no network for the update check) must not block Settings.
+      void api<GoogleSheetsSchedulerStatus>("/settings/google-sheets/scheduler-status")
+        .then(setSchedulerStatus)
+        .catch((statusError) => setError(errorMessage(statusError, "Unable to load Google Sheets sync status.")));
+      void api<SystemUpdateStatus>("/system/update-status")
+        .then(setUpdateStatus)
+        .catch(() => setUpdateStatus(null));
     }
   };
 
@@ -157,7 +172,11 @@ export function SettingsPage() {
     }
   }
 
-  if (!settings) return <p>Loading...</p>;
+  if (!settings) {
+    return loadError
+      ? <div className="card stack"><h2>Settings</h2><p className="error" role="alert">{loadError}</p></div>
+      : <p className="muted">Loading settings…</p>;
+  }
 
   async function clearOperationalData() {
     if (!clearEnabled) return;
@@ -254,10 +273,13 @@ export function SettingsPage() {
       setError("Please select a valid .db backup file.");
       return;
     }
-    const confirmed = window.confirm(
-      "Restoring a backup will replace the current database. Continue?",
-    );
-    if (!confirmed) return;
+    const confirmed = await confirm({
+      title: "Restore backup?",
+      message: "Restoring a backup replaces the current database. A snapshot of the current data is saved first.",
+      confirmLabel: "Restore Backup",
+      danger: true,
+    });
+    if (confirmed === null) return;
 
     setMessage("");
     setError("");
@@ -265,20 +287,12 @@ export function SettingsPage() {
     const formData = new FormData();
     formData.append("backup", backupFile);
     try {
-      const response = await fetch(`${API_BASE}/system/backups/restore`, {
-        method: "POST",
-        credentials: "include",
-        body: formData,
-      });
-      const payload = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
-      if (!response.ok) {
-        throw new Error(payload?.error || "Backup restore failed.");
-      }
+      const payload = await apiUpload<{ message?: string }>("/system/backups/restore", formData);
       setMessage(`${payload?.message || "Backup restored successfully."} Please reload if data looks stale.`);
       setBackupFile(null);
       await load();
     } catch (restoreError) {
-      setError(restoreError instanceof Error ? restoreError.message : "Backup restore failed.");
+      setError(errorMessage(restoreError, "Backup restore failed."));
     } finally {
       setIsRestoringBackup(false);
     }
@@ -289,14 +303,14 @@ export function SettingsPage() {
       <h2>Settings</h2>
       {message && <p>{message}</p>}
       {error && <p className="error">{error}</p>}
-      <div className="settings-tabs">
-        <button type="button" className={activeSettingsSection === "general" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("general")}>General</button>
-        <button type="button" className={activeSettingsSection === "meal-tracking" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("meal-tracking")}>Meal Tracking</button>
-        <button type="button" className={activeSettingsSection === "scanner" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("scanner")}>Scanner</button>
-        <button type="button" className={activeSettingsSection === "google-sheets-sync" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("google-sheets-sync")}>Google Sheets Sync</button>
-        {canManageUpdates && <button type="button" className={activeSettingsSection === "updates" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("updates")}>Updates</button>}
-        {canManageData && <button type="button" className={activeSettingsSection === "data-reset-tools" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("data-reset-tools")}>Data Reset Tools</button>}
-        {canManageData && <button type="button" className={activeSettingsSection === "danger-zone" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("danger-zone")}>Danger Zone</button>}
+      <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button type="button" role="tab" aria-selected={activeSettingsSection === "general"} className={activeSettingsSection === "general" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("general")}>General</button>
+        <button type="button" role="tab" aria-selected={activeSettingsSection === "meal-tracking"} className={activeSettingsSection === "meal-tracking" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("meal-tracking")}>Meal Tracking</button>
+        <button type="button" role="tab" aria-selected={activeSettingsSection === "scanner"} className={activeSettingsSection === "scanner" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("scanner")}>Scanner</button>
+        <button type="button" role="tab" aria-selected={activeSettingsSection === "google-sheets-sync"} className={activeSettingsSection === "google-sheets-sync" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("google-sheets-sync")}>Google Sheets Sync</button>
+        {canManageUpdates && <button type="button" role="tab" aria-selected={activeSettingsSection === "updates"} className={activeSettingsSection === "updates" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("updates")}>Updates</button>}
+        {canManageData && <button type="button" role="tab" aria-selected={activeSettingsSection === "data-reset-tools"} className={activeSettingsSection === "data-reset-tools" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("data-reset-tools")}>Data Reset Tools</button>}
+        {canManageData && <button type="button" role="tab" aria-selected={activeSettingsSection === "danger-zone"} className={activeSettingsSection === "danger-zone" ? "primary" : "secondary"} onClick={() => setActiveSettingsSection("danger-zone")}>Danger Zone</button>}
       </div>
 
       {activeSettingsSection === "general" && (
@@ -892,7 +906,7 @@ export function SettingsPage() {
                 <strong>One-time token:</strong> <code>{fullWipeResult.token}</code>
               </p>
               <p className="muted">
-                Expires at: {new Date(fullWipeResult.expiresAt).toLocaleString()}
+                Expires at: {formatDateTime(fullWipeResult.expiresAt, settings.timezone)}
               </p>
             </div>
           )}
@@ -901,165 +915,156 @@ export function SettingsPage() {
       )}
 
       {showModeConfirm && pendingMode && (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
-          <div className="confirm-modal stack">
-            <h4>Confirm Mode Switch</h4>
-            <p>
-              You are switching from <strong>{modeLabel(settings.mealTrackingMode)}</strong> to{' '}
-              <strong>{modeLabel(pendingMode)}</strong>.
-            </p>
-            <p className="error">
-              This will permanently clear operational data (people, scans, imports).
-              Accounts and settings will be preserved.
-            </p>
-            <p>
-              Type <code>SWITCH MODE</code> to continue.
-            </p>
-            <input
-              value={modePhrase}
-              onChange={(e) => setModePhrase(e.target.value)}
-              placeholder="SWITCH MODE"
-            />
-            <div className="button-row">
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => {
+        <Modal title="Confirm Mode Switch" onClose={() => { setShowModeConfirm(false); setPendingMode(null); setModePhrase(""); }}>
+          <p>
+            You are switching from <strong>{modeLabel(settings.mealTrackingMode)}</strong> to{' '}
+            <strong>{modeLabel(pendingMode)}</strong>.
+          </p>
+          <p className="error">
+            This will permanently clear operational data (people, scans, imports).
+            Accounts and settings will be preserved.
+          </p>
+          <p>
+            Type <code>SWITCH MODE</code> to continue.
+          </p>
+          <input
+            value={modePhrase}
+            onChange={(e) => setModePhrase(e.target.value)}
+            placeholder="SWITCH MODE"
+          />
+          <div className="button-row">
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => {
+                setShowModeConfirm(false);
+                setPendingMode(null);
+                setModePhrase("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={!modeEnabled}
+              onClick={() => {
+                void api("/settings/meal-tracking-mode", {
+                  method: "PUT",
+                  body: JSON.stringify({
+                    mealTrackingMode: pendingMode,
+                    confirmationPhrase: modePhrase,
+                  }),
+                }).then(async () => {
+                  setMessage(
+                    `Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`,
+                  );
+                  setError("");
                   setShowModeConfirm(false);
                   setPendingMode(null);
                   setModePhrase("");
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="danger"
-                type="button"
-                disabled={!modeEnabled}
-                onClick={() => {
-                  void api("/settings/meal-tracking-mode", {
-                    method: "PUT",
-                    body: JSON.stringify({
-                      mealTrackingMode: pendingMode,
-                      confirmationPhrase: modePhrase,
-                    }),
-                  }).then(async () => {
-                    setMessage(
-                      `Meal tracking mode switched to ${modeLabel(pendingMode)}. Operational data was cleared.`,
-                    );
-                    setError("");
-                    setShowModeConfirm(false);
-                    setPendingMode(null);
-                    setModePhrase("");
-                    await load();
-                  });
-                }}
-              >
-                Switch Mode + Clear Data
-              </button>
-            </div>
+                  await load();
+                }).catch((switchError) => {
+                  setError(errorMessage(switchError, "Unable to switch meal tracking mode."));
+                  setShowModeConfirm(false);
+                  setPendingMode(null);
+                  setModePhrase("");
+                });
+              }}
+            >
+              Switch Mode + Clear Data
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {showClearModal && (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
-          <div className="confirm-modal stack">
-            <h4>Confirm Data Reset</h4>
-            <p>
-              Type <code>RESET MEAL TRACKING DATA</code> to continue.
-            </p>
-            <input
-              value={clearPhrase}
-              onChange={(e) => setClearPhrase(e.target.value)}
-              placeholder="RESET MEAL TRACKING DATA"
-            />
-            <div className="button-row">
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => {
-                  setShowClearModal(false);
-                  setClearPhrase("");
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="danger"
-                type="button"
-                disabled={!clearEnabled}
-                onClick={() => void clearOperationalData()}
-              >
-                Confirm Reset
-              </button>
-            </div>
+        <Modal title="Confirm Data Reset" onClose={() => { setShowClearModal(false); setClearPhrase(""); }}>
+          <p>
+            Type <code>RESET MEAL TRACKING DATA</code> to continue.
+          </p>
+          <input
+            value={clearPhrase}
+            onChange={(e) => setClearPhrase(e.target.value)}
+            placeholder="RESET MEAL TRACKING DATA"
+          />
+          <div className="button-row">
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => {
+                setShowClearModal(false);
+                setClearPhrase("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={!clearEnabled}
+              onClick={() => void clearOperationalData()}
+            >
+              Confirm Reset
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {showFullWipeConfirm && isOwner && (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
-          <div className="confirm-modal stack">
-            <h4>Arm Full Application Wipe</h4>
-            <p>
-              Type <code>ARM FULL WIPE</code> to arm a short-lived full wipe token.
-            </p>
-            <input
-              value={fullWipePhrase}
-              onChange={(e) => setFullWipePhrase(e.target.value)}
-              placeholder="ARM FULL WIPE"
-            />
-            <div className="button-row">
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => {
-                  setShowFullWipeConfirm(false);
-                  setFullWipePhrase("");
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="danger"
-                type="button"
-                disabled={!fullWipeEnabled}
-                onClick={() => void armFullWipe()}
-              >
-                Arm Token
-              </button>
-            </div>
+        <Modal title="Arm Full Application Wipe" onClose={() => { setShowFullWipeConfirm(false); setFullWipePhrase(""); }}>
+          <p>
+            Type <code>ARM FULL WIPE</code> to arm a short-lived full wipe token.
+          </p>
+          <input
+            value={fullWipePhrase}
+            onChange={(e) => setFullWipePhrase(e.target.value)}
+            placeholder="ARM FULL WIPE"
+          />
+          <div className="button-row">
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => {
+                setShowFullWipeConfirm(false);
+                setFullWipePhrase("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={!fullWipeEnabled}
+              onClick={() => void armFullWipe()}
+            >
+              Arm Token
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
 
       {showResetErrorModal && (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
-          <div className="confirm-modal stack">
-            <h4>Reset Failed</h4>
-            <p className="error">{resetErrorMessage}</p>
-            <div className="button-row">
-              <button type="button" className="primary" onClick={() => setShowResetErrorModal(false)}>
-                OK
-              </button>
-            </div>
+        <Modal title="Reset Failed" onClose={() => setShowResetErrorModal(false)}>
+          <p className="error">{resetErrorMessage}</p>
+          <div className="button-row">
+            <button type="button" className="primary" onClick={() => setShowResetErrorModal(false)}>
+              OK
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
       {showResetSuccessModal && (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
-          <div className="confirm-modal stack">
-            <h4>Reset Complete</h4>
-            <p>{resetSuccessMessage}</p>
-            <div className="button-row">
-              <button type="button" className="primary" onClick={() => setShowResetSuccessModal(false)}>
-                OK
-              </button>
-            </div>
+        <Modal title="Reset Complete" onClose={() => setShowResetSuccessModal(false)}>
+          <p>{resetSuccessMessage}</p>
+          <div className="button-row">
+            <button type="button" className="primary" onClick={() => setShowResetSuccessModal(false)}>
+              OK
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
+      {dialog}
     </div>
   );
 }

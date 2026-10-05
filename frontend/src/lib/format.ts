@@ -37,3 +37,32 @@ export function modeLabel(mode: MealTrackingMode): string {
   if (mode === "countdown") return "Count Down";
   return "Tally Up";
 }
+
+/** "NO_ACTIVE_MEAL_PERIOD" → "No active meal period". */
+export function humanizeCode(code: string): string {
+  const words = code.toLowerCase().split("_").filter(Boolean).join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Formats a timestamp for display. Pass the school timezone (from useSchoolMeta) so every
+ * station shows the same local time regardless of the device's own clock settings.
+ */
+export function formatDateTime(value: string | Date | null | undefined, timezone?: string): string {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  try {
+    return date.toLocaleString(undefined, timezone ? { timeZone: timezone } : undefined);
+  } catch {
+    return date.toLocaleString();
+  }
+}
+
+/** Formats a calendar date stored as YYYY-MM-DD without shifting it across time zones. */
+export function formatDateOnly(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return value;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toLocaleDateString(undefined, { timeZone: "UTC", year: "numeric", month: "short", day: "numeric", weekday: "short" });
+}

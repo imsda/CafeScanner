@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { api } from "../api/client";
-import type { MealTrackingMode, PersonType } from "../api/types";
+import { api, errorMessage } from "../api/client";
+import { useSchoolMeta } from "../hooks/useSchoolMeta";
+import type { PersonType } from "../api/types";
 import { PersonTypeOptions } from "../components/PersonTypeOptions";
 import { modeLabel } from "../lib/format";
+import { Modal } from "../components/Modal";
 
 export type PersonRecord = {
   personType: PersonType;
@@ -47,9 +49,8 @@ export function PeoplePage() {
   const [people, setPeople] = useState<PersonRecord[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [gradeFilter, setGradeFilter] = useState("ALL");
-  const [settings, setSettings] = useState<{
-    mealTrackingMode: MealTrackingMode;
-  } | null>(null);
+  // Mode comes from /meta so People works without Settings page access.
+  const { meta: settings, error: metaError } = useSchoolMeta();
   const [form, setForm] = useState<Record<string, string | number | boolean>>({
     personType: "STUDENT",
     firstName: "",
@@ -74,13 +75,15 @@ export function PeoplePage() {
   const [error, setError] = useState("");
 
   const load = () =>
-    api<PersonRecord[]>("/people?showInactive=true").then(setPeople);
+    api<PersonRecord[]>("/people?showInactive=true")
+      .then(setPeople)
+      .catch((loadError) => setError(errorMessage(loadError, "Unable to load people.")));
   useEffect(() => {
     void load();
-    void api<{ mealTrackingMode: MealTrackingMode }>("/settings").then(
-      setSettings,
-    );
   }, []);
+  useEffect(() => {
+    if (metaError) setError(metaError);
+  }, [metaError]);
 
   const isTally = settings?.mealTrackingMode === "tally";
   const isCampMeeting = settings?.mealTrackingMode === "camp_meeting";
@@ -105,8 +108,13 @@ export function PeoplePage() {
           dinnerCount: 0,
           totalMealsCount: 0,
         };
-    await api("/people", { method: "POST", body: JSON.stringify(payload) });
-    await load();
+    try {
+      await api("/people", { method: "POST", body: JSON.stringify(payload) });
+      setMessage("Person added.");
+      await load();
+    } catch (addError) {
+      setError(errorMessage(addError, "Unable to add person."));
+    }
   }
 
   async function savePerson(person: PersonRecord) {
@@ -126,15 +134,20 @@ export function PeoplePage() {
           lunchRemaining: person.lunchRemaining,
           dinnerRemaining: person.dinnerRemaining,
         };
-    await api(`/people/${person.id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    });
-    await load();
+    try {
+      await api(`/people/${person.id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      setMessage(`Saved ${personDisplayName(person)}.`);
+      await load();
+    } catch (saveError) {
+      setError(errorMessage(saveError, "Unable to save person."));
+    }
   }
 
   async function deletePerson() {
-    if (!personToDelete || deletePhrase !== "DELETE USER") return;
+    if (!personToDelete || deletePhrase !== "DELETE PERSON") return;
     setIsDeleting(true);
     setError("");
     setMessage("");
@@ -161,7 +174,7 @@ export function PeoplePage() {
     }
   }
 
-  const deleteEnabled = deletePhrase === "DELETE USER" && !isDeleting;
+  const deleteEnabled = deletePhrase === "DELETE PERSON" && !isDeleting;
   const normalizedSearch = searchTerm.trim().toLowerCase();
   const gradeOptions = useMemo(() => {
     const grades = Array.from(
@@ -234,20 +247,22 @@ export function PeoplePage() {
         onSubmit={(e) => void addPerson(e)}
       >
         {[
-          "firstName",
-          "lastName",
-          "personId",
-          "codeValue",
-          "grade",
-          "group",
-          "campus",
-        ].map((k) => (
-          <input
-            key={k}
-            placeholder={k}
-            value={String(form[k] || "")}
-            onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-          />
+          ["firstName", "First name"],
+          ["lastName", "Last name"],
+          ["personId", "Person ID"],
+          ["codeValue", "Badge code (optional)"],
+          ["grade", "Grade (optional)"],
+          ["group", "Group (optional)"],
+          ["campus", "Campus (optional)"],
+        ].map(([k, label]) => (
+          <label key={k}>
+            {label}
+            <input
+              value={String(form[k] || "")}
+              required={k === "firstName" || k === "lastName" || k === "personId"}
+              onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+            />
+          </label>
         ))}
         {isTally && <label>User type
           <select value={String(form.personType)} onChange={(e) => setForm({ ...form, personType: e.target.value })}>
@@ -548,50 +563,47 @@ export function PeoplePage() {
         </table>
       </div>
       {personToDelete && (
-        <div className="confirm-overlay" role="dialog" aria-modal="true">
-          <div className="confirm-modal stack">
-            <h4>Confirm Person Deletion</h4>
-            <p>
-              You are deleting{" "}
-              <strong>{personDisplayName(personToDelete)}</strong>.
-            </p>
-            <p>
-              Person ID: <strong>{personToDelete.personId}</strong>
-            </p>
-            <p className="error">
-              Warning: This permanently removes this person and their related
-              scan transaction history. This cannot be easily undone.
-            </p>
-            <p>
-              Type <code>DELETE USER</code> to enable deletion.
-            </p>
-            <input
-              value={deletePhrase}
-              onChange={(e) => setDeletePhrase(e.target.value)}
-              placeholder="DELETE USER"
-            />
-            <div className="button-row">
-              <button
-                className="secondary"
-                type="button"
-                onClick={() => {
-                  setPersonToDelete(null);
-                  setDeletePhrase("");
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="danger"
-                type="button"
-                disabled={!deleteEnabled}
-                onClick={() => void deletePerson()}
-              >
-                {isDeleting ? "Deleting…" : "Delete Person"}
-              </button>
-            </div>
+        <Modal title="Confirm Person Deletion" onClose={() => { setPersonToDelete(null); setDeletePhrase(""); }}>
+          <p>
+            You are deleting{" "}
+            <strong>{personDisplayName(personToDelete)}</strong>.
+          </p>
+          <p>
+            Person ID: <strong>{personToDelete.personId}</strong>
+          </p>
+          <p className="error">
+            Warning: This permanently removes this person and their related
+            scan transaction history. This cannot be easily undone.
+          </p>
+          <p>
+            Type <code>DELETE PERSON</code> to enable deletion.
+          </p>
+          <input
+            value={deletePhrase}
+            onChange={(e) => setDeletePhrase(e.target.value)}
+            placeholder="DELETE PERSON"
+          />
+          <div className="button-row">
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => {
+                setPersonToDelete(null);
+                setDeletePhrase("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={!deleteEnabled}
+              onClick={() => void deletePerson()}
+            >
+              {isDeleting ? "Deleting…" : "Delete Person"}
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

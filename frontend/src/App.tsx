@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { AdminOnly, PermissionOnly } from "./components/RouteGuards";
+import { homePathFor } from "./lib/pages";
 import { useAuth } from "./context/AuthContext";
 import { Login } from "./pages/LoginPage";
 
@@ -19,23 +20,18 @@ const UserManagementPage = lazy(() => import("./pages/UserManagementPage").then(
 
 export default function App() {
   const { user, loading } = useAuth();
-  if (loading) return <p>Loading...</p>;
+  if (loading) return <p className="muted">Loading…</p>;
   if (!user) return <Login />;
+  const homePath = homePathFor(user.allowedPages);
+  const home = homePath
+    ? <Navigate to={homePath} replace />
+    : <div className="card"><h2>No pages assigned</h2><p>Your account has no pages yet. Ask an administrator to grant access.</p></div>;
 
   return (
     <Layout>
       <Suspense fallback={<p className="muted">Loading…</p>}>
       <Routes>
-        <Route
-          path="/"
-          element={
-            <Navigate
-              to={
-                user.allowedPages.includes("DASHBOARD") ? "/dashboard" : "/scan"
-              }
-            />
-          }
-        />
+        <Route path="/" element={home} />
         <Route
           path="/scan"
           element={
@@ -119,6 +115,8 @@ export default function App() {
             </AdminOnly>
           }
         />
+        {/* Unknown URLs go to the user's first permitted page instead of an empty layout. */}
+        <Route path="*" element={home} />
       </Routes>
       </Suspense>
     </Layout>

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "../api/client";
+import { useConfirm } from "../components/useConfirm";
+import { formatDateOnly } from "../lib/format";
 
 export type HomeLeave = {
   id: number;
@@ -17,6 +19,7 @@ export function HomeLeavesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const { confirm, dialog } = useConfirm();
 
   async function loadHomeLeaves() {
     try {
@@ -62,7 +65,8 @@ export function HomeLeavesPage() {
   }
 
   async function deleteHomeLeave(homeLeave: HomeLeave) {
-    if (!window.confirm(`Delete “${homeLeave.name}”?`)) return;
+    const confirmed = await confirm({ title: `Delete “${homeLeave.name}”?`, confirmLabel: "Delete", danger: true });
+    if (confirmed === null) return;
     try {
       await api(`/home-leaves/${homeLeave.id}`, { method: "DELETE" });
       if (editingId === homeLeave.id) resetForm();
@@ -78,7 +82,7 @@ export function HomeLeavesPage() {
   return (
     <section className="card stack">
       <div>
-        <h1>Home Leaves</h1>
+        <h2>Home Leaves</h2>
         <p className="muted">Add academy-wide leave periods. Inclusive leave dates do not count as missed meal days for students.</p>
       </div>
       {error && <p className="error">{error}</p>}
@@ -111,7 +115,7 @@ export function HomeLeavesPage() {
               <tr><td colSpan={4}>No home leaves have been added.</td></tr>
             ) : homeLeaves.map((homeLeave) => (
               <tr key={homeLeave.id}>
-                <td>{homeLeave.name}</td><td>{homeLeave.startDate}</td><td>{homeLeave.endDate}</td>
+                <td>{homeLeave.name}</td><td>{formatDateOnly(homeLeave.startDate)}</td><td>{formatDateOnly(homeLeave.endDate)}</td>
                 <td className="actions">
                   <button type="button" className="secondary" onClick={() => {
                     setEditingId(homeLeave.id); setName(homeLeave.name); setStartDate(homeLeave.startDate); setEndDate(homeLeave.endDate);
@@ -124,6 +128,7 @@ export function HomeLeavesPage() {
           </tbody>
         </table>
       </div>
+      {dialog}
     </section>
   );
 }

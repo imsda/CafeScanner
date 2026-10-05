@@ -1,77 +1,93 @@
 import { useEffect, useState } from "react";
-import { api, API_BASE } from "../api/client";
+import { api, apiUpload, API_BASE, errorMessage } from "../api/client";
 import type { MealTrackingMode } from "../api/types";
 import { ButtonLink } from "../components/ButtonLink";
+import { useConfirm } from "../components/useConfirm";
+
+type PreviewResponse = {
+  total: number;
+  mode: MealTrackingMode;
+  preview: Array<{ valid: boolean; errors: string[] }>;
+};
+
+// Camp Meeting and people imports return different summaries; show whichever fields are present.
+type ImportResult = {
+  totalRows?: number;
+  successRows?: number;
+  failedRows?: number;
+  validRows?: number;
+  skippedRows?: number;
+  peopleCreated?: number;
+  peopleUpdated?: number;
+  entitlementsCreated?: number;
+  entitlementsUpdated?: number;
+  duplicateTicketIdCount?: number;
+  errors?: Array<string | { row: number; error: string }>;
+  skippedRowReasons?: Array<{ row: number; reason: string }>;
+};
+
+const RESULT_LABELS: Array<[keyof ImportResult, string]> = [
+  ["totalRows", "Rows in file"],
+  ["successRows", "Imported"],
+  ["validRows", "Valid rows"],
+  ["failedRows", "Failed"],
+  ["skippedRows", "Skipped"],
+  ["peopleCreated", "People created"],
+  ["peopleUpdated", "People updated"],
+  ["entitlementsCreated", "Entitlements created"],
+  ["entitlementsUpdated", "Entitlements updated"],
+  ["duplicateTicketIdCount", "Duplicate ticket IDs"],
+];
+
+const MAX_LISTED_PROBLEMS = 20;
 
 export function ImportPage() {
   const [file, setFile] = useState<File>();
-  const [preview, setPreview] = useState<any>();
-  const [result, setResult] = useState<any>();
+  const [preview, setPreview] = useState<PreviewResponse>();
+  const [result, setResult] = useState<ImportResult>();
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [settings, setSettings] = useState<{
-    mealTrackingMode: MealTrackingMode;
-  } | null>(null);
+  const [mealTrackingMode, setMealTrackingMode] = useState<MealTrackingMode | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
-    void api<{ mealTrackingMode: MealTrackingMode }>("/settings").then(
-      setSettings,
-    );
+    api<{ mealTrackingMode: MealTrackingMode }>("/meta")
+      .then((meta) => setMealTrackingMode(meta.mealTrackingMode))
+      .catch((loadError) => setError(errorMessage(loadError, "Unable to load the meal tracking mode.")));
   }, []);
 
-  const isCampMeeting = settings?.mealTrackingMode === "camp_meeting";
+  const isCampMeeting = mealTrackingMode === "camp_meeting";
 
-  async function parseJsonOrThrow(res: Response) {
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const message =
-        payload &&
-        typeof payload === "object" &&
-        "error" in payload &&
-        typeof payload.error === "string"
-          ? payload.error
-          : "Import request failed";
-      throw new Error(message);
-    }
-
-    return payload;
+  function buildForm() {
+    const form = new FormData();
+    if (file) form.append("file", file);
+    return form;
   }
 
   async function previewFile() {
     if (!file) return;
-
     setError("");
     setResult(undefined);
-
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`${API_BASE}/import/preview`, {
-        method: "POST",
-        credentials: "include",
-        body: form,
-      });
-      setPreview(await parseJsonOrThrow(res));
+      setPreview(await apiUpload<PreviewResponse>("/import/preview", buildForm()));
     } catch (previewError) {
       setPreview(undefined);
-      setError(
-        previewError instanceof Error
-          ? previewError.message
-          : "Unable to preview import file.",
-      );
+      setError(errorMessage(previewError, "Unable to preview import file."));
     }
   }
 
   async function commit() {
     if (!file || isSubmitting) return;
 
-    const form = new FormData();
-    form.append("file", file);
+    const form = buildForm();
     if (isCampMeeting) {
-      const confirmed = window.confirm(
-        "Replace existing Camp Meeting entitlements with this upload?",
-      );
-      if (!confirmed) return;
+      const confirmed = await confirm({
+        title: "Replace Camp Meeting entitlements?",
+        message: "This upload replaces all existing Camp Meeting entitlements.",
+        confirmLabel: "Replace and import",
+        danger: true,
+      });
+      if (confirmed === null) return;
       form.append("replaceExisting", "true");
     } else {
       form.append("generateMissingCodes", "true");
@@ -80,24 +96,22 @@ export function ImportPage() {
     setIsSubmitting(true);
     setError("");
     setResult(undefined);
-
     try {
-      const res = await fetch(`${API_BASE}/import/commit`, {
-        method: "POST",
-        credentials: "include",
-        body: form,
-      });
-      setResult(await parseJsonOrThrow(res));
+      setResult(await apiUpload<ImportResult>("/import/commit", form));
     } catch (commitError) {
-      setError(
-        commitError instanceof Error
-          ? commitError.message
-          : "Unable to import CSV.",
-      );
+      setError(errorMessage(commitError, "Unable to import CSV."));
     } finally {
       setIsSubmitting(false);
     }
   }
+
+  const invalidPreviewRows = preview?.preview
+    .map((row, index) => ({ ...row, rowNumber: index + 2 }))
+    .filter((row) => !row.valid) ?? [];
+  const resultProblems = [
+    ...(result?.errors ?? []).map((entry) => (typeof entry === "string" ? entry : `Row ${entry.row}: ${entry.error}`)),
+    ...(result?.skippedRowReasons ?? []).map((entry) => `Row ${entry.row}: ${entry.reason}`),
+  ];
 
   return (
     <div className="card stack">
@@ -112,34 +126,75 @@ export function ImportPage() {
           Download Template
         </ButtonLink>
       </div>
-      <input
-        type="file"
-        accept=".csv"
-        onChange={(e) => setFile(e.target.files?.[0])}
-      />
+      <label>
+        CSV file
+        <input
+          type="file"
+          accept=".csv"
+          onChange={(e) => { setFile(e.target.files?.[0]); setPreview(undefined); setResult(undefined); }}
+        />
+      </label>
       <div className="button-row">
         <button
+          type="button"
           className="secondary"
-          onClick={previewFile}
+          onClick={() => void previewFile()}
           disabled={!file || isSubmitting}
         >
           Preview
         </button>
         <button
+          type="button"
           className="primary"
-          onClick={commit}
+          onClick={() => void commit()}
           disabled={!file || isSubmitting}
         >
           {isSubmitting
             ? "Importing…"
             : isCampMeeting
               ? "Upload Camp Meeting CSV"
-              : "Commit Partial Import"}
+              : "Import Valid Rows"}
         </button>
       </div>
-      {error && <p className="error">{error}</p>}
-      {preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}
-      {result && <pre>{JSON.stringify(result, null, 2)}</pre>}
+      {!isCampMeeting && (
+        <p className="muted">Rows with problems are skipped; every valid row is imported.</p>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+      {preview && (
+        <section className="stack" aria-live="polite">
+          <h3>Preview</h3>
+          <p>
+            {preview.total} row{preview.total === 1 ? "" : "s"} found:{" "}
+            <strong>{preview.total - invalidPreviewRows.length} valid</strong>
+            {invalidPreviewRows.length > 0 && <>, <span className="error">{invalidPreviewRows.length} with problems</span></>}.
+          </p>
+          {invalidPreviewRows.length > 0 && (
+            <ul>
+              {invalidPreviewRows.slice(0, MAX_LISTED_PROBLEMS).map((row) => (
+                <li key={row.rowNumber}>Row {row.rowNumber}: {row.errors.join("; ")}</li>
+              ))}
+              {invalidPreviewRows.length > MAX_LISTED_PROBLEMS && <li>…and {invalidPreviewRows.length - MAX_LISTED_PROBLEMS} more</li>}
+            </ul>
+          )}
+        </section>
+      )}
+      {result && (
+        <section className="stack" aria-live="polite">
+          <h3>Import complete</h3>
+          <dl className="summary-list">
+            {RESULT_LABELS.filter(([key]) => typeof result[key] === "number").map(([key, label]) => (
+              <div key={key}><dt>{label}</dt><dd>{result[key] as number}</dd></div>
+            ))}
+          </dl>
+          {resultProblems.length > 0 && (
+            <ul>
+              {resultProblems.slice(0, MAX_LISTED_PROBLEMS).map((problem) => <li key={problem}>{problem}</li>)}
+              {resultProblems.length > MAX_LISTED_PROBLEMS && <li>…and {resultProblems.length - MAX_LISTED_PROBLEMS} more</li>}
+            </ul>
+          )}
+        </section>
+      )}
+      {dialog}
     </div>
   );
 }

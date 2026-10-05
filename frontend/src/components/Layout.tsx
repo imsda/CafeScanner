@@ -26,7 +26,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </div>
-        <nav>
+        <nav aria-label="Main">
           {links.map((entry) => (
             <NavLink
               key={entry.path}
