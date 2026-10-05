@@ -5,6 +5,7 @@ import { getSettings } from './settingsService.js';
 import { prisma } from '../db.js';
 import { importCampMeetingRows, mapRowsToCampMeetingInput } from './campMeetingImportService.js';
 import { acquireOperationLock, isImportInProgress, isResetInProgress, isSchedulerPaused, isWritebackInProgress, releaseOperationLock } from './operationLockService.js';
+import { resolveTimezone } from '../utils/timezone.js';
 
 const HEADER = ['ticket_id','reg_id','guest_name','meal_type','meal_day','meal_date','ticket_type','price','redeemed','redeemed_at','redeemed_by','notes'];
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
@@ -120,7 +121,7 @@ function getSchedulerSkipReason(settings: any): string | null {
   if (isImportInProgress()) return 'import already running';
   if (isWritebackInProgress()) return 'writeback already running';
   if (isSchedulerPaused()) return 'scheduler paused';
-  if (!isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return 'outside meal window';
+  if (!isWithinMealWindowPlus10Minutes(new Date(), resolveTimezone(settings.timezone), settings)) return 'outside meal window';
   return null;
 }
 
@@ -532,13 +533,13 @@ async function writeBackWeeklyTally(force: boolean) {
   }
   try {
     const settings = await getSettings();
-    if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
+    if (!force && !isWithinMealWindowPlus10Minutes(new Date(), resolveTimezone(settings.timezone), settings)) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
     const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
     const tabName = (settings.tallyWeeklyRawTabName || '').trim() || 'Weekly Tally Raw';
     const quotedTab = `'${tabName.replace(/'/g, "''")}'`;
     const weekStartsOn = settings.tallyWeekStartsOn === 'SUNDAY' ? 'SUNDAY' : 'MONDAY';
-    const timezone = settings.timezone || 'Etc/UTC';
+    const timezone = resolveTimezone(settings.timezone);
     const sheets = getSheetsClient();
     let meta = await sheets.spreadsheets.get({ spreadsheetId });
     let existingTab = meta.data.sheets?.find((s) => s.properties?.title === tabName);
@@ -665,7 +666,7 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   }
   try {
   const settings = await getSettings();
-  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
+  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), resolveTimezone(settings.timezone), settings)) return { writeBackRowsUpdated: 0 };
   if (!settings.googleSheetsEnabled) return { writeBackRowsUpdated: 0 };
   const spreadsheetId = parseSpreadsheetId(settings.googleSheetId || '');
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
@@ -730,7 +731,7 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   try {
   const settings = await getSettings();
   if (settings.mealTrackingMode !== MealTrackingMode.camp_meeting) return { writeBackRowsUpdated: 0 };
-  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), settings.timezone || 'Etc/UTC', settings)) return { writeBackRowsUpdated: 0 };
+  if (!force && !isWithinMealWindowPlus10Minutes(new Date(), resolveTimezone(settings.timezone), settings)) return { writeBackRowsUpdated: 0 };
   const pending = await prisma.mealEntitlement.findMany({ where: { redeemed: true, sheetSyncedAt: null } });
   console.log(`[SHEET_SYNC] Camp Meeting pending redeemed rows (sheetSyncedAt=null): ${pending.length}`);
   if (!pending.length) return { writeBackRowsUpdated: 0 };

@@ -183,6 +183,8 @@ model ScanTransaction {
 
   @@index([entitlementId])
   @@index([personId, mealType, result, timestamp])
+  @@index([scannedValue, timestamp])
+  @@index([timestamp])
 }
 
 

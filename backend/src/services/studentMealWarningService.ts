@@ -2,6 +2,7 @@ import { MealTrackingMode, ScanResult } from '@prisma/client';
 import { prisma } from '../db.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 import { mealWarningPersonTypes, STUDENT_PERSON_TYPES } from '../utils/personType.js';
+import { resolveTimezone } from '../utils/timezone.js';
 
 export async function getStudentsNotEating(now = new Date()) {
   const settings = await prisma.setting.findUniqueOrThrow({
@@ -40,7 +41,7 @@ export async function getStudentsNotEating(now = new Date()) {
       .filter((value): value is Date => Boolean(value));
     const baseline = candidates.reduce((latest, value) => value > latest ? value : latest);
     const calculatedMissedDays = countUnexcusedCompleteDays(
-      baseline, now, settings.timezone || 'Etc/UTC', homeLeaves
+      baseline, now, resolveTimezone(settings.timezone), homeLeaves
     );
     const warningActive = Boolean(student.mealWarningSince) || calculatedMissedDays >= settings.studentMealWarningDays;
     if (!warningActive) return [];

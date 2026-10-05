@@ -4,32 +4,8 @@ import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 import { normalizeCampMeetingPersonId, normalizePersonId } from '../utils/personId.js';
 import { isMealWarningEligible, isStudentType } from '../utils/personType.js';
+import { localMealDay, resolveTimezone } from '../utils/timezone.js';
 
-
-function localDateKey(date: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
-  const value = (type: 'year' | 'month' | 'day') => parts.find((part) => part.type === type)?.value || '0';
-  return `${value('year')}-${value('month')}-${value('day')}`;
-}
-
-function localMealDay(date: Date, timezone: string): MealDay {
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short'
-  }).format(date).toUpperCase();
-
-  const mealDayMap: Record<string, MealDay> = {
-    SUN: MealDay.SUN,
-    MON: MealDay.MON,
-    TUE: MealDay.TUE,
-    WED: MealDay.WED,
-    THU: MealDay.THU,
-    FRI: MealDay.FRI,
-    SAT: MealDay.SAT
-  };
-
-  return mealDayMap[weekday] ?? MealDay.SUN;
-}
 
 function deriveDisplayName(personName?: string | null): { firstName: string; lastName: string } {
   const normalized = (personName || '').trim().replace(/\s+/g, ' ');
@@ -332,7 +308,7 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
   return prisma.$transaction(async (tx) => {
     if (mode === MealTrackingMode.camp_meeting) {
       const now = new Date();
-      const timezone = settings.timezone || 'Etc/UTC';
+      const timezone = resolveTimezone(settings.timezone);
       const todayMealDay = localMealDay(now, timezone);
       const matchingEntitlements: CampMeetingEntitlementForScan[] = (await tx.mealEntitlement.findMany({
         where: {
@@ -544,7 +520,7 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
         orderBy: { timestamp: 'desc' }
       });
       const localDate = new Intl.DateTimeFormat('en-CA', {
-        timeZone: settings.timezone || 'Etc/UTC', year: 'numeric', month: '2-digit', day: '2-digit'
+        timeZone: resolveTimezone(settings.timezone), year: 'numeric', month: '2-digit', day: '2-digit'
       });
       if (previousMeal && localDate.format(previousMeal.timestamp) === localDate.format(scanTime)) {
         await tx.scanTransaction.create({ data: {
@@ -568,7 +544,7 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
       const baseline = baselineCandidates.reduce((latest, value) => value > latest ? value : latest);
       const homeLeaves = await tx.homeLeave.findMany({ select: { startDate: true, endDate: true } });
       const missedDays = countUnexcusedCompleteDays(
-        baseline, scanTime, settings.timezone || 'Etc/UTC', homeLeaves
+        baseline, scanTime, resolveTimezone(settings.timezone), homeLeaves
       );
       if (missedDays >= settings.studentMealWarningDays) {
         mealWarningSince = scanTime;

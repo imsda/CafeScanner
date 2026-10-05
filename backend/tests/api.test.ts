@@ -193,6 +193,35 @@ test('backup download and restore round-trip through the API', async () => {
   assert.ok(readFileSync(process.env.DATABASE_URL!.slice('file:'.length)).length > 0);
 });
 
+test('people, transactions and imports validate input and export safe CSV', async () => {
+  const admin = await login('admin');
+  const created = await request('/api/people', { method: 'POST', cookie: admin, json: { firstName: '=cmd|calc', lastName: 'Inject', personId: 'csv-1', personType: 'GUEST' } });
+  assert.equal(created.status, 201);
+  const person = await created.json();
+  assert.equal((await request(`/api/people/${person.id}`, { method: 'DELETE', cookie: admin, json: { confirmationPhrase: 'DELETE USER' } })).status, 400);
+  assert.equal((await request('/api/people/abc', { method: 'PUT', cookie: admin, json: {} })).status, 400);
+  assert.equal((await request(`/api/people/adjust-balance/${person.id}`, { method: 'POST', cookie: admin, json: { lunchDelta: 'lots' } })).status, 400);
+  assert.equal((await request(`/api/people/adjust-balance/${person.id}`, { method: 'POST', cookie: admin, json: { lunchDelta: 2 } })).status, 200);
+
+  await prisma.scanTransaction.create({ data: { scannedValue: 'csv-1', personId: person.id, mealType: 'LUNCH', result: 'SUCCESS' } });
+  assert.equal((await request('/api/transactions?from=garbage', { cookie: admin })).status, 400);
+  assert.equal((await request('/api/transactions?mealType=SNACK', { cookie: admin })).status, 400);
+  const today = new Date().toISOString().slice(0, 10);
+  const filtered = await request(`/api/transactions?from=${today}&to=${today}&mealType=LUNCH`, { cookie: admin });
+  assert.equal(filtered.status, 200);
+  assert.ok((await filtered.json()).some((row: { scannedValue: string }) => row.scannedValue === 'csv-1'));
+
+  const csv = await (await request('/api/transactions/export.csv', { cookie: admin })).text();
+  assert.ok(csv.includes("'=cmd|calc"), 'formula-like names are escaped in exports');
+  assert.equal(csv.includes(',=cmd|calc'), false);
+
+  const form = new FormData();
+  form.append('file', new Blob(['firstName,lastName,personId\n"unterminated,x,y\n']), 'people.csv');
+  assert.equal((await request('/api/import/commit', { method: 'POST', cookie: admin, body: form })).status, 400);
+
+  assert.equal((await request(`/api/people/${person.id}`, { method: 'DELETE', cookie: admin, json: { confirmationPhrase: 'DELETE PERSON' } })).status, 200);
+});
+
 // Runs last: it exhausts the login rate limit for 127.0.0.1 in this process.
 test('login attempts are rate limited per client IP', async () => {
   let lastStatus = 0;

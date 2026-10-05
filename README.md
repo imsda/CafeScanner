@@ -351,7 +351,7 @@ Admins can delete one specific person record from **People** without clearing th
 
 - This action is **admin-only** in both frontend visibility and backend authorization.
 - The delete confirmation modal shows the person name and `personId`.
-- Confirmation requires typing the exact phrase: `DELETE USER`.
+- Confirmation requires typing the exact phrase: `DELETE PERSON`.
 - The action deletes only the selected person and related scan transaction records tied to that person.
 - The action does **not** delete:
   - other people,

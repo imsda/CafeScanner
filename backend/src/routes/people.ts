@@ -3,29 +3,33 @@ import { prisma } from '../db.js';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { PERSON_TYPE_VALUES } from '../utils/personType.js';
+import { localMealDay, resolveTimezone } from '../utils/timezone.js';
 
 const router = asyncRouter();
-const DELETE_CONFIRMATION_PHRASE = 'DELETE USER';
+// People are not login accounts, so the phrase says PERSON (it used to say USER).
+const DELETE_CONFIRMATION_PHRASE = 'DELETE PERSON';
 
-function localMealDay(timezone: string): 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' {
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short'
-  }).format(new Date()).toUpperCase();
-
-  const map = {
-    SUN: 'SUN',
-    MON: 'MON',
-    TUE: 'TUE',
-    WED: 'WED',
-    THU: 'THU',
-    FRI: 'FRI',
-    SAT: 'SAT'
-  } as const;
-
-  return map[weekday as keyof typeof map] ?? 'SUN';
+function parseIdParam(value: string): number {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) throw Object.assign(new Error('Invalid person id'), { status: 400 });
+  return id;
 }
 
+const adjustBalanceSchema = z.object({
+  breakfastDelta: z.number().int().default(0),
+  lunchDelta: z.number().int().default(0),
+  dinnerDelta: z.number().int().default(0)
+});
+
+const balance = z.number().int().nonnegative();
+const bulkSetSchema = z.object({
+  breakfast: balance.optional(),
+  lunch: balance.optional(),
+  dinner: balance.optional(),
+  grade: z.string().optional(),
+  group: z.string().optional(),
+  campus: z.string().optional()
+});
 
 const personSchema = z.object({
   personType: z.enum(PERSON_TYPE_VALUES).default('GUEST'),
@@ -54,7 +58,7 @@ router.get('/', async (req, res) => {
     prisma.setting.findUnique({ where: { id: 1 }, select: { timezone: true } })
   ]);
 
-  const todayMealDay = localMealDay(settings?.timezone || 'Etc/UTC');
+  const todayMealDay = localMealDay(new Date(), resolveTimezone(settings?.timezone));
 
   type MealBreakdown = {
     total: number;
@@ -198,16 +202,17 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const payload = personSchema.parse(req.body);
   const person = await prisma.person.create({ data: { ...payload, codeValue: payload.codeValue || nanoid(10) } });
-  res.json(person);
+  res.status(201).json(person);
 });
 
 router.put('/:id', async (req, res) => {
+  const id = parseIdParam(req.params.id);
   const payload = personSchema.partial().parse(req.body);
 
   const hasAnyTallyField = payload.breakfastCount !== undefined || payload.lunchCount !== undefined || payload.dinnerCount !== undefined;
   if (hasAnyTallyField) {
     const existing = await prisma.person.findUniqueOrThrow({
-      where: { id: Number(req.params.id) },
+      where: { id },
       select: { breakfastCount: true, lunchCount: true, dinnerCount: true }
     });
 
@@ -217,27 +222,30 @@ router.put('/:id', async (req, res) => {
     payload.totalMealsCount = breakfastCount + lunchCount + dinnerCount;
   }
 
-  const person = await prisma.person.update({ where: { id: Number(req.params.id) }, data: payload });
+  const person = await prisma.person.update({ where: { id }, data: payload });
   res.json(person);
 });
 
 router.post('/adjust-balance/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  const { breakfastDelta = 0, lunchDelta = 0, dinnerDelta = 0 } = req.body;
-  const person = await prisma.person.findUniqueOrThrow({ where: { id } });
-  const updated = await prisma.person.update({
-    where: { id },
-    data: {
-      breakfastRemaining: Math.max(0, person.breakfastRemaining + breakfastDelta),
-      lunchRemaining: Math.max(0, person.lunchRemaining + lunchDelta),
-      dinnerRemaining: Math.max(0, person.dinnerRemaining + dinnerDelta)
-    }
+  const id = parseIdParam(req.params.id);
+  const { breakfastDelta, lunchDelta, dinnerDelta } = adjustBalanceSchema.parse(req.body ?? {});
+  // Read and write in one transaction so a concurrent scan's decrement is not lost.
+  const updated = await prisma.$transaction(async (tx) => {
+    const person = await tx.person.findUniqueOrThrow({ where: { id } });
+    return tx.person.update({
+      where: { id },
+      data: {
+        breakfastRemaining: Math.max(0, person.breakfastRemaining + breakfastDelta),
+        lunchRemaining: Math.max(0, person.lunchRemaining + lunchDelta),
+        dinnerRemaining: Math.max(0, person.dinnerRemaining + dinnerDelta)
+      }
+    });
   });
   res.json(updated);
 });
 
 router.post('/reset-tallies/:id', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseIdParam(req.params.id);
   const updated = await prisma.person.update({
     where: { id },
     data: {
@@ -251,11 +259,8 @@ router.post('/reset-tallies/:id', async (req, res) => {
 });
 
 router.post('/bulk-set', async (req, res) => {
-  const { breakfast, lunch, dinner, grade, group, campus } = req.body;
-  const where: any = { active: true };
-  if (grade) where.grade = grade;
-  if (group) where.group = group;
-  if (campus) where.campus = campus;
+  const { breakfast, lunch, dinner, grade, group, campus } = bulkSetSchema.parse(req.body ?? {});
+  const where = { active: true, ...(grade ? { grade } : {}), ...(group ? { group } : {}), ...(campus ? { campus } : {}) };
   const result = await prisma.person.updateMany({ where, data: { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner } });
   res.json(result);
 });

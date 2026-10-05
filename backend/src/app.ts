@@ -67,6 +67,10 @@ const apiErrorHandler: express.ErrorRequestHandler = (error, _req, res, _next) =
     if (error.code === 'P2025') return res.status(404).json({ error: 'Record not found.' });
     if (error.code === 'P2002') return res.status(409).json({ error: 'A record with that value already exists.' });
   }
+  if (error instanceof Error && error.name === 'MulterError') {
+    const code = (error as Error & { code?: string }).code;
+    return res.status(code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: `Upload rejected: ${error.message}` });
+  }
   // Errors raised by body-parser and similar middleware carry a 4xx status (e.g. malformed JSON).
   const status = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : 500;
   if (status >= 400 && status < 500) {
