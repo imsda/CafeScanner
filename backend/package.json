@@ -1,6 +1,7 @@
 {
   "name": "cafescanner-backend",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend and frontend
+        run: npm run build
+
+      - name: Typecheck admin scripts
+        run: npm run typecheck:scripts -w backend
+
+      - name: Backend tests
+        run: npm test -w backend
+
+      - name: Shell script syntax
+        run: for f in setup.sh scripts/*.sh; do bash -n "$f"; done

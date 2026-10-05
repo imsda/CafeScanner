@@ -3,21 +3,14 @@ import bcrypt from 'bcryptjs';
 import { Request } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { allowedPagesFor } from '../utils/pages.js';
 
 const router = asyncRouter();
 const loginAttempts = new Map<string, { count: number; first: number }>();
-const ALL_PAGES = ['DASHBOARD', 'SCAN', 'PEOPLE', 'IMPORT', 'BADGES', 'TRANSACTIONS', 'REPORTS', 'HOME_LEAVES', 'SETTINGS', 'USER_MANAGEMENT'] as const;
-const SCANNER_PAGES = ['SCAN'] as const;
 const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
 
 function regenerateSession(req: Request) {
   return new Promise<void>((resolve, reject) => req.session.regenerate((error) => (error ? reject(error) : resolve())));
-}
-
-function allowedPagesFor(role: 'OWNER' | 'ADMIN' | 'SCANNER' | 'CUSTOM', customPages: string[]): string[] {
-  if (role === 'OWNER' || role === 'ADMIN') return [...ALL_PAGES];
-  if (role === 'SCANNER') return [...SCANNER_PAGES];
-  return customPages;
 }
 
 router.post('/login', async (req, res) => {
@@ -26,6 +19,9 @@ router.post('/login', async (req, res) => {
   const now = Date.now();
   const windowMs = 15 * 60 * 1000;
   const maxAttempts = 20;
+  if (loginAttempts.size > 1000) {
+    for (const [key, entry] of loginAttempts) if (now - entry.first > windowMs) loginAttempts.delete(key);
+  }
   const rec = loginAttempts.get(ip) || { count: 0, first: now };
   if (now - rec.first > windowMs) { rec.count = 0; rec.first = now; }
   if (rec.count >= maxAttempts) return res.status(429).json({ error: 'Too many login attempts. Try again later.' });
@@ -61,7 +57,10 @@ router.get('/me', async (req, res) => {
     select: { id: true, username: true, role: true, pageAccess: { select: { page: true } } }
   });
 
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  if (!user) {
+    req.session.destroy(() => res.status(401).json({ error: 'Unauthorized' }));
+    return;
+  }
 
   const allowedPages = allowedPagesFor(user.role, user.pageAccess.map((entry) => entry.page));
   req.session.role = user.role;
