@@ -129,7 +129,10 @@ pkill -f "vite"
 When running behind Traefik, use same-origin browser API calls (`/api/...`) so the browser never calls `http://localhost:4000` directly.
 
 - Set `frontend/.env` to `VITE_API_BASE=/api`
+- Allow your domain on the Vite dev server by adding it to `frontend/.env`, e.g. `FRONTEND_ALLOWED_HOSTS=cafescanner.example.org` (comma-separated; `all` accepts any host; localhost and IP addresses are always allowed). `FRONTEND_HOST` and `FRONTEND_PORT` can be set there too.
 - Request flow: `Browser -> HTTPS domain -> Traefik -> Vite -> /api proxy -> backend`
+
+Keep site-specific settings like these in the `.env` files rather than editing tracked files such as `frontend/vite.config.ts`: `./scripts/update-service.sh` refuses to update while tracked files are modified.
 
 This keeps login/session cookie flows on same-origin `/api` requests from the browser perspective while still routing API traffic to the local backend process.
 

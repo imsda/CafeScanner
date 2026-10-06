@@ -10,6 +10,14 @@ git_safe() { timeout 30 git "$@"; }
 
 ARCHITECTURE="$(uname -m)"
 
+# Running the whole update with sudo leaves root-owned backups, node_modules and build
+# output in the repo, which makes later updates by the service user fail. The script
+# already uses sudo itself for the systemctl steps. Set ALLOW_ROOT_UPDATE=1 only if the
+# service genuinely runs as root.
+if [[ "${EUID}" -eq 0 && "${ALLOW_ROOT_UPDATE:-0}" != "1" ]]; then
+  fail "Do not run this script with sudo or as root. Run it as the service user (e.g. ./scripts/update-service.sh); it asks for sudo only to stop/start the service. If the service runs as root, set ALLOW_ROOT_UPDATE=1."
+fi
+
 is_linux_arm64() {
   [[ "$(uname -s)" == "Linux" && ( "$ARCHITECTURE" == "aarch64" || "$ARCHITECTURE" == "arm64" ) ]]
 }
