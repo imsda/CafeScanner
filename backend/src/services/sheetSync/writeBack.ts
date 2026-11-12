@@ -3,24 +3,40 @@ import { getSettings } from '../settingsService.js';
 import { prisma } from '../../db.js';
 import { acquireOperationLock, releaseOperationLock } from '../operationLockService.js';
 import { resolveTimezone } from '../../utils/timezone.js';
-import { assertRequiredHeaders, columnNumberToLetter, DEFAULT_SHEET_TAB_NAME, getSheetsClient, getTallyHeaderMap, mapGoogleSheetsError, parseSpreadsheetId } from './client.js';
+import { assertRequiredHeaders, columnNumberToLetter, DEFAULT_SHEET_TAB_NAME, getSheetsClient, getTallyHeaderMap, mapGoogleSheetsError, parseSpreadsheetId, SheetSyncBusyError } from './client.js';
+import type { SheetSyncSettings } from './client.js';
+import { trackManualSheetSync } from './status.js';
 import { isWithinMealWindowPlus10Minutes } from './mealWindow.js';
 
 const TALLY_HEADER = ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'];
 const WEEKLY_TALLY_HEADER = ['Week Starting', 'Week Ending', 'ID', 'Name', 'Breakfast', 'Lunch', 'Dinner', 'Total'];
 const TALLY_COUNT_COLUMNS = ['breakfast', 'lunch', 'dinner', 'total'] as const;
 
+// Scheduled cycles only reconcile the current and previous week of the weekly tally
+// tab, so the query does not grow with the whole scan history.
+const WEEKLY_TALLY_RECENT_WEEKS = 2;
+// Camp-meeting redemption rows sent per API request.
+const REDEMPTION_BATCH_SIZE = 100;
+
+// The four exports below are what the Import/Settings buttons call. A forced
+// (person-initiated) run has its outcome persisted for the Dashboard banner; the
+// scheduler calls the un-tracked functions and records the whole cycle itself.
+function manual<T>(force: boolean, action: () => Promise<T>): Promise<T> {
+  return force ? trackManualSheetSync(action) : action();
+}
+
 export async function writeBackTallyCounts(force = false) {
   const settings = await getSettings();
   const mode = getTallyWriteBackMode(settings);
   if (mode === 'weekly') return { writeBackRowsUpdated: 0 };
-  return writeBackPeopleRows(false, force);
+  return manual(force, () => writeBackPeopleRows(false, force));
 }
-export async function writeBackCountdownBalances(force = false) { return writeBackPeopleRows(true, force); }
-export async function writeBackCampMeetingRedemptions(force = false) { return flushCampMeetingRedemptionsToSheet(force); }
-export async function writeBackWeeklyTallyNow(force = true) { return writeBackWeeklyTally(force); }
+export async function writeBackCountdownBalances(force = false) { return manual(force, () => writeBackPeopleRows(true, force)); }
+export async function writeBackCampMeetingRedemptions(force = false) { return manual(force, () => flushCampMeetingRedemptionsToSheet(force)); }
+/** Manual "sync weekly tally" action: reconciles every week, not only the recent ones. */
+export async function writeBackWeeklyTallyNow(force = true) { return manual(force, () => writeBackWeeklyTally(force, { fullHistory: true })); }
 
-export function getTallyWriteBackMode(settings: Awaited<ReturnType<typeof getSettings>>): 'lifetime' | 'weekly' | 'both' {
+export function getTallyWriteBackMode(settings: SheetSyncSettings): 'lifetime' | 'weekly' | 'both' {
   const mode = (settings.tallyWriteBackMode || 'lifetime').toLowerCase();
   if (mode === 'weekly' || mode === 'both') return mode;
   return 'lifetime';
@@ -42,7 +58,7 @@ function isoFromParts(p: { year: number; month: number; day: number }) {
 function getWeekRangeForDate(date: Date, timezone: string, weekStartsOn: 'SUNDAY' | 'MONDAY') {
   const dateParts = getDateInTimezoneParts(date, timezone);
   const d = new Date(Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day));
-    const day = d.getUTCDay();
+  const day = d.getUTCDay();
   const weekStartIndex = weekStartsOn === 'SUNDAY' ? 0 : 1;
   const diffToStart = (day - weekStartIndex + 7) % 7;
   const start = new Date(d);
@@ -54,9 +70,9 @@ function getWeekRangeForDate(date: Date, timezone: string, weekStartsOn: 'SUNDAY
   return { weekStart: isoFromParts(s), weekEnd: isoFromParts(e) };
 }
 
-export async function writeBackWeeklyTally(force: boolean) {
+export async function writeBackWeeklyTally(force: boolean, options: { fullHistory?: boolean } = {}) {
   if (!acquireOperationLock('writeback')) {
-    if (force) throw new Error('Another sheet sync is running. Please try again shortly.');
+    if (force) throw new SheetSyncBusyError('Another sheet sync is running. Please try again shortly.');
     return { writeBackRowsUpdated: 0, rowsAppended: 0, tabName: '' };
   }
   try {
@@ -79,15 +95,32 @@ export async function writeBackWeeklyTally(force: boolean) {
     const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${quotedTab}!A:ZZ`, valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' });
     const existingRows = (existingRowsResp.data.values || []).map((row) => (row || []));
     if (existingRows.length === 0) {
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedTab}!A1:H1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedTab}!A1:H1`, valueInputOption: 'RAW', requestBody: { values: [WEEKLY_TALLY_HEADER] } });
       existingRows.push([...WEEKLY_TALLY_HEADER]);
     }
     const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
     assertRequiredHeaders(headerMap, ['week_starting', 'week_ending', 'id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'weekly tally write-back');
 
+    // Scheduled runs only load the weeks they write: the current week and the one
+    // before it (late scans / corrections). The date filter is a day wider than the
+    // week boundary so any timezone offset is covered; exact weeks are filtered below.
+    let recentWeeks: Set<string> | null = null;
+    let since: Date | undefined;
+    if (!options.fullHistory) {
+      recentWeeks = new Set<string>();
+      let oldestWeekStart = '';
+      for (let i = 0; i < WEEKLY_TALLY_RECENT_WEEKS; i++) {
+        oldestWeekStart = getWeekRangeForDate(new Date(Date.now() - i * 7 * 86400000), timezone, weekStartsOn).weekStart;
+        recentWeeks.add(oldestWeekStart);
+      }
+      since = new Date(Date.parse(`${oldestWeekStart}T00:00:00Z`) - 86400000);
+    }
     const txns = await prisma.scanTransaction.findMany({
-      where: { result: 'SUCCESS', mealType: { in: [MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER] }, personId: { not: null } },
-      include: { person: true }
+      where: {
+        result: 'SUCCESS', mealType: { in: [MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER] }, personId: { not: null },
+        ...(since ? { timestamp: { gte: since } } : {})
+      },
+      select: { timestamp: true, mealType: true, person: { select: { personId: true, firstName: true, lastName: true } } }
     });
 
     const grouped = new Map<string, { weekStart: string; weekEnd: string; id: string; name: string; breakfast: number; lunch: number; dinner: number }>();
@@ -95,6 +128,7 @@ export async function writeBackWeeklyTally(force: boolean) {
     for (const t of txns) {
       if (!t.person?.personId) continue;
       const { weekStart, weekEnd } = getWeekRangeForDate(t.timestamp, timezone, weekStartsOn);
+      if (recentWeeks && !recentWeeks.has(weekStart)) continue;
       weeksCovered.add(weekStart);
       const key = `${weekStart}::${t.person.personId}`;
       const current = grouped.get(key) ?? { weekStart, weekEnd, id: t.person.personId, name: `${t.person.firstName} ${t.person.lastName}`.trim(), breakfast: 0, lunch: 0, dinner: 0 };
@@ -187,9 +221,9 @@ export async function writeBackWeeklyTally(force: boolean) {
   }
 }
 
-async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
+export async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   if (!acquireOperationLock('writeback')) {
-    if (force) throw new Error('Another sheet sync is running. Please try again shortly.');
+    if (force) throw new SheetSyncBusyError('Another sheet sync is running. Please try again shortly.');
     return { writeBackRowsUpdated: 0 };
   }
   try {
@@ -204,7 +238,7 @@ async function writeBackPeopleRows(useBalances: boolean, force: boolean) {
   const existingRowsResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${quotedSheet}!A:ZZ` });
   const existingRows = existingRowsResp.data.values || [];
   if (existingRows.length === 0) {
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedSheet}!A1:F1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [TALLY_HEADER] } });
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedSheet}!A1:F1`, valueInputOption: 'RAW', requestBody: { values: [TALLY_HEADER] } });
     existingRows.push([...TALLY_HEADER]);
   }
   if (!useBalances && !existingRows[0].some((cell) => ['usertype', 'persontype'].includes(String(cell).toLowerCase().replace(/[ _-]/g, '')))) {
@@ -269,26 +303,34 @@ export async function flushCampMeetingRedemptionsToSheet(force = false) {
   const sheetName = (settings.googleSheetTabName || DEFAULT_SHEET_TAB_NAME).trim();
   if (!spreadsheetId) throw new Error('Google Sheet URL/ID is not configured.');
   if (!sheetName) throw new Error('Missing worksheet/tab name in Settings.');
+  const quotedSheet = `'${sheetName.replace(/'/g, "''")}'`;
+  const writable: typeof pending = [];
   for (const row of pending) {
-    const r = row.sourceSheetRow;
-    const targetSheetRow = r ?? 'not-found';
+    if (row.sourceSheetRow) { writable.push(row); continue; }
     const ticketId = (row.notes || '').match(/ticket_id=([^,\s]+)/)?.[1] || '';
-    if (!r) {
-      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} entitlementId=${row.id} ticket_id=${ticketId} personName=${row.personName || ''} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=${targetSheetRow} updatedColumns=none failure=missing_source_row`);
-      continue;
-    }
+    console.log(`[SHEET_SYNC][CAMP_WRITEBACK] entitlementId=${row.id} ticket_id=${ticketId} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=not-found failure=missing_source_row`);
+  }
+  let written = 0;
+  for (let offset = 0; offset < writable.length; offset += REDEMPTION_BATCH_SIZE) {
+    const batch = writable.slice(offset, offset + REDEMPTION_BATCH_SIZE);
+    const syncedAt = new Date();
     try {
-      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: [
-        { range: `${sheetName}!I${r}:K${r}`, values: [['yes', row.redeemedAt?.toISOString() || new Date().toISOString(), row.redeemedBy || row.personName || '']] }
-      ] } });
-      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} entitlementId=${row.id} ticket_id=${ticketId} personName=${row.personName || ''} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=${r} updatedColumns=I:K success=true`);
+      // RAW: redeemedBy / personName come from scans and imports and must never be
+      // interpreted as a formula by Sheets.
+      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'RAW', data: batch.map((row) => ({
+        range: `${quotedSheet}!I${row.sourceSheetRow}:K${row.sourceSheetRow}`,
+        values: [['yes', row.redeemedAt?.toISOString() || syncedAt.toISOString(), row.redeemedBy || row.personName || '']]
+      })) } });
     } catch (error) {
-      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} entitlementId=${row.id} ticket_id=${ticketId} personName=${row.personName || ''} sourceRowKey=${row.sourceTicketId || ''} targetSheetRow=${r} updatedColumns=I:K success=false`);
+      console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} batchRows=${batch.length} updatedColumns=I:K success=false`);
       throw mapGoogleSheetsError(error);
     }
-    await prisma.mealEntitlement.update({ where: { id: row.id }, data: { sheetSyncedAt: new Date() } });
+    // Mark each batch as soon as it is written so a later failure does not resend it.
+    await prisma.mealEntitlement.updateMany({ where: { id: { in: batch.map((row) => row.id) } }, data: { sheetSyncedAt: syncedAt } });
+    written += batch.length;
+    console.log(`[SHEET_SYNC][CAMP_WRITEBACK] pendingRedemptions=${pending.length} batchRows=${batch.length} updatedColumns=I:K success=true`);
   }
-  return { writeBackRowsUpdated: pending.length };
+  return { writeBackRowsUpdated: written };
   } finally {
     releaseOperationLock('writeback');
   }

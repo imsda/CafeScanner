@@ -819,6 +819,10 @@ export function SettingsPage() {
             <p><strong>Last skip reason:</strong> {schedulerStatus?.lastSkipReason ?? "None"}</p>
             <p><strong>Last tally/balance rows processed:</strong> {schedulerStatus?.lastRowsUpdated ?? 0}</p>
             <p><strong>Last sync error:</strong> {schedulerStatus?.lastSyncError ?? schedulerStatus?.lastCampMeetingWriteBackError ?? "None"}</p>
+            <p><strong>Last fully successful sync:</strong> {formatDateTimeSafe(schedulerStatus?.persistedLastSuccessAt, "Never")}</p>
+            {schedulerStatus?.persistedLastError ? (
+              <p className="error" role="alert"><strong>Failing since {formatDateTimeSafe(schedulerStatus.persistedLastErrorAt, "unknown")}:</strong> {schedulerStatus.persistedLastError}</p>
+            ) : null}
             <p><strong>Last cycle duration:</strong> {schedulerStatus?.lastCycleDurationMs == null ? "Unknown" : `${(schedulerStatus.lastCycleDurationMs / 1000).toFixed(1)} seconds`}</p>
             <p><strong>Next expected run:</strong> {formatDateTimeSafe(schedulerStatus?.nextExpectedRunTime, "Unknown")}</p>
           </section>

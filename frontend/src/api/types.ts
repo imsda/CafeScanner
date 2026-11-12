@@ -124,6 +124,10 @@ export interface GoogleSheetsSchedulerStatus {
   lastCampMeetingWriteBackError: string | null;
   lastScheduledCycleOrder: string | null;
   nextExpectedRunTime: string | null;
+  /** Persisted on the server, so these survive restarts. */
+  persistedLastSuccessAt?: string | null;
+  persistedLastError?: string | null;
+  persistedLastErrorAt?: string | null;
 }
 
 export interface ReportsSummaryResponse {

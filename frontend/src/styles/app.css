@@ -359,3 +359,15 @@ select {
 .result-failure { background: #fdeaee; color: #a3112f; }
 .transactions-table .nowrap { white-space: nowrap; }
 .transactions-table td.mono { word-break: break-all; }
+
+/* --- Google Sheets sync failure banner (Dashboard) --- */
+.sync-warning-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid #b45309;
+  border-radius: 0.75rem;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
