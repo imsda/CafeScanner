@@ -28,7 +28,8 @@ export async function getStudentsNotEating(now = new Date()) {
     },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }]
   });
-  const latestMeals = await prisma.scanTransaction.groupBy({
+  // Bounded to the warning-eligible students; served by the (personId, mealType, result, timestamp) index.
+  const latestMeals = students.length === 0 ? [] : await prisma.scanTransaction.groupBy({
     by: ['personId'],
     where: { personId: { in: students.map((student) => student.id) }, result: ScanResult.SUCCESS },
     _max: { timestamp: true }
@@ -60,10 +61,48 @@ export async function getStudentsNotEating(now = new Date()) {
   return { mealTrackingMode: settings.mealTrackingMode, warningDays: settings.studentMealWarningDays, villageStudentMealWarningsEnabled: settings.villageStudentMealWarningsEnabled, students: warningStudents };
 }
 
+// Every scan station polls the warning status once a minute. The answer is a single boolean,
+// so it is cached briefly instead of recomputing the whole report for each station.
+export const STUDENT_WARNING_CACHE_TTL_MS = 60_000;
+let warningStatusCache: { hasWarnings: boolean; expiresAt: number } | null = null;
+let warningStatusPending: Promise<boolean> | null = null;
+let warningStatusGeneration = 0;
+
+/** Cached "is any student warning active?" flag for the scan stations. The Reports page uses getStudentsNotEating() directly. */
+export async function getStudentWarningStatus(): Promise<boolean> {
+  if (warningStatusCache && warningStatusCache.expiresAt > Date.now()) return warningStatusCache.hasWarnings;
+  if (warningStatusPending) return warningStatusPending;
+
+  const generation = warningStatusGeneration;
+  const pending: Promise<boolean> = getStudentsNotEating()
+    .then((report) => {
+      const hasWarnings = report.students.length > 0;
+      // Do not store a result that was computed before an invalidation.
+      if (generation === warningStatusGeneration) {
+        warningStatusCache = { hasWarnings, expiresAt: Date.now() + STUDENT_WARNING_CACHE_TTL_MS };
+      }
+      return hasWarnings;
+    })
+    .finally(() => {
+      if (warningStatusPending === pending) warningStatusPending = null;
+    });
+  warningStatusPending = pending;
+  return pending;
+}
+
+/** Call whenever something changes which students have an active warning. */
+export function invalidateStudentWarningCache(): void {
+  warningStatusGeneration += 1;
+  warningStatusCache = null;
+  warningStatusPending = null;
+}
+
 export async function clearStudentMealWarning(personId: number) {
-  return prisma.person.update({
+  const person = await prisma.person.update({
     where: { id: personId, personType: { in: STUDENT_PERSON_TYPES } },
     data: { mealWarningSince: null, mealWarningClearedAt: new Date() },
     select: { id: true, mealWarningSince: true, mealWarningClearedAt: true }
   });
+  invalidateStudentWarningCache();
+  return person;
 }

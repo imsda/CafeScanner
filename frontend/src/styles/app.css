@@ -353,3 +353,9 @@ select {
 .person-unsaved { color: #9a5b00; font-size: 0.74rem; font-weight: 600; }
 .people-filters label:has(> input[type="checkbox"]) { padding-bottom: 0.45rem; white-space: nowrap; }
 .confirm-modal textarea { width: 100%; box-sizing: border-box; font: inherit; }
+
+/* ---------- Transactions page (reuses the Reports filter bar, tables and pills) ---------- */
+.result-success { background: #e5f5ec; color: #1d6b41; }
+.result-failure { background: #fdeaee; color: #a3112f; }
+.transactions-table .nowrap { white-space: nowrap; }
+.transactions-table td.mono { word-break: break-all; }

@@ -173,21 +173,6 @@ export interface ReportsSummaryResponse {
     dinnerCount: number;
     totalMealsCount: number;
   };
-  transactions: Array<{
-    id: number;
-    timestamp: string;
-    scannedValue: string;
-    mealType: string;
-    result: string;
-    failureReason: string | null;
-    stationName: string | null;
-    person: null | {
-      firstName: string;
-      lastName: string;
-      personId: string;
-      personType: PersonType;
-    };
-  }>;
 }
 
 export interface StudentsNotEatingResponse {

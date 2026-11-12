@@ -3,7 +3,7 @@ import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { MAX_SCAN_QUANTITY, processScan } from '../services/scanService.js';
-import { getStudentsNotEating } from '../services/studentMealWarningService.js';
+import { getStudentWarningStatus } from '../services/studentMealWarningService.js';
 
 import { searchPeople } from '../services/searchPeople.js';
 
@@ -49,8 +49,8 @@ router.get('/people', async (req, res) => {
 });
 
 router.get('/warnings/status', async (_req, res) => {
-  const report = await getStudentsNotEating();
-  return res.json({ hasWarnings: report.students.length > 0 });
+  // Polled by every scan station; served from a short-lived cache.
+  return res.json({ hasWarnings: await getStudentWarningStatus() });
 });
 
 const scanRequestSchema = z.object({
