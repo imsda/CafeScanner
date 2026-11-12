@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
 import { getSettings, SETTINGS_PUBLIC_SELECT } from '../services/settingsService.js';
 import { requireAdmin, requireOwner } from '../middleware/auth.js';
+import { invalidateStudentWarningCache } from '../services/studentMealWarningService.js';
 import { DEFAULT_TIMEZONE, isValidTimezone } from '../utils/timezone.js';
 import { isHHmm, normalizeTimeValue } from '../utils/time.js';
 import { getGoogleSheetsSchedulerStatus, runGoogleSheetsSyncSchedulerCheckNow } from '../services/campMeetingSheetSyncService.js';
@@ -96,6 +97,7 @@ router.put('/', async (req, res) => {
   }
   await getSettings();
   const updated = await withSqliteTimeoutRetry('settings.update', () => prisma.setting.update({ where: { id: 1 }, data: payload, select: SETTINGS_PUBLIC_SELECT }));
+  invalidateStudentWarningCache();
   console.log('[SETTINGS] Updated settings payload keys:', Object.keys(payload));
   res.json(updated);
 });
@@ -145,6 +147,7 @@ router.put('/meal-tracking-mode', requireAdmin, async (req, res) => {
     return settings;
   }));
 
+  invalidateStudentWarningCache();
   console.log(`[ADMIN_ACTION] switched mealTrackingMode to ${payload.mealTrackingMode} and cleared operational data by userId=${actedBy ?? 'unknown'} at ${new Date().toISOString()}`);
 
   return res.json({

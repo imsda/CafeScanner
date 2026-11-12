@@ -229,6 +229,13 @@ router.put('/:id', async (req, res) => {
       const dinnerCount = payload.dinnerCount ?? existing.dinnerCount;
       payload.totalMealsCount = breakfastCount + lunchCount + dinnerCount;
     }
+    if (payload.personId !== undefined) {
+      // Camp Meeting tickets reference the person by ID text, so a changed ID must carry them along.
+      const before = await tx.person.findUniqueOrThrow({ where: { id }, select: { personId: true } });
+      if (before.personId !== payload.personId) {
+        await tx.mealEntitlement.updateMany({ where: { personId: before.personId }, data: { personId: payload.personId } });
+      }
+    }
     return tx.person.update({ where: { id }, data: payload });
   });
   res.json(person);

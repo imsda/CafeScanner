@@ -139,3 +139,23 @@ test('delete and bulk-set require an admin; PEOPLE page access alone is not enou
   assert.equal(adminDelete.status, 200);
   assert.equal(await prisma.person.findUnique({ where: { id: person.id } }), null);
 });
+
+test('changing a person ID moves their camp meeting entitlements with them', async () => {
+  const { prisma: db } = await import('../src/db.js');
+  const bcryptLib = (await import('bcryptjs')).default;
+  const username = `id-admin-${Date.now()}`;
+  await db.adminUser.create({ data: { username, passwordHash: await bcryptLib.hash('test-password-123', 4), role: 'ADMIN' } });
+  const person = await db.person.create({ data: { firstName: 'Ticket', lastName: 'Holder', personId: 'OLD-ID', codeValue: 'OLD-ID' } });
+  await db.mealEntitlement.create({ data: { personId: 'OLD-ID', personName: 'Ticket Holder', mealType: 'LUNCH', mealDay: 'MON', mealDate: '2030-01-07' } });
+  const { startTestApp } = await import('./helpers/testApp.js');
+  const app = await startTestApp();
+  try {
+    const cookie = await app.login(username);
+    const response = await app.request(`/api/people/${person.id}`, { method: 'PUT', cookie, json: { personId: 'NEW-ID' } });
+    assert.equal(response.status, 200);
+    assert.equal(await db.mealEntitlement.count({ where: { personId: 'NEW-ID' } }), 1);
+    assert.equal(await db.mealEntitlement.count({ where: { personId: 'OLD-ID' } }), 0);
+  } finally {
+    await app.close();
+  }
+});

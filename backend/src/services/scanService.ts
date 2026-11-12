@@ -4,6 +4,7 @@ import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 import { normalizeCampMeetingPersonId, normalizePersonId } from '../utils/personId.js';
 import { isMealWarningEligible, isStudentType } from '../utils/personType.js';
+import { invalidateStudentWarningCache } from './studentMealWarningService.js';
 import { localMealDay, resolveTimezone } from '../utils/timezone.js';
 
 
@@ -571,6 +572,7 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
       );
       if (missedDays >= settings.studentMealWarningDays) {
         mealWarningSince = scanTime;
+        invalidateStudentWarningCache();
       }
     }
 

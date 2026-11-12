@@ -17,3 +17,4 @@ certs/*.key
 
 # Staging folders used while update-service.sh swaps in a new frontend build
 frontend/dist.*
+.claude/worktrees/
