@@ -222,10 +222,9 @@ export interface SystemUpdateStatus {
   };
 }
 
-export interface SystemUpdateResult {
-  ok: boolean;
-  output: string;
-  startedAt: string;
-  finishedAt: string;
-  error?: string;
+export interface SystemUpdateLog {
+  inProgress: boolean;
+  result: 'success' | 'failed' | 'running' | 'interrupted' | null;
+  startedAt: string | null;
+  log: string;
 }

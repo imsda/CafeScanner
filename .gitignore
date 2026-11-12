@@ -14,3 +14,6 @@ frontend/tsconfig.tsbuildinfo
 *.tsbuildinfo
 certs/*.key
 .DS_Store
+
+# Staging folders used while update-service.sh swaps in a new frontend build
+frontend/dist.*

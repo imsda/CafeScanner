@@ -204,12 +204,55 @@ ensure_service_started_on_exit() {
 
 trap ensure_service_started_on_exit EXIT
 
+# In-app mode (Settings → Updates) is started by the running service, so it must not stop
+# that service: systemd would kill this script with it. It migrates while the app is up and
+# finishes with a single restart. Terminal runs keep the safer stop → migrate → start order.
+IN_APP_UPDATE="${CAFESCANNER_IN_APP_UPDATE:-0}"
+KEEP_PRE_UPDATE_BACKUPS=10
+
 log "Starting CafeScanner safe update from repo root: $ROOT_DIR"
 log "Architecture detected: ${ARCHITECTURE}"
 diagnostics
+
+if [[ "$IN_APP_UPDATE" == "1" ]]; then
+  log "Mode: in-app update (migrate, then restart the service)."
+  if ! sudo -n -l systemctl restart cafescanner >/dev/null 2>&1; then
+    fail "In-app updates need passwordless sudo for 'systemctl restart cafescanner'. Run ./scripts/update-service.sh from a terminal instead, or add the sudoers rule described in the README."
+  fi
+fi
+
+# Writes a consistent snapshot of a live (WAL-mode) SQLite database using VACUUM INTO.
+snapshot_sqlite_db() {
+  node -e '
+    const sqlite3 = require("sqlite3");
+    const [source, target] = process.argv.slice(1);
+    const db = new sqlite3.Database(source, sqlite3.OPEN_READONLY, (openError) => {
+      if (openError) { console.error(openError.message); process.exit(1); }
+      db.run("PRAGMA busy_timeout = 10000", () => {
+        db.run("VACUUM INTO ?", [target], (error) => {
+          if (error) { console.error(error.message); process.exit(1); }
+          db.close(() => process.exit(0));
+        });
+      });
+    });
+  ' "$1" "$2"
+}
+
+# Keeps only the newest pre-update backups so the backups folder cannot grow without limit.
+prune_pre_update_backups() {
+  local old_backup
+  while IFS= read -r old_backup; do
+    [[ -n "$old_backup" ]] || continue
+    rm -f -- "$old_backup" "${old_backup}-wal" "${old_backup}-shm"
+    log "Removed old pre-update backup: ${old_backup}"
+  done < <(ls -1t backend/backups/cafescanner-pre-update-*.db 2>/dev/null | tail -n "+$((KEEP_PRE_UPDATE_BACKUPS + 1))")
+}
+
 BACKEND_ENV_FILE="backend/.env"
 PRISMA_SCHEMA_DIR="backend/prisma"
-DB_URL=$(awk -F= '/^DATABASE_URL=/{print $2}' "$BACKEND_ENV_FILE" 2>/dev/null | tr -d '"' || true)
+# Everything after the first "=" is the value; drop quotes and any ?query (e.g. ?connection_limit=1).
+DB_URL=$(sed -n 's/^DATABASE_URL=//p' "$BACKEND_ENV_FILE" 2>/dev/null | head -n 1 | tr -d "\"'" || true)
+DB_URL="${DB_URL%%\?*}"
 
 if [[ -z "${DB_URL}" ]]; then
   log "No DATABASE_URL found in ${BACKEND_ENV_FILE}; skipping database backup."
@@ -222,29 +265,29 @@ elif [[ "${DB_URL}" == file:* ]]; then
     DB_PATH="${PRISMA_SCHEMA_DIR}/${DB_PATH_RAW}"
   fi
 
-  DB_PATH=$(python3 -c 'import os,sys; print(os.path.normpath(sys.argv[1]))' "$DB_PATH")
+  DB_PATH=$(realpath -m --relative-to="$ROOT_DIR" "$DB_PATH")
   log "Resolved SQLite DB path: ${DB_PATH}"
 
   mkdir -p backend/backups
   TS=$(date +%Y%m%d-%H%M%S)
-  BACKUP_PREFIX="backend/backups/cafescanner-pre-update-$TS"
+  BACKUP_FILE="backend/backups/cafescanner-pre-update-$TS.db"
 
   if [[ -f "$DB_PATH" ]]; then
-    run_step "pre-update backup (.db)" cp "$DB_PATH" "${BACKUP_PREFIX}.db"
-
-    if [[ -f "${DB_PATH}-wal" ]]; then
-      run_step "pre-update backup (.db-wal)" cp "${DB_PATH}-wal" "${BACKUP_PREFIX}.db-wal"
+    log "Starting: pre-update backup (consistent snapshot)"
+    if snapshot_sqlite_db "$DB_PATH" "$BACKUP_FILE" && [[ -s "$BACKUP_FILE" ]]; then
+      log "Success: pre-update backup written to ${BACKUP_FILE}"
     else
-      log "No WAL file found at ${DB_PATH}-wal; skipping WAL backup."
+      # Fallback when the sqlite3 module is not installed yet: copy the database and its WAL files.
+      log "Snapshot unavailable; falling back to copying the database files."
+      rm -f "$BACKUP_FILE"
+      run_step "pre-update backup (.db)" cp "$DB_PATH" "$BACKUP_FILE"
+      [[ -f "${DB_PATH}-wal" ]] && run_step "pre-update backup (.db-wal)" cp "${DB_PATH}-wal" "${BACKUP_FILE}-wal"
+      [[ -f "${DB_PATH}-shm" ]] && run_step "pre-update backup (.db-shm)" cp "${DB_PATH}-shm" "${BACKUP_FILE}-shm"
     fi
-
-    if [[ -f "${DB_PATH}-shm" ]]; then
-      run_step "pre-update backup (.db-shm)" cp "${DB_PATH}-shm" "${BACKUP_PREFIX}.db-shm"
-    else
-      log "No SHM file found at ${DB_PATH}-shm; skipping SHM backup."
-    fi
+    [[ -s "$BACKUP_FILE" ]] || fail "Pre-update backup was not created. Update aborted before changing anything."
+    prune_pre_update_backups
   else
-    log "WARNING: SQLite DB file not found at ${DB_PATH}; continuing update without backup."
+    fail "SQLite DB file not found at ${DB_PATH}. Check DATABASE_URL in ${BACKEND_ENV_FILE}. Update aborted before changing anything."
   fi
 else
   log "DATABASE_URL is not SQLite file-based; skipping database backup."
@@ -252,69 +295,60 @@ fi
 
 run_step "validate tracked git status before pull" ensure_clean_tracked_files
 run_step "git pull" run_git_pull_with_retry
-run_step "npm install" npm install
+# npm ci installs exactly what package-lock.json lists and never rewrites it, so an update
+# cannot leave a modified tracked file behind that blocks the next update.
+run_step "npm ci" npm ci
 run_step "ensure ARM64 Rollup compatibility dependency" ensure_arm64_rollup_compat
 run_step "permission diagnostics before build" check_repo_permissions
 run_step "verify build dependencies before cleanup" verify_build_dependencies
 
+# Build without taking the running site down: the backend compiles over backend/dist only if
+# TypeScript succeeds (noEmitOnError), and the frontend is built into a staging folder that
+# replaces frontend/dist in one step, so pages keep loading during the build.
 FRONTEND_DIST_DIR="$ROOT_DIR/frontend/dist"
-FRONTEND_DIST_BACKUP_DIR="$ROOT_DIR/frontend/dist.pre-update-backup"
-FRONTEND_DIST_BACKED_UP=0
+FRONTEND_DIST_NEXT_DIR="$ROOT_DIR/frontend/dist.next"
+FRONTEND_DIST_OLD_DIR="$ROOT_DIR/frontend/dist.old"
 
+run_step "cleanup build caches" rm -rf "$ROOT_DIR/backend/tsconfig.tsbuildinfo" "$ROOT_DIR/frontend/tsconfig.tsbuildinfo" "$FRONTEND_DIST_NEXT_DIR" "$FRONTEND_DIST_OLD_DIR" "$ROOT_DIR/frontend/dist.pre-update-backup"
+run_step "build backend" npm run build -w backend
+if ! npm run build -w frontend -- --outDir dist.next --emptyOutDir; then
+  rm -rf "$FRONTEND_DIST_NEXT_DIR"
+  fail "Frontend build failed. The previous frontend is still in place; update aborted."
+fi
+[[ -f "$FRONTEND_DIST_NEXT_DIR/index.html" ]] || fail "Frontend build produced no index.html. The previous frontend is still in place; update aborted."
 if [[ -d "$FRONTEND_DIST_DIR" ]]; then
-  run_step "backup frontend/dist" cp -a "$FRONTEND_DIST_DIR" "$FRONTEND_DIST_BACKUP_DIR"
-  FRONTEND_DIST_BACKED_UP=1
+  mv "$FRONTEND_DIST_DIR" "$FRONTEND_DIST_OLD_DIR"
+fi
+mv "$FRONTEND_DIST_NEXT_DIR" "$FRONTEND_DIST_DIR"
+rm -rf "$FRONTEND_DIST_OLD_DIR"
+log "Success: build (frontend swapped into place)"
+
+if [[ "$IN_APP_UPDATE" == "1" ]]; then
+  run_step "database migrations (npm run db:migrate)" npm run db:migrate
+  trap - EXIT
+  log "Update completed successfully. Database was not wiped, reset, or reseeded."
+  log "Summary: git pull, build and migrations succeeded. Restarting the service now."
+  log "UPDATE_RESULT=success"
+  # The restart ends this script along with the old service process; nothing may follow it.
+  sudo -n systemctl restart cafescanner
+  exit 0
 fi
 
-log "Cleaning build artifacts before build (preserving runtime data such as backend/prisma/prisma)."
-run_step "cleanup backend/dist" remove_build_output "$ROOT_DIR/backend/dist"
-run_step "cleanup frontend/dist" remove_build_output "$ROOT_DIR/frontend/dist"
-run_step "cleanup backend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/backend/tsconfig.tsbuildinfo"
-run_step "cleanup frontend/tsconfig.tsbuildinfo" remove_build_output "$ROOT_DIR/frontend/tsconfig.tsbuildinfo"
-if npm run build; then
-  log "Success: npm run build"
-  if [[ "$FRONTEND_DIST_BACKED_UP" -eq 1 && -d "$FRONTEND_DIST_BACKUP_DIR" ]]; then
-    run_step "cleanup frontend/dist backup" remove_build_output "$FRONTEND_DIST_BACKUP_DIR"
-  fi
-else
-  log "ERROR: Failed: npm run build"
-  if [[ "$FRONTEND_DIST_BACKED_UP" -eq 1 && -d "$FRONTEND_DIST_BACKUP_DIR" ]]; then
-    log "Build failed; restoring previous frontend/dist backup."
-    rm -rf "$FRONTEND_DIST_DIR"
-    mv "$FRONTEND_DIST_BACKUP_DIR" "$FRONTEND_DIST_DIR"
-    log "Previous frontend/dist restored."
-  fi
-  fail "Build failed. Update aborted to avoid production frontend downtime."
-fi
+log "Stopping service: cafescanner"
+run_step "stop cafescanner systemd service" sudo systemctl stop cafescanner
+SERVICE_STOPPED=1
 
-if npm run | grep -q "db:migrate"; then
-  log "Stopping service: cafescanner"
-  run_step "stop cafescanner systemd service" sudo systemctl stop cafescanner
-  SERVICE_STOPPED=1
+run_step "database migrations (npm run db:migrate)" npm run db:migrate
 
-  log "Migration starting: npm run db:migrate"
-  if npm run db:migrate; then
-    log "Migration success: npm run db:migrate"
-  else
-    log "Migration failure: npm run db:migrate"
-    exit 1
-  fi
-
-  log "Starting service: cafescanner"
-  run_step "start cafescanner systemd service" sudo systemctl start cafescanner
-  SERVICE_STOPPED=0
-else
-  log "Skipping npm run db:migrate (script not defined)."
-fi
+log "Starting service: cafescanner"
+run_step "start cafescanner systemd service" sudo systemctl start cafescanner
+SERVICE_STOPPED=0
 
 trap - EXIT
 log "Update completed successfully. Database was not wiped, reset, or reseeded."
 log "Summary:"
 log "- git pull: success"
 log "- build: success"
-if npm run | grep -q "db:migrate"; then
-  log "- migrations: success"
-else
-  log "- migrations: skipped (script not defined)"
-fi
+log "- migrations: success"
 log "- restart: success"
+log "UPDATE_RESULT=success"

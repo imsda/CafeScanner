@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiNetworkError, api, apiUpload, API_BASE, errorMessage } from "../api/client";
 import { useConfirm } from "../components/useConfirm";
 import { invalidateSchoolMeta } from "../hooks/useSchoolMeta";
-import type { MealTrackingMode, Settings, GoogleSheetsSchedulerStatus, SystemUpdateResult, SystemUpdateStatus } from "../api/types";
+import type { MealTrackingMode, Settings, GoogleSheetsSchedulerStatus, SystemUpdateLog, SystemUpdateStatus } from "../api/types";
 import { useAuth } from "../context/AuthContext";
 import { formatDateTime, renderStoredTimeValue, modeLabel } from "../lib/format";
 import { TIMEZONE_OPTIONS, normalizeSettingsForTimeAndTimezone } from "../lib/settings";
@@ -237,28 +237,50 @@ export function SettingsPage() {
     }
   }
 
+  // The update restarts the server, so it runs in the background: start it, then follow its log.
   async function installUpdate() {
     if (!isOwner) return;
     setIsInstallingUpdate(true);
     setError("");
     setMessage("");
+    setUpdateOutput("");
     try {
-      const result = await api<SystemUpdateResult>("/system/update", { method: "POST" });
-      setUpdateOutput(result.output || "No update output returned.");
-      setMessage(result.ok ? "Update completed successfully." : "Update failed.");
-      await checkForUpdates();
+      await api("/system/update", { method: "POST" });
     } catch (updateError) {
-      const fallbackMessage = updateError instanceof Error ? updateError.message : "Unable to install update.";
-      const diagnostics = updateStatus?.updateScriptDiagnostics;
-      const scriptCheckPassed = Boolean(diagnostics?.exists && diagnostics?.executable);
-      if (scriptCheckPassed && fallbackMessage.toLowerCase().includes("missing or not executable")) {
-        setError("Unable to install update. The script exists and is executable; review diagnostics/output for the root cause.");
-      } else {
-        setError(fallbackMessage);
-      }
-    } finally {
+      setError(errorMessage(updateError, "Unable to start the update."));
       setIsInstallingUpdate(false);
+      return;
     }
+
+    const deadline = Date.now() + 20 * 60 * 1000;
+    const poll = async () => {
+      try {
+        const status = await api<SystemUpdateLog>("/system/update-log");
+        if (status.log) setUpdateOutput(status.log);
+        if (status.result === "success") {
+          setIsInstallingUpdate(false);
+          setMessage("Update installed and the service restarted. Reloading this page…");
+          window.setTimeout(() => window.location.reload(), 4000);
+          return;
+        }
+        if (status.result === "failed" || status.result === "interrupted") {
+          setIsInstallingUpdate(false);
+          setError(status.result === "failed"
+            ? "Update failed. See the update output below; the previous version is still running."
+            : "The update stopped before finishing. See the update output below.");
+          return;
+        }
+      } catch {
+        // The server is briefly unreachable while it restarts; keep polling.
+      }
+      if (Date.now() > deadline) {
+        setIsInstallingUpdate(false);
+        setError("The update is taking longer than expected. Check the server logs.");
+        return;
+      }
+      window.setTimeout(() => void poll(), 3000);
+    };
+    window.setTimeout(() => void poll(), 2000);
   }
 
   function downloadBackup() {

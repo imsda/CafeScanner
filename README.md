@@ -334,19 +334,16 @@ Switching between modes is a destructive admin action:
 - then clears operational data (`Person`, `ScanTransaction`, and `ImportHistory`),
 - while preserving login accounts and other settings.
 
-## Admin: Clear Database
+## Admin: Data Reset Tools
 
-Admins can now use **Settings → System: Clear Database** to run a destructive reset.
+OWNER/ADMIN users can clear operational data from **Settings → Data Reset Tools**.
 
-- This action is **admin-only** in both frontend visibility and backend authorization.
-- Confirmation requires typing the exact phrase: `CLEAR DATABASE`.
-- The action deletes:
-  - all `Person` records,
-  - all `ScanTransaction` history,
-  - all `ImportHistory` records.
-- The action preserves:
-  - admin/scanner login accounts (`AdminUser`),
-  - app settings (`Setting`) including the currently selected meal tracking mode.
+- These actions are **admin-only** in both frontend visibility and backend authorization.
+- Choose one of: **Clear meal data only**, **Clear people/import data**, or **Reset all meal tracking data**.
+- Confirmation requires typing the exact phrase: `RESET MEAL TRACKING DATA`.
+- Depending on the action, it deletes scan transactions, meal entitlements, import history and people.
+- Every action preserves login accounts (`AdminUser`), page permissions and app settings (`Setting`), including the selected meal tracking mode.
+- Download a backup first (**Settings → Danger Zone → Backups**) if you may need the data again.
 
 ## Admin: Delete Individual Person
 
@@ -441,10 +438,32 @@ Destructive reset flows are admin-initiated app actions only (for explicit maint
 - Use reverse proxy (Traefik) with HTTPS and forward to `http://127.0.0.1:4000`.
 
 ## Update Workflow
-- Use `scripts/update-service.sh` only. It creates a pre-update SQLite backup, pulls fast-forward changes, installs deps, builds, runs migrations (if present), and restarts `cafescanner`.
+
+Run `./scripts/update-service.sh` as the service user (not with `sudo`; it asks for sudo only to stop and start the service). It:
+
+1. writes a consistent snapshot of the SQLite database to `backend/backups/cafescanner-pre-update-<timestamp>.db` and aborts if it cannot (the newest 10 are kept);
+2. refuses to continue if tracked files were edited locally;
+3. pulls fast-forward changes and installs exactly the locked dependencies (`npm ci`);
+4. builds the backend and builds the frontend into a staging folder that replaces `frontend/dist` in one step, so the site stays up during the build;
+5. stops the service, applies migrations, and starts it again.
+
+### Updating from the app (Settings → Updates)
+
+OWNER users can install updates from **Settings → Updates**. The update runs in the background and the page follows its log, then reloads once the service has restarted. Because the running service starts the update, it cannot stop itself first: in this mode migrations run while the app is up and the update ends with one restart.
+
+This needs the service user to be allowed to restart the service without a password. Add a sudoers rule once (replace `manager` with your service user; check the path with `command -v systemctl`):
+
+```bash
+echo 'manager ALL=(root) NOPASSWD: /usr/bin/systemctl restart cafescanner' | sudo tee /etc/sudoers.d/cafescanner-update
+sudo chmod 440 /etc/sudoers.d/cafescanner-update
+sudo visudo -c
+```
+
+Without that rule the Install update button explains what is missing and nothing is changed; use the terminal command above instead.
 
 ## Backup/Restore Workflow
 - Use System backup download/restore routes. Restore now validates SQLite file headers before replacement.
+- In-app backup downloads keep the newest 20 files in `BACKUP_DIR`; pre-restore snapshots keep the newest 10.
 - Recommended: scheduled filesystem backups of `backend/backups`, DB file, and `-wal`/`-shm` files.
 
 ## Service Management

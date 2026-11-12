@@ -77,7 +77,10 @@ const apiErrorHandler: express.ErrorRequestHandler = (error, _req, res, _next) =
     return res.status(status).json({ error: error instanceof Error ? error.message : 'Bad request.' });
   }
   console.error('[API] Unhandled error.', error);
-  const message = error instanceof Error && error.message ? error.message : 'Internal server error';
+  // Internal details (SQL, file paths) stay in the server log in production.
+  const message = !isProductionEnv() && error instanceof Error && error.message
+    ? error.message
+    : 'Something went wrong on the server. Please try again; if it keeps happening, check the service logs.';
   res.status(500).json({ error: message });
 };
 
@@ -116,6 +119,15 @@ export function createApp(options: CreateAppOptions = {}) {
     }
     callback(null, { origin: true, credentials: true });
   }));
+  // Baseline browser protections: no MIME sniffing, no embedding in other sites' frames,
+  // and no full URLs leaked in Referer headers.
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    next();
+  });
+  app.disable('x-powered-by');
   app.use(express.json());
   app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 

@@ -5,5 +5,7 @@ declare module 'express-session' {
     adminUserId?: number;
     role?: 'OWNER' | 'ADMIN' | 'SCANNER' | 'CUSTOM';
     allowedPages?: string[];
+    // Fingerprint of the password hash at login; a password change ends other sessions.
+    passwordStamp?: string;
   }
 }
