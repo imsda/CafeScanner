@@ -8,6 +8,9 @@ type PreviewResponse = {
   total: number;
   mode: MealTrackingMode;
   preview: Array<{ valid: boolean; errors: string[] }>;
+  // People CSV only: which columns of the file will be used, and which are not.
+  recognizedColumns?: string[];
+  ignoredColumns?: string[];
 };
 
 // Camp Meeting and people imports return different summaries; show whichever fields are present.
@@ -24,7 +27,23 @@ type ImportResult = {
   duplicateTicketIdCount?: number;
   errors?: Array<string | { row: number; error: string }>;
   skippedRowReasons?: Array<{ row: number; reason: string }>;
+  recognizedColumns?: string[];
+  ignoredColumns?: string[];
 };
+
+function ColumnSummary({ recognized, ignored }: { recognized?: string[]; ignored?: string[] }) {
+  if (!recognized?.length && !ignored?.length) return null;
+  return (
+    <>
+      {recognized && recognized.length > 0 && (
+        <p>Columns used: <strong>{recognized.join(", ")}</strong></p>
+      )}
+      {ignored && ignored.length > 0 && (
+        <p className="muted">Columns ignored: {ignored.join(", ")}</p>
+      )}
+    </>
+  );
+}
 
 const RESULT_LABELS: Array<[keyof ImportResult, string]> = [
   ["totalRows", "Rows in file"],
@@ -118,7 +137,7 @@ export function ImportPage() {
       <h2>{isCampMeeting ? "Camp Meeting Import" : "CSV Import"}</h2>
       <div className="button-row">
         <ButtonLink
-          href={`${API_BASE}/import/template`}
+          href={`${API_BASE}/import/template${isCampMeeting ? "" : "?format=csv"}`}
           className="btn-secondary"
           target="_blank"
           rel="noreferrer"
@@ -157,7 +176,10 @@ export function ImportPage() {
         </button>
       </div>
       {!isCampMeeting && (
-        <p className="muted">Rows with problems are skipped; every valid row is imported.</p>
+        <p className="muted">
+          Rows with problems are skipped; every valid row is imported. For people already in the system, only
+          the columns in your file are updated; missing columns and empty cells keep their current values.
+        </p>
       )}
       {error && <p className="error" role="alert">{error}</p>}
       {preview && (
@@ -168,6 +190,7 @@ export function ImportPage() {
             <strong>{preview.total - invalidPreviewRows.length} valid</strong>
             {invalidPreviewRows.length > 0 && <>, <span className="error">{invalidPreviewRows.length} with problems</span></>}.
           </p>
+          <ColumnSummary recognized={preview.recognizedColumns} ignored={preview.ignoredColumns} />
           {invalidPreviewRows.length > 0 && (
             <ul>
               {invalidPreviewRows.slice(0, MAX_LISTED_PROBLEMS).map((row) => (
@@ -186,6 +209,7 @@ export function ImportPage() {
               <div key={key}><dt>{label}</dt><dd>{result[key] as number}</dd></div>
             ))}
           </dl>
+          <ColumnSummary recognized={result.recognizedColumns} ignored={result.ignoredColumns} />
           {resultProblems.length > 0 && (
             <ul>
               {resultProblems.slice(0, MAX_LISTED_PROBLEMS).map((problem) => <li key={problem}>{problem}</li>)}

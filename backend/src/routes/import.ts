@@ -1,187 +1,36 @@
-import { MealDay, MealTrackingMode, MealType } from '@prisma/client';
+import { MealTrackingMode, type PersonType, type Prisma } from '@prisma/client';
 import { asyncRouter } from '../utils/asyncRouter.js';
 import { requireAdmin } from '../middleware/auth.js';
 import type { Request, Response } from 'express';
 import { acquireOperationLock, isResetInProgress, releaseOperationLock } from '../services/operationLockService.js';
-import { normalizeCampMeetingPersonId } from '../utils/personId.js';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { isSqliteTimeoutError, prisma, withSqliteTimeoutRetry } from '../db.js';
+import { isSqliteTimeoutError, prisma } from '../db.js';
 import { nanoid } from 'nanoid';
 import { getMealTrackingMode, getSettings } from '../services/settingsService.js';
 import { importCampMeetingFromSheet, importTallyFromSheet, importCountdownFromSheet, writeBackCampMeetingRedemptions, writeBackCountdownBalances, writeBackTallyCounts, writeBackWeeklyTallyNow, syncTransactionLogToSheet, rebuildTransactionLogFromDatabase } from '../services/campMeetingSheetSyncService.js';
-import { importCampMeetingRows, mapRowsToCampMeetingInput } from '../services/campMeetingImportService.js';
+import { importCampMeetingRows, mapRowsToCampMeetingInput, normalizeCampMeetingRows } from '../services/campMeetingImportService.js';
+import { parsePersonType } from '../services/peopleSheetRows.js';
 
 // CSV uploads are parsed in memory, so cap their size.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 
+// Every CSV upload goes through here. `bom` strips the byte order mark Excel's "CSV UTF-8" export
+// adds (otherwise the first header never matches) and `trim` drops stray spaces around cells.
 // Malformed CSV is a client error (400), not a server failure.
-function parseCsv<T>(text: string, options: Parameters<typeof parse>[1]): T {
+function parseCsvRows(text: string): string[][] {
   try {
-    return parse(text, options) as T;
+    return parse(text, { columns: false, skip_empty_lines: true, bom: true, trim: true }) as string[][];
   } catch (error) {
     throw Object.assign(new Error(`Could not read CSV file: ${error instanceof Error ? error.message : 'invalid format'}`), { status: 400 });
   }
 }
+
+function uploadedText(req: Request): string {
+  return req.file?.buffer.toString('utf-8') || '';
+}
+
 const router = asyncRouter();
-
-type Row = Record<string, string>;
-
-type CampMeetingPreviewRow = {
-  index: number;
-  personId: string;
-  personName: string;
-  mealType: string;
-  mealDay: string;
-  mealDate: string;
-  errors: string[];
-  valid: boolean;
-};
-
-type ParsedPersonName = {
-  firstName: string;
-  lastName: string;
-};
-
-function parseBool(v: string) {
-  return ['1', 'true', 'yes', 'y'].includes((v || '').toLowerCase());
-}
-
-function normalizeMealType(value: string): MealType | null {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'breakfast') return MealType.BREAKFAST;
-  if (normalized === 'lunch') return MealType.LUNCH;
-  if (normalized === 'dinner' || normalized === 'supper') return MealType.DINNER;
-  return null;
-}
-
-function normalizeDateOnly(value: string): string | null {
-  const raw = value.trim();
-  if (!raw) return null;
-
-  const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (dateOnlyMatch) {
-    const [, yearRaw, monthRaw, dayRaw] = dateOnlyMatch;
-    const year = Number(yearRaw);
-    const month = Number(monthRaw);
-    const day = Number(dayRaw);
-    const date = new Date(year, month - 1, day);
-    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
-    return `${yearRaw}-${monthRaw}-${dayRaw}`;
-  }
-
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, '0');
-  const day = String(parsed.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-
-
-function normalizeCampMeetingMealDay(value: string): MealDay | null {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-
-  const dayMap: Record<string, MealDay> = {
-    sun: MealDay.SUN,
-    sunday: MealDay.SUN,
-    mon: MealDay.MON,
-    monday: MealDay.MON,
-    tue: MealDay.TUE,
-    tues: MealDay.TUE,
-    tuesday: MealDay.TUE,
-    wed: MealDay.WED,
-    wednesday: MealDay.WED,
-    thu: MealDay.THU,
-    thur: MealDay.THU,
-    thurs: MealDay.THU,
-    thursday: MealDay.THU,
-    fri: MealDay.FRI,
-    friday: MealDay.FRI,
-    sat: MealDay.SAT,
-    saturday: MealDay.SAT
-  };
-
-  return dayMap[normalized] ?? null;
-}
-
-function normalizeCampMeetingDate(value: string): string | null {
-  const raw = value.trim();
-  if (!raw) return null;
-
-  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (isoMatch) {
-    const [, yearRaw, monthRaw, dayRaw] = isoMatch;
-    const year = Number(yearRaw);
-    const month = Number(monthRaw);
-    const day = Number(dayRaw);
-
-    const localDate = new Date(year, month - 1, day);
-    if (
-      localDate.getFullYear() !== year ||
-      localDate.getMonth() !== month - 1 ||
-      localDate.getDate() !== day
-    ) {
-      return null;
-    }
-
-    return `${yearRaw}-${monthRaw}-${dayRaw}`;
-  }
-
-  const mmddyyMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
-  if (!mmddyyMatch) return null;
-
-  const [, monthRaw, dayRaw, yearRaw] = mmddyyMatch;
-  const month = Number(monthRaw);
-  const day = Number(dayRaw);
-  const fullYear = 2000 + Number(yearRaw);
-
-  if (!Number.isInteger(month) || !Number.isInteger(day)) return null;
-  if (month < 1 || month > 12) return null;
-  if (day < 1 || day > 31) return null;
-
-  const localDate = new Date(fullYear, month - 1, day);
-  if (
-    localDate.getFullYear() !== fullYear ||
-    localDate.getMonth() !== month - 1 ||
-    localDate.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return `${String(fullYear)}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function isCampMeetingHeaderRow(cols: string[]): boolean {
-  const normalized = cols.map((col) => (col || '').trim().toLowerCase());
-  const colB = normalized[1] || '';
-  const colC = normalized[2] || '';
-  const colD = normalized[3] || '';
-  const colE = normalized[4] || '';
-
-  const personIdLike = new Set(['reg_id', 'personid', 'person_id', 'id']);
-  const personNameLike = new Set(['guest_name', 'personname', 'person_name', 'name']);
-  const mealTypeLike = new Set(['meal_type', 'mealtype']);
-  const mealDayLike = new Set(['meal_day', 'mealday', 'day', 'day_of_week']);
-
-  return personIdLike.has(colB) && personNameLike.has(colC) && mealTypeLike.has(colD) && mealDayLike.has(colE);
-}
-
-function splitCampMeetingName(personName: string): ParsedPersonName {
-  const normalized = personName.trim().replace(/\s+/g, ' ');
-  if (!normalized) return { firstName: 'Unknown', lastName: '' };
-
-  const parts = normalized.split(' ');
-  if (parts.length === 1) return { firstName: normalized, lastName: '' };
-
-  return {
-    firstName: parts[0],
-    lastName: parts.slice(1).join(' ')
-  };
-}
 
 async function getMode() {
   return getMealTrackingMode();
@@ -192,60 +41,210 @@ function parseErrorMessage(error: unknown): string {
   return 'Unexpected import error';
 }
 
-function chunkArray<T>(items: T[], chunkSize: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += chunkSize) {
-    chunks.push(items.slice(i, i + chunkSize));
+// ---------------------------------------------------------------------------
+// People CSV (tally / countdown). Preview and commit both go through
+// parsePeopleCsv so they can never disagree about which rows are valid.
+// ---------------------------------------------------------------------------
+
+const NUMERIC_FIELDS = ['breakfastRemaining', 'lunchRemaining', 'dinnerRemaining', 'breakfastCount', 'lunchCount', 'dinnerCount', 'totalMealsCount'] as const;
+const COUNT_FIELDS = ['breakfastCount', 'lunchCount', 'dinnerCount'] as const;
+const TEXT_FIELDS = ['grade', 'group', 'campus', 'notes'] as const;
+type NumericField = typeof NUMERIC_FIELDS[number];
+type TextField = typeof TEXT_FIELDS[number];
+type PeopleField = 'personId' | 'firstName' | 'lastName' | 'name' | 'codeValue' | 'personType' | 'active' | NumericField | TextField;
+
+// Only columns that are present in the file AND have a value in the row appear here, so an update
+// never overwrites existing data with a default.
+type NormalizedPersonRow = {
+  personId: string;
+  firstName: string;
+  lastName: string;
+  codeValue?: string;
+  personType?: PersonType;
+  active?: boolean;
+} & Partial<Record<NumericField, number>> & Partial<Record<TextField, string>>;
+
+type PeopleCsvRow = { index: number; valid: boolean; errors: string[]; normalized: NormalizedPersonRow | null };
+
+type PeopleCsv = {
+  rows: PeopleCsvRow[];
+  recognizedColumns: string[];
+  ignoredColumns: string[];
+  // True when the file carries any per-meal count column, in which case the tally total is recomputed.
+  hasCountColumns: boolean;
+};
+
+// Header names match case-insensitively, ignoring spaces, underscores and hyphens.
+const HEADER_ALIASES: Record<string, PeopleField> = {
+  personid: 'personId', id: 'personId', studentid: 'personId',
+  firstname: 'firstName', lastname: 'lastName', name: 'name', fullname: 'name',
+  codevalue: 'codeValue', code: 'codeValue',
+  usertype: 'personType', persontype: 'personType',
+  active: 'active', grade: 'grade', group: 'group', campus: 'campus', notes: 'notes',
+  breakfastremaining: 'breakfastRemaining', lunchremaining: 'lunchRemaining', dinnerremaining: 'dinnerRemaining',
+  breakfastcount: 'breakfastCount', lunchcount: 'lunchCount', dinnercount: 'dinnerCount',
+  totalmealscount: 'totalMealsCount'
+};
+
+function headerToField(header: string, mode: MealTrackingMode): PeopleField | null {
+  const key = header.toLowerCase().replace(/[\s_-]/g, '');
+  // The Google Sheet layout (ID, Name, Breakfast, Lunch, Dinner, Total) uses bare meal names: they
+  // are counts in tally mode and remaining balances in countdown mode. "Total" is never read; it is
+  // recomputed from the counts.
+  if (key === 'breakfast' || key === 'lunch' || key === 'dinner') {
+    return `${key}${mode === MealTrackingMode.countdown ? 'Remaining' : 'Count'}` as PeopleField;
   }
-  return chunks;
+  return HEADER_ALIASES[key] ?? null;
 }
 
-function parseCampMeetingRows(text: string): CampMeetingPreviewRow[] {
-  const rows = parseCsv<string[][]>(text, { columns: false, skip_empty_lines: true, trim: false });
-  const rowsWithoutHeader = rows.length > 0 && isCampMeetingHeaderRow(rows[0]) ? rows.slice(1) : rows;
+const TRUE_VALUES = ['1', 'true', 'yes', 'y'];
+const FALSE_VALUES = ['0', 'false', 'no', 'n'];
+const MAX_INT = 2147483647;
 
-  return rowsWithoutHeader.map((cols, idx) => {
-    const personId = normalizeCampMeetingPersonId(cols[1] || '');
-    const personName = (cols[2] || '').trim();
-    const mealTypeRaw = (cols[3] || '').trim();
-    const mealDayRaw = (cols[4] || '').trim();
-    const mealDateRaw = (cols[5] || '').trim();
+function parsePeopleCsv(text: string, mode: MealTrackingMode): PeopleCsv {
+  const records = parseCsvRows(text);
+  const headers = records[0] ?? [];
+  const columnByField = new Map<PeopleField, number>();
+  const recognizedColumns: string[] = [];
+  const ignoredColumns: string[] = [];
+  headers.forEach((header, column) => {
+    const field = headerToField(header, mode);
+    // An unknown column, or a second column for a field that is already mapped, is ignored.
+    if (!field || columnByField.has(field)) {
+      if (header) ignoredColumns.push(header);
+      return;
+    }
+    columnByField.set(field, column);
+    recognizedColumns.push(header);
+  });
+
+  const hasSplitName = columnByField.has('firstName') || columnByField.has('lastName');
+  const rows = records.slice(1).map((record, idx): PeopleCsvRow => {
+    const cell = (field: PeopleField) => {
+      const column = columnByField.get(field);
+      return column === undefined ? '' : String(record[column] ?? '').trim();
+    };
     const errors: string[] = [];
 
-    if (!personId) errors.push('Column B (Person ID) is required');
-    if (!personName) errors.push('Column C (Name) is required');
-    if (!mealTypeRaw) errors.push('Column D (Meal Type) is required');
-    if (!mealDayRaw) errors.push('Column E (Meal Day) is required');
-    if (mealTypeRaw && !normalizeMealType(mealTypeRaw)) {
-      errors.push('Column D must be Breakfast, Lunch, Dinner, or Supper');
-    }
-    if (mealDayRaw && !normalizeCampMeetingMealDay(mealDayRaw)) errors.push('Column E must be a valid day of week');
-    if (mealDateRaw && !normalizeCampMeetingDate(mealDateRaw)) errors.push('Column F must be a valid date when provided');
+    const personId = cell('personId');
+    if (!personId) errors.push('personId is required');
 
-    return {
-      index: idx + 1,
-      personId,
-      personName,
-      mealType: normalizeMealType(mealTypeRaw) ?? mealTypeRaw,
-      mealDay: normalizeCampMeetingMealDay(mealDayRaw) ?? mealDayRaw,
-      mealDate: normalizeCampMeetingDate(mealDateRaw) ?? mealDateRaw,
-      errors,
-      valid: errors.length === 0
-    };
-  }).filter((row) => row.personId || row.personName || row.mealType || row.mealDay || row.mealDate);
+    let firstName = '';
+    let lastName = '';
+    if (hasSplitName) {
+      firstName = cell('firstName');
+      lastName = cell('lastName');
+      if (!firstName) errors.push('firstName is required');
+      if (!lastName) errors.push('lastName is required');
+    } else {
+      // A single full-name column is split on the last space: "Mary Ann Smith" -> "Mary Ann" + "Smith".
+      const name = cell('name').replace(/\s+/g, ' ');
+      const lastSpace = name.lastIndexOf(' ');
+      firstName = lastSpace < 0 ? name : name.slice(0, lastSpace);
+      lastName = lastSpace < 0 ? '' : name.slice(lastSpace + 1);
+      if (!name) errors.push(columnByField.has('name') ? 'name is required' : 'firstName and lastName (or name) are required');
+    }
+
+    const normalized: NormalizedPersonRow = { personId, firstName, lastName };
+
+    for (const field of NUMERIC_FIELDS) {
+      const raw = cell(field);
+      if (!raw) continue;
+      if (!/^\d+$/.test(raw) || Number(raw) > MAX_INT) {
+        errors.push(`${field} must be a whole number of 0 or more (got "${raw}")`);
+        continue;
+      }
+      normalized[field] = Number(raw);
+    }
+
+    for (const field of TEXT_FIELDS) {
+      const raw = cell(field);
+      if (raw) normalized[field] = raw;
+    }
+
+    const codeValue = cell('codeValue');
+    if (codeValue) normalized.codeValue = codeValue;
+
+    const activeRaw = cell('active').toLowerCase();
+    if (activeRaw) {
+      if (TRUE_VALUES.includes(activeRaw)) normalized.active = true;
+      else if (FALSE_VALUES.includes(activeRaw)) normalized.active = false;
+      else errors.push('active must be true/false, yes/no or 1/0');
+    }
+
+    try {
+      const personType = parsePersonType(cell('personType'));
+      if (personType) normalized.personType = personType;
+    } catch (error) {
+      errors.push(parseErrorMessage(error));
+    }
+
+    const valid = errors.length === 0;
+    return { index: idx + 1, valid, errors, normalized: valid ? normalized : null };
+  });
+
+  return { rows, recognizedColumns, ignoredColumns, hasCountColumns: COUNT_FIELDS.some((field) => columnByField.has(field)) };
 }
 
-router.get('/template', async (_req, res) => {
+// Writes one validated row. An existing person only has the supplied values changed: columns that
+// are missing from the file, and empty cells, leave the stored value alone (so a names-only roster
+// cannot zero counts and balances, clear grade/group/campus/notes, re-activate someone or replace
+// the code printed on their badge). New people get defaults for whatever is missing.
+async function savePersonRow(row: NormalizedPersonRow, options: { hasCountColumns: boolean; generateMissingCodes: boolean }) {
+  const { personId, ...values } = row;
+  const existing = await prisma.person.findUnique({
+    where: { personId },
+    select: { breakfastCount: true, lunchCount: true, dinnerCount: true }
+  });
+
+  const data: Prisma.PersonUpdateInput = { ...values };
+  if (options.hasCountColumns) {
+    data.totalMealsCount = COUNT_FIELDS.reduce((sum, field) => sum + (row[field] ?? existing?.[field] ?? 0), 0);
+  }
+
+  if (existing) {
+    await prisma.person.update({ where: { personId }, data });
+    return;
+  }
+  await prisma.person.create({
+    data: {
+      ...(data as Prisma.PersonCreateInput),
+      personId,
+      codeValue: row.codeValue || (options.generateMissingCodes ? nanoid(10) : `${personId}-${nanoid(4)}`)
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Camp Meeting CSV. Preview and commit share the header mapping and row
+// normalisation used by the import itself.
+// ---------------------------------------------------------------------------
+
+function parseCampMeetingCsv(text: string) {
+  const { inputRows, errors: headerErrors } = mapRowsToCampMeetingInput(parseCsvRows(text));
+  if (headerErrors.length) return { headerErrors, inputRows, normalized: null };
+  return { headerErrors, inputRows, normalized: normalizeCampMeetingRows(inputRows, { source: 'csv' }) };
+}
+
+const CAMP_MEETING_TEMPLATE = 'ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date,ticket_type,price,redeemed,redeemed_at,redeemed_by,notes\n';
+
+// Default response: the Google Sheet column layout for the current mode (linked from Settings).
+// ?format=csv: the people CSV layout for the Import page (Camp Meeting uses one layout for both).
+router.get('/template', async (req, res) => {
   const mode = await getMode();
+  res.setHeader('Content-Type', 'text/csv');
   if (mode === MealTrackingMode.camp_meeting) {
-    const header = 'ticket_id,reg_id,guest_name,meal_type,meal_day,meal_date,ticket_type,price,redeemed,redeemed_at,redeemed_by,notes\n';
-    res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="camp-meeting-google-sheet-template.csv"');
-    return res.send(header);
+    return res.send(CAMP_MEETING_TEMPLATE);
+  }
+  const modeName = mode === MealTrackingMode.tally ? 'tally-up' : 'count-down';
+  if (req.query.format === 'csv') {
+    const balances = mode === MealTrackingMode.countdown ? 'breakfastRemaining,lunchRemaining,dinnerRemaining,' : '';
+    res.setHeader('Content-Disposition', `attachment; filename="${modeName}-people-import-template.csv"`);
+    return res.send(`firstName,lastName,personId,personType,${balances}grade,group,campus,notes\n`);
   }
   const header = mode === MealTrackingMode.tally ? 'ID,Name,Breakfast,Lunch,Dinner,Total,User Type\n' : 'ID,Name,Breakfast,Lunch,Dinner,Total\n';
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="${mode === MealTrackingMode.tally ? 'tally-up' : 'count-down'}-google-sheet-template.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${modeName}-google-sheet-template.csv"`);
   return res.send(header);
 });
 
@@ -260,32 +259,6 @@ router.get('/camp-meeting/summary', async (_req, res) => {
     totalRedeemed,
     totalRemaining: Math.max(0, totalEntitlements - totalRedeemed)
   });
-});
-
-router.get('/camp-meeting/google-sheet/debug/:regId', async (req, res) => {
-  const regId = String(req.params.regId || '').trim();
-  if (!regId) return res.status(400).json({ error: 'regId is required' });
-  const entitlements = await prisma.mealEntitlement.findMany({
-    where: { personId: regId },
-    orderBy: [{ mealDay: 'asc' }, { mealType: 'asc' }, { id: 'asc' }]
-  });
-  const grouped = entitlements.reduce<Record<string, Record<string, unknown[]>>>((acc, row) => {
-    const dayKey = row.mealDay;
-    const mealKey = row.mealType;
-    acc[dayKey] = acc[dayKey] || {};
-    acc[dayKey][mealKey] = acc[dayKey][mealKey] || [];
-    acc[dayKey][mealKey].push({
-      id: row.id,
-      sourceTicketId: row.sourceTicketId,
-      sourceSheetRow: row.sourceSheetRow,
-      personName: row.personName,
-      mealDate: row.mealDate,
-      redeemed: row.redeemed,
-      redeemedAt: row.redeemedAt
-    });
-    return acc;
-  }, {});
-  return res.json({ regId, total: entitlements.length, grouped });
 });
 
 router.post('/google-sheet/import', async (_req, res) => {
@@ -375,22 +348,35 @@ router.post('/google-sheet/rebuild-log-now', requireAdmin, async (req, res) => {
 
 router.post('/preview', upload.single('file'), async (req, res) => {
   const mode = await getMode();
-  const text = req.file?.buffer.toString('utf-8') || '';
+  const text = uploadedText(req);
 
   if (mode === MealTrackingMode.camp_meeting) {
-    const preview = parseCampMeetingRows(text);
+    const { headerErrors, inputRows, normalized } = parseCampMeetingCsv(text);
+    if (!normalized) return res.status(400).json({ error: headerErrors.join('; '), mode });
+    const validByRow = new Map(normalized.validRows.map((row) => [row.rowNumber, row]));
+    const reasonByRow = new Map(normalized.skipped.map((entry) => [entry.row, entry.reason]));
+    const preview = inputRows.map((raw, idx) => {
+      // Row numbers match the import: the header is row 1, so the first data row is row 2.
+      const rowNumber = idx + 2;
+      const row = validByRow.get(rowNumber);
+      const reason = reasonByRow.get(rowNumber);
+      return {
+        index: idx + 1,
+        personId: row?.personId ?? raw.reg_id,
+        personName: row?.personName ?? raw.guest_name,
+        mealType: row?.mealType ?? raw.meal_type,
+        mealDay: row?.mealDay ?? raw.meal_day,
+        mealDate: row?.mealDate ?? raw.meal_date,
+        errors: reason ? [reason] : [],
+        valid: Boolean(row)
+      };
+    });
     return res.json({ total: preview.length, mode, preview });
   }
 
-  const rows = parseCsv<Row[]>(text, { columns: true, skip_empty_lines: true });
-  const preview = rows.map((row, idx) => {
-    const errors: string[] = [];
-    if (!row.firstName) errors.push('firstName is required');
-    if (!row.lastName) errors.push('lastName is required');
-    if (!row.personId) errors.push('personId is required');
-    return { index: idx + 1, row, errors, valid: errors.length === 0 };
-  });
-  return res.json({ total: rows.length, mode, preview });
+  const parsed = parsePeopleCsv(text, mode);
+  const preview = parsed.rows.map(({ index, valid, errors, normalized }) => ({ index, row: normalized, errors, valid }));
+  return res.json({ total: preview.length, mode, preview, recognizedColumns: parsed.recognizedColumns, ignoredColumns: parsed.ignoredColumns });
 });
 
 // Takes the shared import lock so resets and Google Sheets syncs cannot interleave with a CSV import.
@@ -406,12 +392,22 @@ router.post('/commit', upload.single('file'), async (req, res) => {
 
 async function commitCsvImport(req: Request, res: Response) {
   const mode = await getMode();
+  const text = uploadedText(req);
 
   if (mode === MealTrackingMode.camp_meeting) {
-    const text = req.file?.buffer.toString('utf-8') || '';
-    const rawRows = parseCsv<string[][]>(text, { columns: false, skip_empty_lines: true, trim: false });
-    const { inputRows, errors: headerErrors } = mapRowsToCampMeetingInput(rawRows);
-    if (headerErrors.length) return res.status(400).json({ error: headerErrors.join('; '), mode });
+    // Validate the whole file before touching any data: a file with a bad header or no usable
+    // rows must never wipe the existing tickets.
+    const { headerErrors, inputRows, normalized } = parseCampMeetingCsv(text);
+    if (!normalized) return res.status(400).json({ error: headerErrors.join('; '), mode });
+    if (normalized.validRows.length === 0) {
+      return res.status(400).json({
+        error: 'No valid rows found in the file. Nothing was imported and existing entitlements were kept.',
+        mode,
+        totalRows: normalized.totalRows,
+        skippedRowReasons: normalized.skipped
+      });
+    }
+
     const replaceExisting = req.body.replaceExisting === 'true';
     const existingCount = await prisma.mealEntitlement.count();
 
@@ -424,10 +420,13 @@ async function commitCsvImport(req: Request, res: Response) {
     }
 
     try {
-      if (replaceExisting) {
-        await withSqliteTimeoutRetry('import.campMeeting.deleteExistingEntitlements', () => prisma.mealEntitlement.deleteMany({}));
-      }
-      const summary = await importCampMeetingRows(inputRows);
+      // The delete and the import run in one transaction, so a failure part-way through rolls
+      // back and leaves the previous entitlements in place. The timeout is generous because the
+      // import writes row by row.
+      const summary = await prisma.$transaction(async (tx) => {
+        if (replaceExisting) await tx.mealEntitlement.deleteMany({});
+        return importCampMeetingRows(inputRows, { source: 'csv', db: tx });
+      }, { maxWait: 15_000, timeout: 10 * 60_000 });
 
       await prisma.importHistory.create({
         data: {
@@ -456,74 +455,42 @@ async function commitCsvImport(req: Request, res: Response) {
   }
 
   const generateMissingCodes = req.body.generateMissingCodes === 'true';
-  const text = req.file?.buffer.toString('utf-8') || '';
-  const rows = parseCsv<Row[]>(text, { columns: true, skip_empty_lines: true });
+  const parsed = parsePeopleCsv(text, mode);
   let successRows = 0;
   const errors: Array<{ row: number; error: string }> = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row.firstName || !row.lastName || !row.personId) {
-      errors.push({ row: i + 1, error: 'firstName,lastName,personId required' });
+  for (const row of parsed.rows) {
+    if (!row.normalized) {
+      errors.push({ row: row.index, error: row.errors.join('; ') });
       continue;
     }
-
     try {
-      await prisma.person.upsert({
-        where: { personId: row.personId },
-        update: {
-          firstName: row.firstName,
-          lastName: row.lastName,
-          codeValue: row.codeValue || (generateMissingCodes ? nanoid(10) : undefined),
-          breakfastRemaining: Number(row.breakfastRemaining || 0),
-          lunchRemaining: Number(row.lunchRemaining || 0),
-          dinnerRemaining: Number(row.dinnerRemaining || 0),
-          breakfastCount: Number(row.breakfastCount || 0),
-          lunchCount: Number(row.lunchCount || 0),
-          dinnerCount: Number(row.dinnerCount || 0),
-          totalMealsCount: Number(row.totalMealsCount || 0),
-          active: row.active ? parseBool(row.active) : true,
-          grade: row.grade || null,
-          group: row.group || null,
-          campus: row.campus || null,
-          notes: row.notes || null
-        },
-        create: {
-          firstName: row.firstName,
-          lastName: row.lastName,
-          personId: row.personId,
-          codeValue: row.codeValue || (generateMissingCodes ? nanoid(10) : `${row.personId}-${nanoid(4)}`),
-          breakfastRemaining: Number(row.breakfastRemaining || 0),
-          lunchRemaining: Number(row.lunchRemaining || 0),
-          dinnerRemaining: Number(row.dinnerRemaining || 0),
-          breakfastCount: Number(row.breakfastCount || 0),
-          lunchCount: Number(row.lunchCount || 0),
-          dinnerCount: Number(row.dinnerCount || 0),
-          totalMealsCount: Number(row.totalMealsCount || 0),
-          active: row.active ? parseBool(row.active) : true,
-          grade: row.grade || null,
-          group: row.group || null,
-          campus: row.campus || null,
-          notes: row.notes || null
-        }
-      });
+      await savePersonRow(row.normalized, { hasCountColumns: parsed.hasCountColumns, generateMissingCodes });
       successRows++;
-    } catch (e: any) {
-      errors.push({ row: i + 1, error: e.message });
+    } catch (e) {
+      errors.push({ row: row.index, error: parseErrorMessage(e) });
     }
   }
 
   await prisma.importHistory.create({
     data: {
       filename: req.file?.originalname || 'upload.csv',
-      totalRows: rows.length,
+      totalRows: parsed.rows.length,
       successRows,
       failedRows: errors.length,
       errorSummary: errors.slice(0, 8).map((e) => `Row ${e.row}: ${e.error}`).join('; ')
     }
   });
 
-  return res.json({ totalRows: rows.length, successRows, failedRows: errors.length, errors, mode });
+  return res.json({
+    totalRows: parsed.rows.length,
+    successRows,
+    failedRows: errors.length,
+    errors,
+    mode,
+    recognizedColumns: parsed.recognizedColumns,
+    ignoredColumns: parsed.ignoredColumns
+  });
 }
 
 export default router;
