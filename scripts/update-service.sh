@@ -165,7 +165,8 @@ check_repo_permissions() {
   current_user="$(id -un)"
   current_uid="$(id -u)"
 
-  non_owned_path=$(find "$ROOT_DIR" -mindepth 1 \! -uid "$current_uid" -print -quit)
+  # node_modules is skipped: npm ci has just rewritten it, which already proves it is writable.
+  non_owned_path=$(find "$ROOT_DIR" -mindepth 1 -name node_modules -prune -o \! -uid "$current_uid" -print -quit)
   if [[ -n "${non_owned_path}" ]]; then
     owner="$(stat -c '%U' "$non_owned_path")"
     owner_uid="$(stat -c '%u' "$non_owned_path")"
