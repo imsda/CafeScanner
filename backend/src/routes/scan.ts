@@ -2,7 +2,7 @@ import { MealType } from '@prisma/client';
 import { asyncRouter } from '../utils/asyncRouter.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { processScan } from '../services/scanService.js';
+import { MAX_SCAN_QUANTITY, processScan } from '../services/scanService.js';
 import { getStudentsNotEating } from '../services/studentMealWarningService.js';
 
 import { searchPeople } from '../services/searchPeople.js';
@@ -57,7 +57,8 @@ const scanRequestSchema = z.object({
   personId: z.string().optional(),
   scannedValue: z.string().optional(),
   manualMealOverride: z.nativeEnum(MealType).optional(),
-  entitlementId: z.number().int().positive().optional()
+  entitlementId: z.number().int().positive().optional(),
+  quantity: z.number().int().min(1).max(MAX_SCAN_QUANTITY).optional()
 }).refine((payload) => Boolean(payload.personId ?? payload.scannedValue), {
   message: 'personId is required',
   path: ['personId']
@@ -71,6 +72,7 @@ router.post('/', async (req, res) => {
     const result = await processScan(personId, {
       manualMealOverride: payload.manualMealOverride,
       entitlementId: payload.entitlementId,
+      quantity: payload.quantity,
       adminUserId: req.session.adminUserId
     });
     if (!result.ok && !('pendingSelection' in result && result.pendingSelection)) return res.status(400).json(result);

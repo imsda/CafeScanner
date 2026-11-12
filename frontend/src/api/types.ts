@@ -28,6 +28,8 @@ export interface ScanSuccessResponse {
   mealType: MealType;
   scannedValue?: string;
   mealTrackingMode: MealTrackingMode;
+  // Meals recorded by this scan (more than 1 when a quantity was chosen).
+  quantity?: number;
   remainingAvailableTodayForMeal?: number;
   remainingAvailableCount?: number;
   selectedPerson?: string;

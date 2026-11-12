@@ -8,6 +8,8 @@ export type ScanResultState =
           person: ScanPerson;
           mealType: MealType;
           mealTrackingMode: MealTrackingMode;
+          // Meals recorded by this scan (more than 1 when a quantity was chosen).
+          quantity?: number;
           scannedValue?: string;
           remainingAvailableTodayForMeal?: number;
           remainingAvailableCount?: number;
@@ -53,14 +55,15 @@ export function ScanResultCard({ result }: { result: ScanResultState }) {
         : result.person.dinnerCount;
 
   const sharedId = result.scannedValue || result.person.personId || "N/A";
+  const quantity = result.quantity && result.quantity > 1 ? result.quantity : 1;
   return (
     <div className="scan-result success">
       <h3>
         {result.mealTrackingMode === "camp_meeting"
           ? "Meal Redeemed"
           : result.mealTrackingMode === "countdown"
-            ? "Meal Deducted"
-            : "Meal Recorded"}
+            ? quantity > 1 ? `${quantity} Meals Deducted` : "Meal Deducted"
+            : quantity > 1 ? `${quantity} Meals Recorded` : "Meal Recorded"}
       </h3>
       <p className="scan-person">
         {result.person.firstName} {result.person.lastName}
@@ -88,7 +91,7 @@ export function ScanResultCard({ result }: { result: ScanResultState }) {
         </>
       ) : result.mealTrackingMode === "countdown" ? (
         <>
-          <p>{formatMealLabel(result.mealType)} deducted by 1.</p>
+          <p>{formatMealLabel(result.mealType)} deducted by {quantity}.</p>
           <p>
             Remaining {formatMealLabel(result.mealType).toLowerCase()}:{" "}
             <strong>
