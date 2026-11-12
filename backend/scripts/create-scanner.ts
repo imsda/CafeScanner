@@ -14,7 +14,7 @@ async function main() {
     const confirmPassword = await promptHidden('Confirm Password: ');
 
     if (!username) throw new Error('Username is required');
-    if (password.length < 4) throw new Error('Scanner / Kiosk User password must be at least 4 characters');
+    if (password.length < 8) throw new Error('Scanner / Kiosk User password must be at least 8 characters');
     if (password !== confirmPassword) throw new Error('Passwords do not match');
 
     const existingUser = await prisma.adminUser.findUnique({ where: { username } });

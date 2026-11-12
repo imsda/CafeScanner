@@ -75,3 +75,15 @@ test('backup downloads never collide and old backups are pruned', async () => {
   const remaining = readdirSync(backupsDir).filter((name) => name.startsWith('cafescanner-backup-'));
   assert.ok(remaining.length <= 20, `expected at most 20 backups, found ${remaining.length}`);
 });
+
+test('scanner passwords need at least 8 characters; existing shorter ones still sign in', async () => {
+  const cookie = await login('admin', NEW_PASSWORD);
+  const create = (password: string, username: string) =>
+    request('/api/users', { method: 'POST', cookie, json: { username, password, role: 'SCANNER' } });
+  assert.equal((await create('1234', 'kiosk-short')).status, 400);
+  assert.equal((await create('1234567', 'kiosk-short')).status, 400);
+  assert.equal((await create('12345678', 'kiosk-ok')).status, 201);
+  // An account created before the rule changed keeps working.
+  await prisma.adminUser.create({ data: { username: 'kiosk-old', passwordHash: await bcrypt.hash('1234', 4), role: 'SCANNER' } });
+  assert.equal((await request('/api/auth/login', { method: 'POST', json: { username: 'kiosk-old', password: '1234' } })).status, 200);
+});

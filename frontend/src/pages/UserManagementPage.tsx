@@ -42,7 +42,7 @@ export function UserManagementPage() {
   }
 
   async function resetPassword(target: { id: number; username: string; role: string }) {
-    const minLength = target.role === "SCANNER" ? 4 : 12;
+    const minLength = target.role === "SCANNER" ? 8 : 12;
     const next = await confirm({
       title: `Reset password for ${target.username}`,
       input: { label: `New password (min ${minLength} characters)`, type: "password", minLength },
@@ -165,7 +165,7 @@ export function UserManagementPage() {
           />
         </label>
         <label>
-          Password {role === "SCANNER" ? "(min 4)" : "(min 12)"}
+          Password {role === "SCANNER" ? "(min 8)" : "(min 12)"}
           <input
             type="password"
             value={password}

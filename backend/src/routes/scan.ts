@@ -56,7 +56,7 @@ router.get('/warnings/status', async (_req, res) => {
 const scanRequestSchema = z.object({
   personId: z.string().optional(),
   scannedValue: z.string().optional(),
-  manualMealOverride: z.nativeEnum(MealType).optional(),
+  manualMealOverride: z.enum(MealType).optional(),
   entitlementId: z.number().int().positive().optional(),
   quantity: z.number().int().min(1).max(MAX_SCAN_QUANTITY).optional()
 }).refine((payload) => Boolean(payload.personId ?? payload.scannedValue), {

@@ -408,7 +408,7 @@ async function commitCsvImport(req: Request, res: Response) {
       });
     }
 
-    const replaceExisting = req.body.replaceExisting === 'true';
+    const replaceExisting = req.body?.replaceExisting === 'true';
     const existingCount = await prisma.mealEntitlement.count();
 
     if (existingCount > 0 && !replaceExisting) {
@@ -454,7 +454,7 @@ async function commitCsvImport(req: Request, res: Response) {
     }
   }
 
-  const generateMissingCodes = req.body.generateMissingCodes === 'true';
+  const generateMissingCodes = req.body?.generateMissingCodes === 'true';
   const parsed = parsePeopleCsv(text, mode);
   let successRows = 0;
   const errors: Array<{ row: number; error: string }> = [];
