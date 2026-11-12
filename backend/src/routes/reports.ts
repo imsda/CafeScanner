@@ -6,8 +6,9 @@ import { STUDENT_PERSON_TYPES } from '../utils/personType.js';
 import { toCsv } from '../utils/csv.js';
 import { endOfLocalDay, localDateKey, parseQueryDate, resolveTimezone } from '../utils/timezone.js';
 import { prisma } from '../db.js';
+import { EXPORT_ROW_LIMIT } from './transactions.js';
 import { getMealTotalsByPerson } from '../services/mealTotalsReport.js';
-import { clearStudentMealWarning, getStudentsNotEating } from '../services/studentMealWarningService.js';
+import { clearStudentMealWarning, getStudentsNotEating, invalidateStudentWarningCache } from '../services/studentMealWarningService.js';
 
 const router = asyncRouter();
 
@@ -21,6 +22,7 @@ const warningSettingsSchema = z.object({ villageStudentMealWarningsEnabled: z.bo
 router.put('/students-not-eating/settings', requireAdmin, async (req, res) => {
   const { villageStudentMealWarningsEnabled } = warningSettingsSchema.parse(req.body);
   await prisma.setting.update({ where: { id: 1 }, data: { villageStudentMealWarningsEnabled } });
+  invalidateStudentWarningCache();
   console.log(`[ADMIN_ACTION] villageStudentMealWarningsEnabled=${villageStudentMealWarningsEnabled} by userId=${req.session.adminUserId ?? 'unknown'}`);
   res.json(await getStudentsNotEating());
 });
@@ -48,29 +50,16 @@ async function resolveDateRange(query: Record<string, unknown>): Promise<{ from:
 router.get('/summary', async (req, res) => {
   const { from, to } = await resolveDateRange(req.query as Record<string, unknown>);
 
-  const [transactions, people, settings, entitlementAgg] = await Promise.all([
-    prisma.scanTransaction.findMany({
-      where: { timestamp: { gte: from, lte: to } },
-      include: {
-        person: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            personId: true,
-            personType: true
-          }
-        }
-      },
-      orderBy: { timestamp: 'desc' }
-    }),
-    prisma.person.findMany({
+  const range = { timestamp: { gte: from, lte: to } };
+
+  // Aggregates only: the scans themselves are never loaded or returned here
+  // (GET /api/transactions serves the rows, paged).
+  const [scans, scanGroups, personSums, settings, totalEntitlements, redeemedEntitlements] = await Promise.all([
+    prisma.scanTransaction.count({ where: range }),
+    prisma.scanTransaction.groupBy({ by: ['mealType', 'result'], where: range, _count: { _all: true } }),
+    prisma.person.aggregate({
       where: { active: true },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        personId: true,
+      _sum: {
         breakfastRemaining: true,
         lunchRemaining: true,
         dinnerRemaining: true,
@@ -81,46 +70,32 @@ router.get('/summary', async (req, res) => {
       }
     }),
     prisma.setting.findUnique({ where: { id: 1 }, select: { mealTrackingMode: true } }),
-    prisma.mealEntitlement.aggregate({
-      _count: { _all: true },
-      where: {}
-    })
+    prisma.mealEntitlement.count(),
+    prisma.mealEntitlement.count({ where: { redeemed: true, redeemedAt: { gte: from, lte: to } } })
   ]);
 
   const mealCounts = { BREAKFAST: 0, LUNCH: 0, DINNER: 0 };
   let failedScans = 0;
 
-  for (const tx of transactions) {
-    if (tx.result === ScanResult.FAILURE) {
-      failedScans += 1;
+  for (const group of scanGroups) {
+    if (group.result === ScanResult.FAILURE) {
+      failedScans += group._count._all;
       continue;
     }
 
-    if (tx.mealType === MealType.BREAKFAST || tx.mealType === MealType.LUNCH || tx.mealType === MealType.DINNER) {
-      mealCounts[tx.mealType] += 1;
+    if (group.mealType === MealType.BREAKFAST || group.mealType === MealType.LUNCH || group.mealType === MealType.DINNER) {
+      mealCounts[group.mealType] += group._count._all;
     }
   }
 
   const mealTrackingMode = settings?.mealTrackingMode ?? MealTrackingMode.camp_meeting;
   const mealTotalsByPerson = await getMealTotalsByPerson({ from, to, mealTrackingMode });
 
-  const redeemedEntitlements = await prisma.mealEntitlement.count({
-    where: {
-      redeemed: true,
-      redeemedAt: { gte: from, lte: to }
-    }
-  });
-
-
-  const remainingBalanceSummary = people.reduce(
-    (acc, person) => {
-      acc.breakfastRemaining += person.breakfastRemaining;
-      acc.lunchRemaining += person.lunchRemaining;
-      acc.dinnerRemaining += person.dinnerRemaining;
-      return acc;
-    },
-    { breakfastRemaining: 0, lunchRemaining: 0, dinnerRemaining: 0 }
-  );
+  const remainingBalanceSummary = {
+    breakfastRemaining: personSums._sum.breakfastRemaining ?? 0,
+    lunchRemaining: personSums._sum.lunchRemaining ?? 0,
+    dinnerRemaining: personSums._sum.dinnerRemaining ?? 0
+  };
 
   const tallySummary = mealTrackingMode === MealTrackingMode.tally
     ? {
@@ -129,23 +104,19 @@ router.get('/summary', async (req, res) => {
         dinnerCount: mealCounts.DINNER,
         totalMealsCount: mealCounts.BREAKFAST + mealCounts.LUNCH + mealCounts.DINNER
       }
-    : people.reduce(
-        (acc, person) => {
-          acc.breakfastCount += person.breakfastCount;
-          acc.lunchCount += person.lunchCount;
-          acc.dinnerCount += person.dinnerCount;
-          acc.totalMealsCount += person.totalMealsCount;
-          return acc;
-        },
-        { breakfastCount: 0, lunchCount: 0, dinnerCount: 0, totalMealsCount: 0 }
-      );
+    : {
+        breakfastCount: personSums._sum.breakfastCount ?? 0,
+        lunchCount: personSums._sum.lunchCount ?? 0,
+        dinnerCount: personSums._sum.dinnerCount ?? 0,
+        totalMealsCount: personSums._sum.totalMealsCount ?? 0
+      };
 
   res.json({
     from,
     to,
     mealTrackingMode,
     stats: {
-      scans: transactions.length,
+      scans,
       breakfastsServed: mealCounts.BREAKFAST,
       lunchesServed: mealCounts.LUNCH,
       dinnersServed: mealCounts.DINNER,
@@ -156,11 +127,10 @@ router.get('/summary', async (req, res) => {
     remainingBalanceSummary,
     tallySummary,
     entitlementSummary: {
-      totalEntitlements: entitlementAgg._count._all,
+      totalEntitlements,
       totalRedeemed: redeemedEntitlements,
-      totalRemaining: Math.max(0, entitlementAgg._count._all - redeemedEntitlements)
-    },
-    transactions
+      totalRemaining: Math.max(0, totalEntitlements - redeemedEntitlements)
+    }
   });
 });
 
@@ -217,7 +187,9 @@ router.get('/export.csv', async (req, res) => {
   const rows = await prisma.scanTransaction.findMany({
     where: { timestamp: { gte: from, lte: to } },
     include: { person: true },
-    orderBy: { timestamp: 'desc' }
+    orderBy: { timestamp: 'desc' },
+    // Same cap as the Transactions export, so one request cannot load an unbounded history.
+    take: EXPORT_ROW_LIMIT
   });
 
   const csv = toCsv(rows, [

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { allowedPagesFor } from '../utils/pages.js';
 
@@ -41,20 +42,38 @@ export function requirePageAccess(page: string) {
 // Re-reads the signed-in user's role and page access on every API request, so a
 // deleted, demoted or re-permissioned account takes effect immediately instead of
 // when its 8-hour session expires.
+// Short, non-reversible fingerprint of a password hash, stored in the session at login.
+export function passwordStampFor(passwordHash: string): string {
+  return crypto.createHash('sha256').update(passwordHash).digest('hex').slice(0, 16);
+}
+
+function clearSessionUser(req: Request) {
+  req.session.adminUserId = undefined;
+  req.session.role = undefined;
+  req.session.allowedPages = undefined;
+  req.session.passwordStamp = undefined;
+}
+
 export async function refreshSessionUser(req: Request, res: Response, next: NextFunction) {
   const userId = req.session?.adminUserId;
   if (!userId) return next();
   try {
     const user = await prisma.adminUser.findUnique({
       where: { id: userId },
-      select: { role: true, pageAccess: { select: { page: true } } }
+      select: { role: true, passwordHash: true, pageAccess: { select: { page: true } } }
     });
     if (!user) {
-      req.session.adminUserId = undefined;
-      req.session.role = undefined;
-      req.session.allowedPages = undefined;
+      clearSessionUser(req);
       return next();
     }
+    // The password was changed or reset since this session logged in: sign it out.
+    // Sessions created before this check existed have no stamp yet and adopt the current one.
+    const stamp = passwordStampFor(user.passwordHash);
+    if (req.session.passwordStamp && req.session.passwordStamp !== stamp) {
+      clearSessionUser(req);
+      return next();
+    }
+    req.session.passwordStamp = stamp;
     req.session.role = user.role;
     req.session.allowedPages = allowedPagesFor(user.role, user.pageAccess.map((entry) => entry.page));
     next();

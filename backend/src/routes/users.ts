@@ -5,6 +5,7 @@ import { UserRole } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { allowedPagesFor, normalizeCustomPages } from '../utils/pages.js';
+import { passwordStampFor } from '../middleware/auth.js';
 
 const router = asyncRouter();
 
@@ -94,6 +95,8 @@ router.patch('/:id', async (req, res) => {
     if (requestedRole === 'CUSTOM' && pages.length > 0) await tx.userPageAccess.createMany({ data: pages.map((page) => ({ adminUserId: id, page })) });
     return tx.adminUser.findUniqueOrThrow({ where: { id }, include: { pageAccess: true } });
   });
+  // Changing your own password keeps this session signed in; every other session of that user ends.
+  if (passwordHash && id === req.session.adminUserId) req.session.passwordStamp = passwordStampFor(passwordHash);
   res.json(toUserResponse(updated));
 });
 

@@ -129,7 +129,10 @@ pkill -f "vite"
 When running behind Traefik, use same-origin browser API calls (`/api/...`) so the browser never calls `http://localhost:4000` directly.
 
 - Set `frontend/.env` to `VITE_API_BASE=/api`
+- Allow your domain on the Vite dev server by adding it to `frontend/.env`, e.g. `FRONTEND_ALLOWED_HOSTS=cafescanner.example.org` (comma-separated; `all` accepts any host; localhost and IP addresses are always allowed). `FRONTEND_HOST` and `FRONTEND_PORT` can be set there too.
 - Request flow: `Browser -> HTTPS domain -> Traefik -> Vite -> /api proxy -> backend`
+
+Keep site-specific settings like these in the `.env` files rather than editing tracked files such as `frontend/vite.config.ts`: `./scripts/update-service.sh` refuses to update while tracked files are modified.
 
 This keeps login/session cookie flows on same-origin `/api` requests from the browser perspective while still routing API traffic to the local backend process.
 
@@ -331,19 +334,16 @@ Switching between modes is a destructive admin action:
 - then clears operational data (`Person`, `ScanTransaction`, and `ImportHistory`),
 - while preserving login accounts and other settings.
 
-## Admin: Clear Database
+## Admin: Data Reset Tools
 
-Admins can now use **Settings → System: Clear Database** to run a destructive reset.
+OWNER/ADMIN users can clear operational data from **Settings → Data Reset Tools**.
 
-- This action is **admin-only** in both frontend visibility and backend authorization.
-- Confirmation requires typing the exact phrase: `CLEAR DATABASE`.
-- The action deletes:
-  - all `Person` records,
-  - all `ScanTransaction` history,
-  - all `ImportHistory` records.
-- The action preserves:
-  - admin/scanner login accounts (`AdminUser`),
-  - app settings (`Setting`) including the currently selected meal tracking mode.
+- These actions are **admin-only** in both frontend visibility and backend authorization.
+- Choose one of: **Clear meal data only**, **Clear people/import data**, or **Reset all meal tracking data**.
+- Confirmation requires typing the exact phrase: `RESET MEAL TRACKING DATA`.
+- Depending on the action, it deletes scan transactions, meal entitlements, import history and people.
+- Every action preserves login accounts (`AdminUser`), page permissions and app settings (`Setting`), including the selected meal tracking mode.
+- Download a backup first (**Settings → Danger Zone → Backups**) if you may need the data again.
 
 ## Admin: Delete Individual Person
 
@@ -438,10 +438,32 @@ Destructive reset flows are admin-initiated app actions only (for explicit maint
 - Use reverse proxy (Traefik) with HTTPS and forward to `http://127.0.0.1:4000`.
 
 ## Update Workflow
-- Use `scripts/update-service.sh` only. It creates a pre-update SQLite backup, pulls fast-forward changes, installs deps, builds, runs migrations (if present), and restarts `cafescanner`.
+
+Run `./scripts/update-service.sh` as the service user (not with `sudo`; it asks for sudo only to stop and start the service). It:
+
+1. writes a consistent snapshot of the SQLite database to `backend/backups/cafescanner-pre-update-<timestamp>.db` and aborts if it cannot (the newest 10 are kept);
+2. refuses to continue if tracked files were edited locally;
+3. pulls fast-forward changes and installs exactly the locked dependencies (`npm ci`);
+4. builds the backend and builds the frontend into a staging folder that replaces `frontend/dist` in one step, so the site stays up during the build;
+5. stops the service, applies migrations, and starts it again.
+
+### Updating from the app (Settings → Updates)
+
+OWNER users can install updates from **Settings → Updates**. The update runs in the background and the page follows its log, then reloads once the service has restarted. Because the running service starts the update, it cannot stop itself first: in this mode migrations run while the app is up and the update ends with one restart.
+
+This needs the service user to be allowed to restart the service without a password. Add a sudoers rule once (replace `manager` with your service user; check the path with `command -v systemctl`):
+
+```bash
+echo 'manager ALL=(root) NOPASSWD: /usr/bin/systemctl restart cafescanner' | sudo tee /etc/sudoers.d/cafescanner-update
+sudo chmod 440 /etc/sudoers.d/cafescanner-update
+sudo visudo -c
+```
+
+Without that rule the Install update button explains what is missing and nothing is changed; use the terminal command above instead.
 
 ## Backup/Restore Workflow
 - Use System backup download/restore routes. Restore now validates SQLite file headers before replacement.
+- In-app backup downloads keep the newest 20 files in `BACKUP_DIR`; pre-restore snapshots keep the newest 10.
 - Recommended: scheduled filesystem backups of `backend/backups`, DB file, and `-wal`/`-shm` files.
 
 ## Service Management
@@ -475,7 +497,7 @@ Transaction logs, reports, Google Sheets LOG exports, and CSV exports include ea
 
 The permission-controlled **Home Leaves** tab manages any number of named, academy-wide leave periods. Start and end dates are inclusive, and those dates are excluded from missed-meal warning calculations. Home leaves affect both the Reports warning list and scan-time warning activation. Apply migrations `0024_student_meal_warnings` and `0025_home_leaves` before starting this version.
 
-Reports includes a **Students Not Eating** view that proactively lists active students who meet the configured complete-day threshold, even if they have not returned to the scanner. Each warning can be cleared independently. OWNER/ADMIN users also see an **Include village students in meal warnings** checkbox there (on by default). Unticking it removes village students from the list and stops scans from starting new warnings for them; dorm students are unaffected, and village students keep the one-scan-per-meal limit. The same setting is `villageStudentMealWarningsEnabled` in the settings API. Apply migration `0026_village_student_meal_warnings` before starting this version. The Scan Station keeps USB Scanner as its default while displaying name/ID search as a separate field; after selecting a person, focus returns to the search field for consecutive manual entries.
+Reports includes a **Students Not Eating** view that proactively lists active students who meet the configured complete-day threshold, even if they have not returned to the scanner. Each warning can be cleared independently. OWNER/ADMIN users also see an **Include village students in meal warnings** checkbox there (on by default). Unticking it removes village students from the list and stops scans from starting new warnings for them; dorm students are unaffected, and village students keep the one-scan-per-meal limit. The same setting is `villageStudentMealWarningsEnabled` in the settings API. Apply migration `0026_village_student_meal_warnings` before starting this version. The Scan Station keeps USB Scanner as its default while displaying name/ID search as a separate field; after selecting a person, the cursor returns to the scan box so the next badge can be scanned straight away (in camera mode it returns to the search field). In Tally Up and Count Down modes the search results include a **Number of meals** control (1–20) for staff or guests bringing family on one ID; each meal is recorded as its own transaction, and students are always limited to 1. The scan box is cleared the moment a code is read, scans are processed one at a time in order, and a repeat read of the same badge within the scan delay is ignored with a short notice.
 
 An active missed-meal warning remains in Reports until manually cleared. Its **Complete Days Missed** value continues to recalculate from the student's latest successful meal, so a student who ate today shows `0` without automatically clearing the warning.
 

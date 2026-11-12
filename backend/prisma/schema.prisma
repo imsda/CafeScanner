@@ -147,6 +147,9 @@ model Setting {
   villageStudentMealWarningsEnabled Boolean @default(true)
   googleLastAutoImportAt   DateTime?
   googleLastAutoImportSummary String?
+  googleLastSyncSuccessAt  DateTime?
+  googleLastSyncError      String?
+  googleLastSyncErrorAt    DateTime?
   fullWipeTokenHash        String?
   fullWipeTokenExpiresAt   DateTime?
   fullWipeTokenUsedAt      DateTime?

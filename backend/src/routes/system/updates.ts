@@ -5,10 +5,23 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { requireAdmin, requireOwner } from '../../middleware/auth.js';
+import { backendDir } from '../../utils/sqlitePath.js';
 
-let activeUpdatePromise: Promise<{ ok: boolean; output: string; startedAt: string; finishedAt: string; error?: string }> | null = null;
+let activeUpdate: { startedAt: string; pid: number | null } | null = null;
 
 const backendRouteDir = path.dirname(fileURLToPath(import.meta.url));
+// Output of the most recent in-app update (backend/data is runtime data, not tracked by git).
+const UPDATE_LOG_PATH = path.join(backendDir, 'data', 'update-last.log');
+const UPDATE_LOG_TAIL_LINES = 200;
+
+// In-app updates end with `sudo -n systemctl restart cafescanner`; check up front that sudo allows it.
+function canRestartServiceWithoutPassword(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn('sudo', ['-n', '-l', 'systemctl', 'restart', 'cafescanner'], { stdio: 'ignore' });
+    proc.on('close', (code) => resolve(code === 0));
+    proc.on('error', () => resolve(false));
+  });
+}
 
 async function resolveRepoRoot(): Promise<string> {
   let current = backendRouteDir;
@@ -108,14 +121,16 @@ export function registerUpdateRoutes(router: Router) {
       localCommit,
       remoteCommit,
       updatesAvailable,
-      updateInProgress: Boolean(activeUpdatePromise),
+      updateInProgress: Boolean(activeUpdate),
       updateScriptDiagnostics: diagnostics
     });
   });
 
+  // Starts scripts/update-service.sh in in-app mode and returns immediately. The script ends by
+  // restarting this service, so the request cannot wait for it; progress is read from the log.
   router.post('/update', requireOwner, async (req, res) => {
     const actedBy = req.session.adminUserId;
-    if (activeUpdatePromise) {
+    if (activeUpdate) {
       return res.status(409).json({ ok: false, error: 'An update is already running.' });
     }
 
@@ -124,41 +139,61 @@ export function registerUpdateRoutes(router: Router) {
       const reason = !diagnostics.exists
         ? 'Update script is missing.'
         : 'Update script is not executable by the backend process.';
-      return res.status(500).json({
+      return res.status(500).json({ ok: false, error: reason, diagnostics });
+    }
+
+    if (!(await canRestartServiceWithoutPassword())) {
+      return res.status(409).json({
         ok: false,
-        error: reason,
-        diagnostics
+        error: `In-app updates are not set up on this server: the service user needs passwordless sudo for "systemctl restart cafescanner". Run ./scripts/update-service.sh from a terminal instead, or add the sudoers rule described in the README (Update Workflow).`
       });
     }
 
     const startedAt = new Date().toISOString();
     console.log(`[ADMIN_ACTION] update install requested by userId=${actedBy ?? 'unknown'} at ${startedAt}`);
 
-    activeUpdatePromise = new Promise((resolve) => {
-      const child = spawn(diagnostics.resolvedScriptPath, [], { cwd: diagnostics.repoRoot ?? diagnostics.cwd, shell: false });
-      let output = '';
-
-      child.stdout.on('data', (chunk) => { output += String(chunk); });
-      child.stderr.on('data', (chunk) => { output += String(chunk); });
+    await fs.mkdir(path.dirname(UPDATE_LOG_PATH), { recursive: true });
+    const logHandle = await fs.open(UPDATE_LOG_PATH, 'w');
+    try {
+      const child = spawn(diagnostics.resolvedScriptPath, [], {
+        cwd: diagnostics.repoRoot ?? diagnostics.cwd,
+        shell: false,
+        detached: true,
+        stdio: ['ignore', logHandle.fd, logHandle.fd],
+        env: { ...process.env, CAFESCANNER_IN_APP_UPDATE: '1' }
+      });
+      activeUpdate = { startedAt, pid: child.pid ?? null };
       child.on('error', (error) => {
-        const finishedAt = new Date().toISOString();
-        resolve({ ok: false, output, startedAt, finishedAt, error: error.message });
+        console.error('[SYSTEM] update script failed to start', error);
+        activeUpdate = null;
       });
       child.on('close', (code) => {
-        const finishedAt = new Date().toISOString();
-        resolve({ ok: code === 0, output, startedAt, finishedAt, error: code === 0 ? undefined : `Update script exited with code ${code}` });
+        console.log(`[SYSTEM] update script exited with code ${code}`);
+        activeUpdate = null;
       });
-    });
-
-    const result = await activeUpdatePromise;
-    activeUpdatePromise = null;
-
-    if (!result.ok) {
-      console.error(`[SYSTEM] update failed for userId=${actedBy ?? 'unknown'} at ${result.finishedAt}`, result.error);
-      return res.status(500).json(result);
+      child.unref();
+    } finally {
+      await logHandle.close();
     }
 
-    console.log(`[ADMIN_ACTION] update install completed by userId=${actedBy ?? 'unknown'} at ${result.finishedAt}`);
-    return res.json(result);
+    return res.status(202).json({ ok: true, started: true, startedAt });
+  });
+
+  router.get('/update-log', requireAdmin, async (_req, res) => {
+    let log = '';
+    try {
+      log = await fs.readFile(UPDATE_LOG_PATH, 'utf8');
+    } catch {
+      log = '';
+    }
+    const inProgress = Boolean(activeUpdate);
+    // The script prints UPDATE_RESULT=success as its last line; every failure path logs "[UPDATE] ERROR:".
+    const result = log.includes('UPDATE_RESULT=success')
+      ? 'success'
+      : /\[UPDATE\] ERROR:/.test(log)
+        ? 'failed'
+        : inProgress ? 'running' : log ? 'interrupted' : null;
+    const lines = log.split('\n');
+    res.json({ inProgress, result, startedAt: activeUpdate?.startedAt ?? null, log: lines.slice(-UPDATE_LOG_TAIL_LINES).join('\n') });
   });
 }

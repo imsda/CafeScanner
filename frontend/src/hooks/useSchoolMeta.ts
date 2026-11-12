@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { MealTrackingMode } from "../api/types";
 
-export type SchoolMeta = { schoolName: string; timezone: string; mealTrackingMode: MealTrackingMode };
+/** Persisted Google Sheets sync health; null when Sheets sync is disabled. */
+export type SheetSyncMeta = { enabled: boolean; lastSuccessAt: string | null; lastError: string | null; lastErrorAt: string | null };
+
+export type SchoolMeta = { schoolName: string; timezone: string; mealTrackingMode: MealTrackingMode; sheetSync?: SheetSyncMeta | null };
 
 // One shared request per page load; available to every signed-in user (unlike /settings).
 let cached: Promise<SchoolMeta> | null = null;

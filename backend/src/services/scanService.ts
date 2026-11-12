@@ -4,6 +4,7 @@ import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
 import { normalizeCampMeetingPersonId, normalizePersonId } from '../utils/personId.js';
 import { isMealWarningEligible, isStudentType } from '../utils/personType.js';
+import { invalidateStudentWarningCache } from './studentMealWarningService.js';
 import { localMealDay, resolveTimezone } from '../utils/timezone.js';
 
 
@@ -226,7 +227,11 @@ async function redeemCampMeetingEntitlement(params: {
   };
 }
 
-type ProcessScanOptions = { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number };
+// quantity: record several meals in one scan (e.g. a staff member's family sharing one ID).
+// Only for Tally Up staff/guests and Count Down; students stay limited to one scan per meal.
+type ProcessScanOptions = { manualMealOverride?: MealType; adminUserId?: number; entitlementId?: number; quantity?: number };
+
+export const MAX_SCAN_QUANTITY = 20;
 
 // Scans of the same ID are processed one at a time so the cooldown check and the
 // redemption/decrement cannot interleave (e.g. a double read from a USB scanner or
@@ -264,6 +269,11 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
   const personIdValue = mode === MealTrackingMode.camp_meeting
     ? normalizeCampMeetingPersonId(rawPersonId)
     : normalizePersonId(rawPersonId);
+
+  const quantity = Math.min(MAX_SCAN_QUANTITY, Math.max(1, Math.trunc(options?.quantity ?? 1)));
+  if (quantity > 1 && mode === MealTrackingMode.camp_meeting) {
+    return { ok: false, error: 'Quantity is not available in Camp Meeting mode. Scan each ticket separately.', reason: 'QUANTITY_NOT_SUPPORTED' };
+  }
 
   const detectedMeal = options?.manualMealOverride && settings.allowManualMealOverride
     ? options.manualMealOverride
@@ -471,10 +481,10 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
     if (mode === MealTrackingMode.countdown) {
       const remainingField = remainingFieldByMeal[detectedMeal];
       // Conditional decrement so a balance can never go below zero.
-      const decremented = remainingField && person[remainingField] > 0
+      const decremented = remainingField && person[remainingField] >= quantity
         ? await tx.person.updateMany({
-          where: { id: person.id, [remainingField]: { gt: 0 } },
-          data: { [remainingField]: { decrement: 1 } }
+          where: { id: person.id, [remainingField]: { gte: quantity } },
+          data: { [remainingField]: { decrement: quantity } }
         })
         : { count: 0 };
       if (!remainingField || decremented.count !== 1) {
@@ -489,9 +499,12 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
             adminUserId: options?.adminUserId
           }
         });
+        const remaining = remainingField ? person[remainingField] : 0;
         return {
           ok: false,
-          error: noRemainingErrorByMeal[detectedMeal],
+          error: quantity > 1 && remaining > 0
+            ? `Only ${remaining} ${detectedMeal.toLowerCase()} meal${remaining === 1 ? '' : 's'} remaining; cannot deduct ${quantity}.`
+            : noRemainingErrorByMeal[detectedMeal],
           reason: 'NO_MEAL_BALANCE',
           person
         };
@@ -499,18 +512,29 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
 
       const updated = await tx.person.findUniqueOrThrow({ where: { id: person.id } });
 
-      await tx.scanTransaction.create({
-        data: {
+      // One transaction row per meal so reports and exports count every meal.
+      await tx.scanTransaction.createMany({
+        data: Array.from({ length: quantity }, () => ({
           scannedValue: personIdValue,
           mealType: detectedMeal,
           result: ScanResult.SUCCESS,
           personId: person.id,
           stationName: settings.stationName,
           adminUserId: options?.adminUserId
-        }
+        }))
       });
 
-      return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
+      return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode, quantity };
+    }
+
+    if (isStudentType(person.personType) && quantity > 1) {
+      await tx.scanTransaction.create({ data: {
+        scannedValue: personIdValue, mealType: detectedMeal, result: ScanResult.FAILURE,
+        failureReason: 'STUDENT_QUANTITY_NOT_ALLOWED', personId: person.id,
+        stationName: settings.stationName, adminUserId: options?.adminUserId
+      } });
+      return { ok: false, error: 'Students can only be scanned once per meal. Use quantity 1.',
+        reason: 'STUDENT_QUANTITY_NOT_ALLOWED', person, mealType: detectedMeal };
     }
 
     if (isStudentType(person.personType)) {
@@ -548,6 +572,7 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
       );
       if (missedDays >= settings.studentMealWarningDays) {
         mealWarningSince = scanTime;
+        invalidateStudentWarningCache();
       }
     }
 
@@ -556,16 +581,17 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
       where: { id: person.id },
       data: {
         ...(tallyField ? {
-            [tallyField]: { increment: 1 },
-            totalMealsCount: { increment: 1 }
+            [tallyField]: { increment: quantity },
+            totalMealsCount: { increment: quantity }
           }
-        : { totalMealsCount: { increment: 1 } }),
+        : { totalMealsCount: { increment: quantity } }),
         mealWarningSince
       }
     });
 
-    await tx.scanTransaction.create({
-      data: {
+    // One transaction row per meal so reports and exports count every meal.
+    await tx.scanTransaction.createMany({
+      data: Array.from({ length: quantity }, () => ({
         timestamp: scanTime,
         scannedValue: personIdValue,
         mealType: detectedMeal,
@@ -573,9 +599,9 @@ async function processScanUnlocked(rawPersonId: string, options?: ProcessScanOpt
         personId: person.id,
         stationName: settings.stationName,
         adminUserId: options?.adminUserId
-      }
+      }))
     });
 
-    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode };
+    return { ok: true, person: updated, mealType: detectedMeal, mealTrackingMode: mode, quantity };
   });
 }

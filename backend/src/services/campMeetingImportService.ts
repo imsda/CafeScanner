@@ -1,4 +1,4 @@
-import { MealDay, MealType } from '@prisma/client';
+import { MealDay, MealType, type Prisma } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import { prisma, withSqliteTimeoutRetry } from '../db.js';
 import { normalizeCampMeetingPersonId } from '../utils/personId.js';
@@ -9,7 +9,7 @@ type HeaderName = typeof REQUIRED_HEADERS[number];
 
 type RawInputRow = Record<string, string>;
 
-type NormalizedCampMeetingRow = {
+export type NormalizedCampMeetingRow = {
   rowNumber: number;
   sourceTicketId: string;
   originalTicketId: string;
@@ -44,7 +44,8 @@ type NormalizeOptions = {
 };
 
 type ImportOptions = NormalizeOptions;
-type ImportRunOptions = ImportOptions & { batchSize?: number };
+// `db` lets a caller run the whole import inside its own prisma.$transaction (e.g. together with a delete).
+type ImportRunOptions = ImportOptions & { batchSize?: number; db?: Prisma.TransactionClient };
 
 function normalizeHeaderName(value: string): string {
   return String(value || '').trim().toLowerCase();
@@ -194,25 +195,26 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
     console.log('[SHEET_IMPORT] Duplicate ticket_id detected; using row-based source keys.');
   }
 
+  const db = options.db ?? prisma;
   const batchSize = Math.max(1, options.batchSize ?? 50);
   for (let i = 0; i < validRows.length; i++) {
     const row = validRows[i];
-    const existingPerson = await prisma.person.findUnique({ where: { personId: row.personId }, select: { id: true } });
+    const existingPerson = await db.person.findUnique({ where: { personId: row.personId }, select: { id: true } });
     const nameParts = splitName(row.personName);
     if (existingPerson) {
       summary.peopleUpdated += 1;
-      await withSqliteTimeoutRetry(`import.campMeeting.person.${row.rowNumber}`, () => prisma.person.update({
+      await withSqliteTimeoutRetry(`import.campMeeting.person.${row.rowNumber}`, () => db.person.update({
         where: { personId: row.personId },
         data: { firstName: nameParts.firstName, lastName: nameParts.lastName, active: true }
       }));
     } else {
       summary.peopleCreated += 1;
-      await withSqliteTimeoutRetry(`import.campMeeting.person.${row.rowNumber}`, () => prisma.person.create({
+      await withSqliteTimeoutRetry(`import.campMeeting.person.${row.rowNumber}`, () => db.person.create({
         data: { personId: row.personId, codeValue: nanoid(10), firstName: nameParts.firstName, lastName: nameParts.lastName, active: true }
       }));
     }
 
-    const existingEntitlement = await prisma.mealEntitlement.findFirst({
+    const existingEntitlement = await db.mealEntitlement.findFirst({
       where: { sourceTicketId: row.sourceTicketId },
       orderBy: { id: 'asc' },
       select: { id: true, redeemed: true, sheetSyncedAt: true, sourceTicketId: true }
@@ -224,7 +226,7 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
       console.log(`[SHEET_IMPORT] preservedUnsyncedLocalRedemption=false entitlementId=${existingEntitlement?.id || ''} sourceRowKey=${row.sourceTicketId} reason=none`);
     }
     await withSqliteTimeoutRetry(`import.campMeeting.entitlement.${row.rowNumber}`, () => existingEntitlement
-      ? prisma.mealEntitlement.update({
+      ? db.mealEntitlement.update({
           where: { id: existingEntitlement.id },
           data: {
             personId: row.personId,
@@ -237,7 +239,7 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
             sourceSheetRow: row.rowNumber
           }
         })
-      : prisma.mealEntitlement.create({
+      : db.mealEntitlement.create({
           data: {
             sourceTicketId: row.sourceTicketId,
             sourceSheetRow: row.rowNumber,
@@ -253,7 +255,8 @@ export async function importCampMeetingRows(inputRows: RawInputRow[], options: I
     if (existingEntitlement) summary.entitlementsUpdated += 1;
     else summary.entitlementsCreated += 1;
 
-    if ((i + 1) % batchSize === 0) {
+    // Yield between batches so other requests get a turn (pointless inside a transaction, which holds the write lock).
+    if (!options.db && (i + 1) % batchSize === 0) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
   }

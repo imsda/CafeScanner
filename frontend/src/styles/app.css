@@ -335,3 +335,39 @@ select {
 @media print {
   .report-filters, .report-downloads, .table-toolbar, .filter-chip, .reports-header .segmented { display: none !important; }
 }
+
+/* ---------- Scan station: notices, name-search results and quantity ---------- */
+.scan-notice { margin: 0; min-height: 1.2em; font-size: 0.9rem; }
+.quantity-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; font-size: 0.92rem; font-weight: 600; }
+.quantity-row .muted { font-weight: 400; font-size: 0.85rem; }
+.quantity-stepper { display: inline-flex; align-items: stretch; gap: 0.3rem; }
+.quantity-stepper button { min-width: 2.6rem; font-size: 1.15rem; padding: 0.3rem 0.6rem; }
+.quantity-stepper input { width: 4rem; text-align: center; font-size: 1.05rem; font-weight: 700; padding: 0.35rem; }
+.people-matches { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.people-matches li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.45rem 0.6rem; border: 1px solid #d8e4f4; border-radius: 8px; background: #fff; }
+.people-matches li button { white-space: nowrap; }
+
+/* People page: inactive rows, unsaved-edit marker, edit dialog (fix/people) */
+.people-table tr.person-inactive td { color: #7a8ba0; background: #f4f6f9; }
+.person-inactive-label { margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: #e3e8ef; color: #4d5f75; font-size: 0.72rem; font-weight: 600; vertical-align: middle; }
+.person-unsaved { color: #9a5b00; font-size: 0.74rem; font-weight: 600; }
+.people-filters label:has(> input[type="checkbox"]) { padding-bottom: 0.45rem; white-space: nowrap; }
+.confirm-modal textarea { width: 100%; box-sizing: border-box; font: inherit; }
+
+/* ---------- Transactions page (reuses the Reports filter bar, tables and pills) ---------- */
+.result-success { background: #e5f5ec; color: #1d6b41; }
+.result-failure { background: #fdeaee; color: #a3112f; }
+.transactions-table .nowrap { white-space: nowrap; }
+.transactions-table td.mono { word-break: break-all; }
+
+/* --- Google Sheets sync failure banner (Dashboard) --- */
+.sync-warning-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid #b45309;
+  border-radius: 0.75rem;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}

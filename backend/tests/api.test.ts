@@ -259,6 +259,29 @@ test('meal totals CSV can be filtered by person type', async () => {
   assert.equal((await request('/api/reports/meal-totals.csv?personType=ALIEN', { cookie: admin })).status, 400);
 });
 
+test('scan quantity records several meals for staff/guests but never for students', async () => {
+  const scanner = await login('scanner');
+  const staff = await prisma.person.create({ data: { firstName: 'Family', lastName: 'Staff', personId: 'qty-staff', codeValue: 'qty-staff', personType: 'STAFF' } });
+  await prisma.person.create({ data: { firstName: 'Solo', lastName: 'Student', personId: 'qty-student', codeValue: 'qty-student', personType: 'STUDENT' } });
+  const scan = (personId: string, quantity?: unknown) =>
+    request('/api/scan', { method: 'POST', cookie: scanner, json: { personId, manualMealOverride: 'LUNCH', ...(quantity !== undefined ? { quantity } : {}) } });
+
+  const family = await scan('qty-staff', 3);
+  assert.equal(family.status, 200);
+  const body = await family.json();
+  assert.equal(body.quantity, 3);
+  assert.equal(body.person.lunchCount, 3);
+  assert.equal(body.person.totalMealsCount, 3);
+  assert.equal(await prisma.scanTransaction.count({ where: { personId: staff.id, result: 'SUCCESS', mealType: 'LUNCH' } }), 3);
+
+  const student = await scan('qty-student', 2);
+  assert.equal(student.status, 400);
+  assert.equal((await student.json()).reason, 'STUDENT_QUANTITY_NOT_ALLOWED');
+  assert.equal((await prisma.person.findUniqueOrThrow({ where: { personId: 'qty-student' } })).lunchCount, 0);
+
+  for (const invalid of [0, 21, 1.5, '3']) assert.equal((await scan('qty-staff', invalid)).status, 400, String(invalid));
+});
+
 // Runs last: it exhausts the login rate limit for 127.0.0.1 in this process.
 test('login attempts are rate limited per client IP', async () => {
   let lastStatus = 0;

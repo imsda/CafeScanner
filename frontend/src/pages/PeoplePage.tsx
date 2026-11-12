@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, errorMessage } from "../api/client";
 import { useSchoolMeta } from "../hooks/useSchoolMeta";
@@ -6,6 +6,8 @@ import type { PersonType } from "../api/types";
 import { PersonTypeOptions } from "../components/PersonTypeOptions";
 import { modeLabel } from "../lib/format";
 import { Modal } from "../components/Modal";
+import { useConfirm } from "../components/useConfirm";
+import { useAuth } from "../context/AuthContext";
 
 export type PersonRecord = {
   personType: PersonType;
@@ -45,8 +47,71 @@ export type PersonRecord = {
   associatedNamesSummary?: string;
 };
 
+// Fields edited inline in the table, per mode. Only the ones the operator actually
+// changed are sent on Save, so counts/balances written by scans since the page was
+// loaded are never overwritten with stale values.
+const TALLY_INLINE_FIELDS = ["personType", "breakfastCount", "lunchCount", "dinnerCount"] as const;
+const COUNTDOWN_INLINE_FIELDS = ["breakfastRemaining", "lunchRemaining", "dinnerRemaining"] as const;
+type InlineField = (typeof TALLY_INLINE_FIELDS)[number] | (typeof COUNTDOWN_INLINE_FIELDS)[number];
+
+// Fields edited in the per-person "Edit" dialog.
+type EditValues = {
+  firstName: string;
+  lastName: string;
+  personId: string;
+  codeValue: string;
+  active: boolean;
+  grade: string;
+  group: string;
+  campus: string;
+  notes: string;
+};
+const EDIT_TEXT_FIELDS: Array<[Exclude<keyof EditValues, "active" | "notes">, string, boolean]> = [
+  ["firstName", "First name", true],
+  ["lastName", "Last name", true],
+  ["personId", "Person ID", true],
+  ["codeValue", "Badge code", true],
+  ["grade", "Grade (optional)", false],
+  ["group", "Group (optional)", false],
+  ["campus", "Campus (optional)", false],
+];
+const editValuesOf = (person: PersonRecord): EditValues => ({
+  firstName: person.firstName,
+  lastName: person.lastName,
+  personId: person.personId,
+  codeValue: person.codeValue,
+  active: person.active !== false,
+  grade: person.grade || "",
+  group: person.group || "",
+  campus: person.campus || "",
+  notes: person.notes || "",
+});
+
+const SHOW_INACTIVE_STORAGE_KEY = "cafescanner.people.showInactive";
+function readShowInactive(): boolean {
+  try {
+    return window.localStorage.getItem(SHOW_INACTIVE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+const sortByLastName = (rows: PersonRecord[]) =>
+  [...rows].sort((a, b) => a.lastName.localeCompare(b.lastName));
+
 export function PeoplePage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "OWNER" || user?.role === "ADMIN";
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [people, setPeople] = useState<PersonRecord[]>([]);
+  // Rows as last received from the server, by id. `people` holds the operator's
+  // in-progress edits; a row is dirty when it differs from its original.
+  const originalsRef = useRef<Record<number, PersonRecord>>({});
+  const [savingIds, setSavingIds] = useState<number[]>([]);
+  const [showInactive, setShowInactive] = useState(readShowInactive);
+  const [editing, setEditing] = useState<{ id: number; values: EditValues } | null>(null);
+  const [editError, setEditError] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [gradeFilter, setGradeFilter] = useState("ALL");
   // Mode comes from /meta so People works without Settings page access.
@@ -76,7 +141,10 @@ export function PeoplePage() {
 
   const load = () =>
     api<PersonRecord[]>("/people?showInactive=true")
-      .then(setPeople)
+      .then((rows) => {
+        originalsRef.current = Object.fromEntries(rows.map((row) => [row.id, row]));
+        setPeople(rows);
+      })
       .catch((loadError) => setError(errorMessage(loadError, "Unable to load people.")));
   useEffect(() => {
     void load();
@@ -88,6 +156,57 @@ export function PeoplePage() {
   const isTally = settings?.mealTrackingMode === "tally";
   const isCampMeeting = settings?.mealTrackingMode === "camp_meeting";
   const isCountdown = settings?.mealTrackingMode === "countdown";
+  const inlineFields: readonly InlineField[] = isTally
+    ? TALLY_INLINE_FIELDS
+    : isCountdown
+      ? COUNTDOWN_INLINE_FIELDS
+      : [];
+
+  const dirtyFieldsOf = (person: PersonRecord): InlineField[] => {
+    const original = originalsRef.current[person.id];
+    if (!original) return [];
+    return inlineFields.filter((field) => person[field] !== original[field]);
+  };
+
+  // Merges one person's fresh server data into the list without reloading it, so
+  // unsaved edits on other rows (and on this row's fields that were not sent) survive.
+  function applyServerPerson(server: PersonRecord, sentFields: readonly string[]) {
+    const original = originalsRef.current[server.id];
+    originalsRef.current = {
+      ...originalsRef.current,
+      [server.id]: { ...original, ...server },
+    };
+    setPeople((curr) =>
+      curr.map((row) => {
+        if (row.id !== server.id) return row;
+        const merged: PersonRecord = { ...row, ...server };
+        if (original) {
+          const unsent = merged as Record<InlineField, unknown>;
+          for (const field of [...TALLY_INLINE_FIELDS, ...COUNTDOWN_INLINE_FIELDS]) {
+            if (!sentFields.includes(field) && row[field] !== original[field])
+              unsent[field] = row[field];
+          }
+        }
+        // People without imported entitlement names are listed under their own name.
+        const previousName = `${row.firstName} ${row.lastName}`.trim();
+        if (!row.associatedNamesSummary || row.associatedNamesSummary === previousName) {
+          const name = `${merged.firstName} ${merged.lastName}`.trim();
+          merged.associatedNames = [name];
+          merged.associatedNamesSummary = name;
+        }
+        return merged;
+      }),
+    );
+  }
+
+  function toggleShowInactive(next: boolean) {
+    setShowInactive(next);
+    try {
+      window.localStorage.setItem(SHOW_INACTIVE_STORAGE_KEY, String(next));
+    } catch {
+      // Storage unavailable (private mode): the choice just is not remembered.
+    }
+  }
 
   async function addPerson(e: FormEvent) {
     e.preventDefault();
@@ -109,9 +228,11 @@ export function PeoplePage() {
           totalMealsCount: 0,
         };
     try {
-      await api("/people", { method: "POST", body: JSON.stringify(payload) });
+      const created = await api<PersonRecord>("/people", { method: "POST", body: JSON.stringify(payload) });
       setMessage("Person added.");
-      await load();
+      // Add the new row in place; a full reload would discard unsaved edits on other rows.
+      originalsRef.current = { ...originalsRef.current, [created.id]: created };
+      setPeople((curr) => sortByLastName([...curr.filter((row) => row.id !== created.id), created]));
     } catch (addError) {
       setError(errorMessage(addError, "Unable to add person."));
     }
@@ -120,29 +241,98 @@ export function PeoplePage() {
   async function savePerson(person: PersonRecord) {
     setError("");
     setMessage("");
-    const payload = isTally
-      ? {
-          personType: person.personType,
-          breakfastCount: person.breakfastCount,
-          lunchCount: person.lunchCount,
-          dinnerCount: person.dinnerCount,
-          totalMealsCount:
-            person.breakfastCount + person.lunchCount + person.dinnerCount,
-        }
-      : {
-          breakfastRemaining: person.breakfastRemaining,
-          lunchRemaining: person.lunchRemaining,
-          dinnerRemaining: person.dinnerRemaining,
-        };
+    // Send only what the operator changed on this row.
+    const dirty = dirtyFieldsOf(person);
+    if (dirty.length === 0) return;
+    const payload: Partial<Record<InlineField, string | number>> = {};
+    for (const field of dirty) payload[field] = person[field];
+    setSavingIds((curr) => [...curr, person.id]);
     try {
-      await api(`/people/${person.id}`, {
+      const saved = await api<PersonRecord>(`/people/${person.id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
+      applyServerPerson(saved, dirty);
       setMessage(`Saved ${personDisplayName(person)}.`);
-      await load();
     } catch (saveError) {
       setError(errorMessage(saveError, "Unable to save person."));
+    } finally {
+      setSavingIds((curr) => curr.filter((id) => id !== person.id));
+    }
+  }
+
+  async function resetTallies(person: PersonRecord) {
+    const confirmed = await confirm({
+      title: "Reset meal counts",
+      message: `Reset the breakfast, lunch and dinner counts for ${personDisplayName(person)} (${person.personId}) to zero? This cannot be undone.`,
+      confirmLabel: "Reset counts",
+      danger: true,
+    });
+    if (confirmed === null) return;
+    setError("");
+    setMessage("");
+    try {
+      const updated = await api<PersonRecord>(`/people/reset-tallies/${person.id}`, {
+        method: "POST",
+      });
+      applyServerPerson(updated, ["breakfastCount", "lunchCount", "dinnerCount"]);
+      setMessage(`Reset meal counts for ${personDisplayName(person)}.`);
+    } catch (resetError) {
+      setError(errorMessage(resetError, "Unable to reset meal counts."));
+    }
+  }
+
+  function openEdit(person: PersonRecord) {
+    setEditing({ id: person.id, values: editValuesOf(originalsRef.current[person.id] ?? person) });
+    setEditError("");
+    setError("");
+    setMessage("");
+  }
+
+  async function saveEdit(e: FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    const original = originalsRef.current[editing.id];
+    if (!original) return;
+    const before = editValuesOf(original);
+    const payload: Record<string, string | boolean | null> = {};
+    for (const [field] of EDIT_TEXT_FIELDS) {
+      const value = editing.values[field].trim();
+      if (value === before[field].trim()) continue;
+      // Optional fields are cleared with null; the required ones are never empty here.
+      payload[field] = value || (field === "grade" || field === "group" || field === "campus" ? null : value);
+    }
+    const notes = editing.values.notes.trim();
+    if (notes !== before.notes.trim()) payload.notes = notes || null;
+    if (editing.values.active !== before.active) payload.active = editing.values.active;
+    if (Object.keys(payload).length === 0) {
+      setEditing(null);
+      return;
+    }
+    setIsSavingEdit(true);
+    setEditError("");
+    try {
+      const saved = await api<PersonRecord>(`/people/${editing.id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      applyServerPerson(saved, Object.keys(payload));
+      setMessage(
+        `Saved ${`${saved.firstName} ${saved.lastName}`.trim() || saved.personId}.` +
+          (saved.active === false && !showInactive
+            ? ' They are now inactive; tick "Show inactive" to see them.'
+            : ""),
+      );
+      setEditing(null);
+    } catch (saveError) {
+      const text = errorMessage(saveError, "Unable to save person.");
+      setEditError(
+        /already exists/i.test(text)
+          ? "Another person already uses that Person ID or badge code."
+          : text,
+      );
+    } finally {
+      setIsSavingEdit(false);
     }
   }
 
@@ -160,9 +350,14 @@ export function PeoplePage() {
       setMessage(
         `Deleted ${personToDelete.firstName} ${personToDelete.lastName} (${personToDelete.personId}).`,
       );
+      const deletedId = personToDelete.id;
       setPersonToDelete(null);
       setDeletePhrase("");
-      await load();
+      // Remove just this row so unsaved edits on other rows are kept.
+      const remaining = { ...originalsRef.current };
+      delete remaining[deletedId];
+      originalsRef.current = remaining;
+      setPeople((curr) => curr.filter((row) => row.id !== deletedId));
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
@@ -191,6 +386,7 @@ export function PeoplePage() {
   const filteredPeople = useMemo(
     () =>
       people.filter((person) => {
+        if (!showInactive && person.active === false) return false;
         const firstName = person.firstName.toLowerCase();
         const lastName = person.lastName.toLowerCase();
         const fullName = `${firstName} ${lastName}`.trim();
@@ -211,7 +407,7 @@ export function PeoplePage() {
           : gradeFilter === "ALL" || gradeValue === gradeFilter;
         return matchesSearch && matchesGrade;
       }),
-    [people, normalizedSearch, gradeFilter, isCampMeeting],
+    [people, normalizedSearch, gradeFilter, isCampMeeting, showInactive],
   );
   const hasAnyGrade = useMemo(
     () => people.some((person) => Boolean((person.grade || "").trim())),
@@ -297,6 +493,14 @@ export function PeoplePage() {
             </select>
           </label>
         )}
+        <label>
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => toggleShowInactive(e.target.checked)}
+          />
+          Show inactive
+        </label>
         <button
           type="button"
           className="secondary"
@@ -354,9 +558,15 @@ export function PeoplePage() {
           </thead>
           <tbody>
             {filteredPeople.length > 0 ? (
-              filteredPeople.map((p) => (
-                <tr key={p.id}>
-                  <td>{personDisplayName(p)}</td>
+              filteredPeople.map((p) => {
+                const isDirty = dirtyFieldsOf(p).length > 0;
+                const isSaving = savingIds.includes(p.id);
+                return (
+                <tr key={p.id} className={p.active === false ? "person-inactive" : undefined}>
+                  <td>
+                    {personDisplayName(p)}
+                    {p.active === false && <span className="person-inactive-label">Inactive</span>}
+                  </td>
                   <td>{p.personId}</td>
                   {isTally && <td>
                     <select aria-label={`User type for ${personDisplayName(p)}`} value={p.personType}
@@ -517,51 +727,116 @@ export function PeoplePage() {
                         <button
                           className="small"
                           type="button"
+                          disabled={!isDirty || isSaving}
+                          title={isDirty ? "Save the changes on this row" : "No unsaved changes on this row"}
                           onClick={() => void savePerson(p)}
                         >
-                          Save
+                          {isSaving ? "Saving…" : "Save"}
                         </button>
                       )}
+                      <button
+                        className="small secondary"
+                        type="button"
+                        onClick={() => openEdit(p)}
+                      >
+                        Edit
+                      </button>
                       {isTally && (
                         <button
                           className="small secondary"
                           type="button"
-                          onClick={() =>
-                            void api(`/people/reset-tallies/${p.id}`, {
-                              method: "POST",
-                            }).then(load)
-                          }
+                          onClick={() => void resetTallies(p)}
                         >
                           Reset
                         </button>
                       )}
-                      <button
-                        className="small danger"
-                        type="button"
-                        onClick={() => {
-                          setPersonToDelete(p);
-                          setDeletePhrase("");
-                          setError("");
-                          setMessage("");
-                        }}
-                      >
-                        Delete
-                      </button>
+                      {isAdmin && (
+                        <button
+                          className="small danger"
+                          type="button"
+                          onClick={() => {
+                            setPersonToDelete(p);
+                            setDeletePhrase("");
+                            setError("");
+                            setMessage("");
+                          }}
+                        >
+                          Delete
+                        </button>
+                      )}
+                      {isDirty && <span className="person-unsaved">Unsaved</span>}
                     </div>
                   </td>
                 </tr>
-              ))
+                );
+              })
             ) : (
               <tr>
                 <td className="muted" colSpan={noResultsColSpan + (isTally ? 1 : 0)}>
                   No people match your current{" "}
                   {isCampMeeting ? "search" : "search and grade filters"}.
+                  {!showInactive && people.some((person) => person.active === false)
+                    ? " Inactive people are hidden."
+                    : ""}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      {confirmDialog}
+      {editing && (
+        <Modal title="Edit Person" onClose={() => { if (!isSavingEdit) setEditing(null); }}>
+          <form className="stack" onSubmit={(e) => void saveEdit(e)}>
+            {EDIT_TEXT_FIELDS.map(([field, label, required]) => (
+              <label key={field}>
+                {label}
+                <input
+                  value={editing.values[field]}
+                  required={required}
+                  onChange={(e) =>
+                    setEditing({ ...editing, values: { ...editing.values, [field]: e.target.value } })
+                  }
+                />
+              </label>
+            ))}
+            <label>
+              Notes (optional)
+              <textarea
+                rows={2}
+                value={editing.values.notes}
+                onChange={(e) =>
+                  setEditing({ ...editing, values: { ...editing.values, notes: e.target.value } })
+                }
+              />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={editing.values.active}
+                onChange={(e) =>
+                  setEditing({ ...editing, values: { ...editing.values, active: e.target.checked } })
+                }
+              />
+              Active (inactive people cannot scan for meals)
+            </label>
+            {editError && <p className="error">{editError}</p>}
+            <div className="button-row">
+              <button
+                className="secondary"
+                type="button"
+                disabled={isSavingEdit}
+                onClick={() => setEditing(null)}
+              >
+                Cancel
+              </button>
+              <button className="primary" type="submit" disabled={isSavingEdit}>
+                {isSavingEdit ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {personToDelete && (
         <Modal title="Confirm Person Deletion" onClose={() => { setPersonToDelete(null); setDeletePhrase(""); }}>
           <p>

@@ -4,6 +4,7 @@ import { Request } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { allowedPagesFor } from '../utils/pages.js';
+import { passwordStampFor } from '../middleware/auth.js';
 
 const router = asyncRouter();
 const loginAttempts = new Map<string, { count: number; first: number }>();
@@ -39,6 +40,7 @@ router.post('/login', async (req, res) => {
   // Issue a fresh session ID on login to prevent session fixation.
   await regenerateSession(req);
   req.session.adminUserId = user.id;
+  req.session.passwordStamp = passwordStampFor(user.passwordHash);
   req.session.role = user.role;
   req.session.allowedPages = allowedPages;
   loginAttempts.delete(ip);

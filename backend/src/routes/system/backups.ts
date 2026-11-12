@@ -19,7 +19,22 @@ function backupTimestamp(d = new Date()) {
   const day = String(d.getDate()).padStart(2, '0');
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${y}-${m}-${day}-${hh}-${mm}`;
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${y}-${m}-${day}-${hh}-${mm}-${ss}`;
+}
+
+// How many files of each kind to keep in the backups folder.
+const KEEP_DOWNLOAD_BACKUPS = 20;
+const KEEP_PRE_RESTORE_BACKUPS = 10;
+
+// Deletes the oldest backups of one kind beyond `keep`, so the folder cannot grow without limit.
+async function pruneBackups(backupsDir: string, prefix: string, keep: number) {
+  const names = (await fs.readdir(backupsDir)).filter((name) => name.startsWith(prefix) && name.endsWith('.db'));
+  const files = await Promise.all(names.map(async (name) => ({ name, mtime: (await fs.stat(path.join(backupsDir, name))).mtimeMs })));
+  files.sort((a, b) => b.mtime - a.mtime);
+  for (const file of files.slice(keep)) {
+    await fs.rm(path.join(backupsDir, file.name), { force: true });
+  }
 }
 
 async function validateCafeScannerDbFile(dbPath: string) {
@@ -74,14 +89,32 @@ async function removeSqliteSidecars(dbPath: string) {
   }
 }
 
-backupRouter.get('/download', async (_req, res) => {
-  const backupsDir = resolveBackupsDirectory();
-  await fs.mkdir(backupsDir, { recursive: true });
-  const filename = `cafescanner-backup-${backupTimestamp()}.db`;
-  const backupPath = path.join(backupsDir, filename);
+// Backups are created one at a time: VACUUM INTO refuses to write over an existing file,
+// so two requests in the same second would otherwise collide on the same filename.
+let backupQueue: Promise<unknown> = Promise.resolve();
 
-  await snapshotDatabase(backupPath);
-  res.download(backupPath, filename);
+function createDownloadBackup(): Promise<{ backupPath: string; filename: string }> {
+  const run = backupQueue.then(async () => {
+    const backupsDir = resolveBackupsDirectory();
+    await fs.mkdir(backupsDir, { recursive: true });
+    const filename = `cafescanner-backup-${backupTimestamp()}.db`;
+    const backupPath = path.join(backupsDir, filename);
+    await fs.rm(backupPath, { force: true });
+    await snapshotDatabase(backupPath);
+    await pruneBackups(backupsDir, 'cafescanner-backup-', KEEP_DOWNLOAD_BACKUPS).catch((error) => console.warn('[BACKUP] prune failed', error));
+    return { backupPath, filename };
+  });
+  backupQueue = run.catch(() => undefined);
+  return run;
+}
+
+backupRouter.get('/download', async (_req, res) => {
+  const { backupPath, filename } = await createDownloadBackup();
+  // Read into memory before responding so a following backup cannot replace the file mid-download.
+  const contents = await fs.readFile(backupPath);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(contents);
 });
 
 backupRouter.post('/restore', dbUpload.single('backup'), async (req, res) => {
@@ -116,6 +149,7 @@ backupRouter.post('/restore', dbUpload.single('backup'), async (req, res) => {
     pauseScheduler();
     await waitForOperationsToFinish(['import', 'writeback'], '[RESTORE] wait');
     await snapshotDatabase(preRestorePath);
+    await pruneBackups(backupsDir, 'cafescanner-pre-restore-', KEEP_PRE_RESTORE_BACKUPS).catch((error) => console.warn('[BACKUP] prune failed', error));
     await fs.copyFile(uploadPath, tempRestorePath);
 
     // Close Prisma's connections before swapping the file, and drop the old WAL/SHM

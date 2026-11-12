@@ -28,6 +28,8 @@ export interface ScanSuccessResponse {
   mealType: MealType;
   scannedValue?: string;
   mealTrackingMode: MealTrackingMode;
+  // Meals recorded by this scan (more than 1 when a quantity was chosen).
+  quantity?: number;
   remainingAvailableTodayForMeal?: number;
   remainingAvailableCount?: number;
   selectedPerson?: string;
@@ -122,6 +124,10 @@ export interface GoogleSheetsSchedulerStatus {
   lastCampMeetingWriteBackError: string | null;
   lastScheduledCycleOrder: string | null;
   nextExpectedRunTime: string | null;
+  /** Persisted on the server, so these survive restarts. */
+  persistedLastSuccessAt?: string | null;
+  persistedLastError?: string | null;
+  persistedLastErrorAt?: string | null;
 }
 
 export interface ReportsSummaryResponse {
@@ -171,21 +177,6 @@ export interface ReportsSummaryResponse {
     dinnerCount: number;
     totalMealsCount: number;
   };
-  transactions: Array<{
-    id: number;
-    timestamp: string;
-    scannedValue: string;
-    mealType: string;
-    result: string;
-    failureReason: string | null;
-    stationName: string | null;
-    person: null | {
-      firstName: string;
-      lastName: string;
-      personId: string;
-      personType: PersonType;
-    };
-  }>;
 }
 
 export interface StudentsNotEatingResponse {
@@ -220,10 +211,9 @@ export interface SystemUpdateStatus {
   };
 }
 
-export interface SystemUpdateResult {
-  ok: boolean;
-  output: string;
-  startedAt: string;
-  finishedAt: string;
-  error?: string;
+export interface SystemUpdateLog {
+  inProgress: boolean;
+  result: 'success' | 'failed' | 'running' | 'interrupted' | null;
+  startedAt: string | null;
+  log: string;
 }
