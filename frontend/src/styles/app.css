@@ -346,3 +346,10 @@ select {
 .people-matches { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
 .people-matches li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.45rem 0.6rem; border: 1px solid #d8e4f4; border-radius: 8px; background: #fff; }
 .people-matches li button { white-space: nowrap; }
+
+/* People page: inactive rows, unsaved-edit marker, edit dialog (fix/people) */
+.people-table tr.person-inactive td { color: #7a8ba0; background: #f4f6f9; }
+.person-inactive-label { margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: #e3e8ef; color: #4d5f75; font-size: 0.72rem; font-weight: 600; vertical-align: middle; }
+.person-unsaved { color: #9a5b00; font-size: 0.74rem; font-weight: 600; }
+.people-filters label:has(> input[type="checkbox"]) { padding-bottom: 0.45rem; white-space: nowrap; }
+.confirm-modal textarea { width: 100%; box-sizing: border-box; font: inherit; }

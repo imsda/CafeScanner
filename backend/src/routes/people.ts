@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { PERSON_TYPE_VALUES } from '../utils/personType.js';
 import { localMealDay, resolveTimezone } from '../utils/timezone.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = asyncRouter();
 // People are not login accounts, so the phrase says PERSON (it used to say USER).
@@ -209,20 +210,27 @@ router.put('/:id', async (req, res) => {
   const id = parseIdParam(req.params.id);
   const payload = personSchema.partial().parse(req.body);
 
+  // Partial update: only the fields that were sent are written, so values changed by a
+  // scan since the operator loaded the page (counts, balances) are not overwritten.
+  // The total is never taken from the client; when any count is sent it is recomputed
+  // from the sent counts plus the current database values of the others.
+  delete payload.totalMealsCount;
   const hasAnyTallyField = payload.breakfastCount !== undefined || payload.lunchCount !== undefined || payload.dinnerCount !== undefined;
-  if (hasAnyTallyField) {
-    const existing = await prisma.person.findUniqueOrThrow({
-      where: { id },
-      select: { breakfastCount: true, lunchCount: true, dinnerCount: true }
-    });
 
-    const breakfastCount = payload.breakfastCount ?? existing.breakfastCount;
-    const lunchCount = payload.lunchCount ?? existing.lunchCount;
-    const dinnerCount = payload.dinnerCount ?? existing.dinnerCount;
-    payload.totalMealsCount = breakfastCount + lunchCount + dinnerCount;
-  }
+  const person = await prisma.$transaction(async (tx) => {
+    if (hasAnyTallyField) {
+      const existing = await tx.person.findUniqueOrThrow({
+        where: { id },
+        select: { breakfastCount: true, lunchCount: true, dinnerCount: true }
+      });
 
-  const person = await prisma.person.update({ where: { id }, data: payload });
+      const breakfastCount = payload.breakfastCount ?? existing.breakfastCount;
+      const lunchCount = payload.lunchCount ?? existing.lunchCount;
+      const dinnerCount = payload.dinnerCount ?? existing.dinnerCount;
+      payload.totalMealsCount = breakfastCount + lunchCount + dinnerCount;
+    }
+    return tx.person.update({ where: { id }, data: payload });
+  });
   res.json(person);
 });
 
@@ -258,14 +266,16 @@ router.post('/reset-tallies/:id', async (req, res) => {
   res.json(updated);
 });
 
-router.post('/bulk-set', async (req, res) => {
+// Rewrites every matching person's balances at once: admins only.
+router.post('/bulk-set', requireAdmin, async (req, res) => {
   const { breakfast, lunch, dinner, grade, group, campus } = bulkSetSchema.parse(req.body ?? {});
   const where = { active: true, ...(grade ? { grade } : {}), ...(group ? { group } : {}), ...(campus ? { campus } : {}) };
   const result = await prisma.person.updateMany({ where, data: { breakfastRemaining: breakfast, lunchRemaining: lunch, dinnerRemaining: dinner } });
   res.json(result);
 });
 
-router.delete('/:id', async (req, res) => {
+// Deletes the person and their scan transaction history: admins only.
+router.delete('/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Invalid person id' });
