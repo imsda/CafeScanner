@@ -33,8 +33,17 @@ jobs:
       - name: Typecheck admin scripts
         run: npm run typecheck:scripts -w backend
 
+      - name: Lint
+        run: npm run lint
+
       - name: Backend tests
         run: npm test -w backend
+
+      - name: Frontend tests
+        run: npm test -w frontend
+
+      - name: Dependency advisories
+        run: npm audit --audit-level=high
 
       - name: Shell script syntax
         run: for f in setup.sh scripts/*.sh; do bash -n "$f"; done

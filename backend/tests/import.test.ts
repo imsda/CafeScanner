@@ -73,7 +73,7 @@ test('a column that is present but empty for a row does not erase the stored val
 
 test('a file with a UTF-8 byte order mark imports', async () => {
   await setMode('tally');
-  const { status, body } = await upload('/api/import/commit', '﻿firstName,lastName,personId\nBom,Person,bom-1\n');
+  const { status, body } = await upload('/api/import/commit', '\uFEFFfirstName,lastName,personId\nBom,Person,bom-1\n');
   assert.equal(status, 200);
   assert.equal(body.successRows, 1);
   assert.deepEqual(body.recognizedColumns, ['firstName', 'lastName', 'personId']);
@@ -192,7 +192,7 @@ test('camp meeting preview and commit agree, and use the header names rather tha
     't5,Bob Camper,R102,Supper,Fri,6/19/26,adult,5,yes,,,'
   ].join('\n');
 
-  const preview = await upload('/api/import/preview', `﻿${csv}`);
+  const preview = await upload('/api/import/preview', `\uFEFF${csv}`);
   assert.equal(preview.status, 200);
   assert.equal(preview.body.total, 5);
   assert.equal(preview.body.mode, 'camp_meeting');
@@ -202,7 +202,7 @@ test('camp meeting preview and commit agree, and use the header names rather tha
   assert.equal(preview.body.preview[4].mealDate, '2026-06-19');
   assert.equal(await prisma.mealEntitlement.count(), 0, 'preview writes nothing');
 
-  const commit = await upload('/api/import/commit', `﻿${csv}`);
+  const commit = await upload('/api/import/commit', `\uFEFF${csv}`);
   assert.equal(commit.status, 200);
   assert.equal(commit.body.validRows, 2);
   assert.equal(commit.body.skippedRows, 3);

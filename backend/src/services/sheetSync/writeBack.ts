@@ -246,7 +246,6 @@ export async function writeBackPeopleRows(useBalances: boolean, force: boolean) 
     await sheets.spreadsheets.values.update({ spreadsheetId, range: `${quotedSheet}!${column}1`, valueInputOption: 'RAW', requestBody: { values: [['User Type']] } });
     existingRows[0].push('User Type');
   }
-  const typeColumn = existingRows[0].findIndex((cell) => ['usertype', 'persontype'].includes(String(cell).toLowerCase().replace(/[ _-]/g, '')));
   const headerMap = getTallyHeaderMap(existingRows[0] as string[]);
   assertRequiredHeaders(headerMap, ['id', 'name', 'breakfast', 'lunch', 'dinner', 'total'], 'tally write-back');
   const peopleById = new Map(people.map((p) => {

@@ -54,6 +54,8 @@ Install these once on the host before running `./scripts/setup.sh`:
 - **CUSTOM**: access is limited to individually selected tabs/pages.
 - **SCANNER**: Scan Station only.
 
+Passwords need at least 12 characters, or 8 for SCANNER accounts. Accounts created before this rule keep working; the rule applies when a password is set or changed.
+
 ## User Management
 
 Use the Users/Admin flows to:
@@ -465,6 +467,21 @@ Without that rule the Install update button explains what is missing and nothing
 - Use System backup download/restore routes. Restore now validates SQLite file headers before replacement.
 - In-app backup downloads keep the newest 20 files in `BACKUP_DIR`; pre-restore snapshots keep the newest 10.
 - Recommended: scheduled filesystem backups of `backend/backups`, DB file, and `-wal`/`-shm` files.
+
+## Development checks
+
+Run these from the repository root before opening a pull request (CI runs the same steps):
+
+```bash
+npm run lint        # ESLint for backend, frontend, scripts and tests (no warnings allowed)
+npm run typecheck   # TypeScript for backend, admin scripts and frontend
+npm test            # backend API/service tests, then frontend component tests (Vitest)
+npm audit           # should report 0 vulnerabilities
+```
+
+- Backend tests (`backend/tests`) run against throwaway SQLite databases and never touch your data.
+- Frontend tests (`frontend/src/**/*.test.tsx`) render components in a simulated browser with a fake API; the Scan Station tests cover double reads, queued scans and the meal quantity.
+- Login sessions are stored in `backend/data/sessions.sqlite` by the app's own session store.
 
 ## Service Management
 - `sudo systemctl status cafescanner`

@@ -97,8 +97,10 @@ export function SettingsPage() {
     }
   };
 
+  // Load once on first render; saves and resets call load() themselves.
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const clearEnabled =

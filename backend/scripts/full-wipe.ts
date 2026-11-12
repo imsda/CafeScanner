@@ -45,6 +45,8 @@ if (!token) {
   } finally {
     try {
       await prisma.$disconnect();
-    } catch {}
+    } catch {
+      // Already disconnected before the database file was removed.
+    }
   }
 })();
