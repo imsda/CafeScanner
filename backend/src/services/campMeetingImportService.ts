@@ -5,7 +5,6 @@ import { normalizeCampMeetingPersonId } from '../utils/personId.js';
 
 const REQUIRED_HEADERS = ['ticket_id', 'reg_id', 'guest_name', 'meal_type', 'meal_day', 'meal_date', 'ticket_type', 'price', 'redeemed', 'redeemed_at', 'redeemed_by', 'notes'] as const;
 
-type HeaderName = typeof REQUIRED_HEADERS[number];
 
 type RawInputRow = Record<string, string>;
 

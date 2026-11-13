@@ -258,6 +258,8 @@ export function ScanPage() {
 
     clearAutoSubmitTimeout();
     autoSubmitTimeoutRef.current = window.setTimeout(submitScanInput, 120);
+    // Re-arm only when the typed text or the mode changes; submitScanInput is recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manual, mode]);
 
   const onManualInputChange = (value: string) => {

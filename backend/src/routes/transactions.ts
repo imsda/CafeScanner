@@ -17,8 +17,8 @@ const MAX_PAGE_SIZE = 1000;
 const filterSchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
-  mealType: z.nativeEnum(MealType).optional(),
-  result: z.nativeEnum(ScanResult).optional(),
+  mealType: z.enum(MealType).optional(),
+  result: z.enum(ScanResult).optional(),
   station: z.string().optional(),
   personId: z.coerce.number().int().positive().optional(),
   // Free-text search: name, Person ID or scanned value.

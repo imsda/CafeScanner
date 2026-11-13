@@ -32,24 +32,47 @@ const bulkSetSchema = z.object({
   campus: z.string().optional()
 });
 
-const personSchema = z.object({
-  personType: z.enum(PERSON_TYPE_VALUES).default('GUEST'),
+// Field rules shared by create and update. No defaults here: zod applies defaults to
+// missing keys even on a partial schema, and an update must never write a field the
+// client did not send (it would overwrite counts recorded by scans).
+const count = z.number().int().nonnegative();
+const personFields = {
+  personType: z.enum(PERSON_TYPE_VALUES),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   personId: z.string().min(1),
   codeValue: z.string().optional(),
-  breakfastRemaining: z.number().int().nonnegative().default(0),
-  lunchRemaining: z.number().int().nonnegative().default(0),
-  dinnerRemaining: z.number().int().nonnegative().default(0),
-  breakfastCount: z.number().int().nonnegative().default(0),
-  lunchCount: z.number().int().nonnegative().default(0),
-  dinnerCount: z.number().int().nonnegative().default(0),
-  totalMealsCount: z.number().int().nonnegative().default(0),
+  breakfastRemaining: count,
+  lunchRemaining: count,
+  dinnerRemaining: count,
+  breakfastCount: count,
+  lunchCount: count,
+  dinnerCount: count,
+  totalMealsCount: count,
+  active: z.boolean(),
+  grade: z.string().nullable(),
+  group: z.string().nullable(),
+  campus: z.string().nullable(),
+  notes: z.string().nullable()
+};
+
+const personUpdateSchema = z.object(personFields).partial();
+
+const personSchema = z.object({
+  ...personFields,
+  personType: personFields.personType.default('GUEST'),
+  breakfastRemaining: count.default(0),
+  lunchRemaining: count.default(0),
+  dinnerRemaining: count.default(0),
+  breakfastCount: count.default(0),
+  lunchCount: count.default(0),
+  dinnerCount: count.default(0),
+  totalMealsCount: count.default(0),
   active: z.boolean().default(true),
-  grade: z.string().optional().nullable(),
-  group: z.string().optional().nullable(),
-  campus: z.string().optional().nullable(),
-  notes: z.string().optional().nullable()
+  grade: personFields.grade.optional(),
+  group: personFields.group.optional(),
+  campus: personFields.campus.optional(),
+  notes: personFields.notes.optional()
 });
 
 router.get('/', async (req, res) => {
@@ -208,7 +231,7 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   const id = parseIdParam(req.params.id);
-  const payload = personSchema.partial().parse(req.body);
+  const payload = personUpdateSchema.parse(req.body);
 
   // Partial update: only the fields that were sent are written, so values changed by a
   // scan since the operator loaded the page (counts, balances) are not overwritten.

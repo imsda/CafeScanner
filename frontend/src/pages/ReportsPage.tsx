@@ -113,11 +113,13 @@ export function ReportsPage() {
     void loadReport(range);
   }
 
+  // Load once on first render; later loads are triggered by the filter controls.
   useEffect(() => {
     void loadReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const mealTotals = report?.mealTotalsByPerson ?? report?.perPersonUsage ?? [];
+  const mealTotals = useMemo(() => report?.mealTotalsByPerson ?? report?.perPersonUsage ?? [], [report]);
   const typeRows = useMemo(
     () => mealTotals.filter((row) => matchesPersonTypeFilter(row.personType, personTypeFilter)),
     [mealTotals, personTypeFilter],

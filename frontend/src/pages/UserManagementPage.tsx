@@ -6,23 +6,26 @@ import { useAuth } from "../context/AuthContext";
 import type { AppPage } from "../context/AuthContext";
 import { CUSTOM_ASSIGNABLE_PAGE_LABELS, PAGE_LABELS } from "../lib/pages";
 
+type UserRole = "OWNER" | "ADMIN" | "SCANNER" | "CUSTOM";
+type ManagedUser = { id: number; username: string; role: UserRole; allowedPages: AppPage[] };
+
 export function UserManagementPage() {
   const { user } = useAuth();
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<ManagedUser[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"OWNER" | "ADMIN" | "SCANNER" | "CUSTOM">(
+  const [role, setRole] = useState<UserRole>(
     "SCANNER",
   );
   const [allowedPages, setAllowedPages] = useState<AppPage[]>(["SCAN"]);
-  const [editingUser, setEditingUser] = useState<any | null>(null);
-  const [editRole, setEditRole] = useState<"OWNER" | "ADMIN" | "SCANNER" | "CUSTOM">("CUSTOM");
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [editRole, setEditRole] = useState<UserRole>("CUSTOM");
   const [editAllowedPages, setEditAllowedPages] = useState<AppPage[]>([]);
   const [userError, setUserError] = useState("");
   const [userMessage, setUserMessage] = useState("");
 
   const { confirm, dialog } = useConfirm();
-  const loadUsers = () => api<any[]>("/users")
+  const loadUsers = () => api<ManagedUser[]>("/users")
     .then(setUsers)
     .catch((loadError) => setUserError(errorMessage(loadError, "Unable to load users.")));
 
@@ -42,7 +45,7 @@ export function UserManagementPage() {
   }
 
   async function resetPassword(target: { id: number; username: string; role: string }) {
-    const minLength = target.role === "SCANNER" ? 4 : 12;
+    const minLength = target.role === "SCANNER" ? 8 : 12;
     const next = await confirm({
       title: `Reset password for ${target.username}`,
       input: { label: `New password (min ${minLength} characters)`, type: "password", minLength },
@@ -91,14 +94,14 @@ export function UserManagementPage() {
   );
   const formatPages = (pages: AppPage[]) =>
     pages.map((page) => pageLabelMap.get(page) || page).join(", ");
-  const pagesForRole = (selectedRole: "OWNER" | "ADMIN" | "SCANNER" | "CUSTOM", pages: AppPage[]) =>
+  const pagesForRole = (selectedRole: UserRole, pages: AppPage[]) =>
     selectedRole === "ADMIN" || selectedRole === "OWNER"
       ? PAGE_LABELS.map((entry) => entry.key)
       : selectedRole === "SCANNER"
         ? ["SCAN" as AppPage]
         : pages;
 
-  function beginPermissionEdit(selectedUser: any) {
+  function beginPermissionEdit(selectedUser: ManagedUser) {
     setEditingUser(selectedUser);
     setEditRole(selectedUser.role);
     setEditAllowedPages((selectedUser.allowedPages || []) as AppPage[]);
@@ -165,7 +168,7 @@ export function UserManagementPage() {
           />
         </label>
         <label>
-          Password {role === "SCANNER" ? "(min 4)" : "(min 12)"}
+          Password {role === "SCANNER" ? "(min 8)" : "(min 12)"}
           <input
             type="password"
             value={password}
@@ -178,7 +181,7 @@ export function UserManagementPage() {
             value={role}
             onChange={(e) =>
               setRole(
-                e.target.value as "OWNER" | "ADMIN" | "SCANNER" | "CUSTOM",
+                e.target.value as UserRole,
               )
             }
           >
@@ -214,7 +217,7 @@ export function UserManagementPage() {
           <h3>Manage Permissions: {editingUser.username}</h3>
           <label>
             Role
-            <select value={editRole} onChange={(event) => setEditRole(event.target.value as "OWNER" | "ADMIN" | "SCANNER" | "CUSTOM")}>
+            <select value={editRole} onChange={(event) => setEditRole(event.target.value as UserRole)}>
               {user?.role === "OWNER" && <option value="OWNER">OWNER</option>}
               <option value="ADMIN">ADMIN — all tabs</option>
               <option value="SCANNER">Scanner / Kiosk User — Scan Station only</option>

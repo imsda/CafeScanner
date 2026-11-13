@@ -25,7 +25,8 @@ const updateUserSchema = z.object({
 const isOwnerSession = (req: Request) => req.session.role === 'OWNER';
 
 function minPasswordLength(role: UserRole) {
-  return role === 'SCANNER' ? 4 : 12;
+  // Scanner accounts only reach the Scan page, so they get a shorter (but not trivial) minimum.
+  return role === 'SCANNER' ? 8 : 12;
 }
 
 function parseUserId(value: string) {

@@ -1,4 +1,4 @@
-import { MealDay, MealTrackingMode, MealType, ScanResult } from '@prisma/client';
+import { MealDay, MealTrackingMode, MealType, ScanResult, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { detectMealType } from '../utils/meal.js';
 import { countUnexcusedCompleteDays } from './homeLeaveService.js';
@@ -103,7 +103,7 @@ function logScanMatch(params: {
 }
 
 async function redeemCampMeetingEntitlement(params: {
-  tx: any;
+  tx: Prisma.TransactionClient;
   settings: { stationName: string; timezone: string | null; mealTrackingMode: MealTrackingMode | null };
   adminUserId?: number;
   personIdValue: string;

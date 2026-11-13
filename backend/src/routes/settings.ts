@@ -47,7 +47,7 @@ const settingsSchema = z.object({
 const armFullWipeSchema = z.object({ confirmationPhrase: z.string() });
 
 const switchModeSchema = z.object({
-  mealTrackingMode: z.nativeEnum(MealTrackingMode),
+  mealTrackingMode: z.enum(MealTrackingMode),
   confirmationPhrase: z.string()
 });
 

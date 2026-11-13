@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 import cors from 'cors';
 import session from 'express-session';
-import connectSqlite3 from 'connect-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -19,6 +18,7 @@ import systemRoutes from './routes/system.js';
 import usersRoutes from './routes/users.js';
 import homeLeaveRoutes from './routes/homeLeaves.js';
 import metaRoutes from './routes/meta.js';
+import { SqliteSessionStore } from './utils/sqliteSessionStore.js';
 import { refreshSessionUser, requireAdmin, requireAuth, requirePageAccess } from './middleware/auth.js';
 
 const isProductionEnv = () => process.env.NODE_ENV === 'production';
@@ -38,18 +38,7 @@ function parseTrustProxy(value: string | undefined): boolean | number | string {
 }
 
 function createSqliteSessionStore(): session.Store {
-  const SQLiteStore = connectSqlite3(session);
-  const sessionStoreDir = path.resolve(currentDir, '../data');
-  fs.mkdirSync(sessionStoreDir, { recursive: true });
-  return new SQLiteStore({
-    db: 'sessions.sqlite',
-    dir: sessionStoreDir,
-    table: 'sessions',
-    expired: {
-      clear: true,
-      intervalMs: 1000 * 60 * 15
-    }
-  } as any) as session.Store;
+  return new SqliteSessionStore({ dir: path.resolve(currentDir, '../data') });
 }
 
 function sessionSecret(): string {
@@ -170,7 +159,8 @@ export function createApp(options: CreateAppOptions = {}) {
       console.warn(`[FRONTEND] Build output not found at ${frontendDistDir}. Run: npm run build`);
     }
 
-    app.get('*', (_req, res) => {
+    // Express 5 path syntax: a named wildcard in braces also matches "/".
+    app.get('/{*path}', (_req, res) => {
       if (!fs.existsSync(frontendIndexPath)) {
         res.status(503).send('Frontend build is missing. Please run: npm run build');
         return;
